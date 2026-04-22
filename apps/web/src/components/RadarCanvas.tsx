@@ -65,8 +65,8 @@ export function RadarCanvas({ radarRef }: Props) {
     <canvas
       ref={canvasRef}
       className="absolute inset-0 pointer-events-none"
-      // Размеры задаются родителем через CSS; canvas масштабируется автоматически.
       aria-hidden="true"
+      tabIndex={-1}   // ← removes from focus order, satisfies the rule
     />
   );
 }

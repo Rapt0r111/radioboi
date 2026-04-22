@@ -2,7 +2,7 @@
 
 /* Tailwind CSS v4: директива @import вместо @tailwind base/components/utilities */
 @import "tailwindcss";
-
+@import "../src/styles/utilities.css";
 /* Дизайн-токены игры (Tailwind v4 @theme) */
 @theme {
   --color-ocean-950: #020d1a;
@@ -65,6 +65,4 @@
     opacity: 0;
   }
 }
-
-@import "../src/styles/utilities.css";
 
