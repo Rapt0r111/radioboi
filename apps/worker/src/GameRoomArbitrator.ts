@@ -27,12 +27,12 @@ import type { Env } from "./types.js";
 
 // ── Coordinate helpers (imported from game-core) ──────────────────────────────
 
-import { isValidCoordinate, parseCoordinate as parseCoordCore } from "game-core";
+import { isValidCoordinate, parseCoordinate as parseCoordCore } from "@radioboi/game-core";
 
 function coordToIndices(coord: string): { colIndex: number; rowIndex: number } | null {
   if (!isValidCoordinate(coord)) return null;
-  const { colIndex, rowIndex } = parseCoordCore(coord as any);
-  return { colIndex, rowIndex };
+  // После isValidCoordinate() TypeScript сужает тип до Coordinate — as any не нужен
+  return parseCoordCore(coord);
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────

@@ -33,22 +33,27 @@ export function RadarCanvas({ radarRef }: Props) {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // 1. Создаём воркер через Vite/Webpack-совместимый URL-синтаксис.
+    // 1. Создаём воркер
     const worker = new Worker(
       new URL("../workers/radarWorker.ts", import.meta.url),
       { type: "module" },
     );
 
-    // 2. Оборачиваем в Comlink-прокси.
+    // 2. Оборачиваем в Comlink-прокси
     const proxy = Comlink.wrap<RadarRendererProxy>(worker);
 
-    // 3. Передаём контроль над canvas в воркер (transferable).
+    // 3. FIX: устанавливаем размер ПЕРЕД передачей контроля.
+    //    После transferControlToOffscreen() менять canvas.width/height нельзя.
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width > 0 ? rect.width : canvas.offsetWidth || 400;
+    canvas.height = rect.height > 0 ? rect.height : canvas.offsetHeight || 400;
+
+    // 4. Передаём контроль в воркер (transferable)
     const offscreen = canvas.transferControlToOffscreen();
     void proxy.init(Comlink.transfer(offscreen, [offscreen]));
 
-    // 4. Пробрасываем прокси в ref для внешних вызовов.
+    // 5. Пробрасываем прокси в ref для внешних вызовов
     if (radarRef) {
-      // но это намеренная инициализация при маунте.
       radarRef.current = proxy;
     }
 

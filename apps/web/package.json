@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "biome lint ./app",
+    "lint": "biome lint ./app ./src",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf .next .open-next dist"
   },

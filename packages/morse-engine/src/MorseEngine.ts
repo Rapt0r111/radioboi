@@ -40,11 +40,17 @@ export class MorseEngine {
     #playbackId: number = 0;
 
     constructor(options: MorseEngineOptions = {}) {
+        // FIX: SSR guard — AudioContext недоступен вне браузера
+        if (typeof window === "undefined" || typeof AudioContext === "undefined") {
+            throw new Error(
+                "MorseEngine: can only be instantiated in a browser environment. " +
+                "Use dynamic import or wrap in useEffect.",
+            );
+        }
+
         const frequency = options.frequency ?? DEFAULT_FREQUENCY_HZ;
         const volume = options.volume ?? DEFAULT_MASTER_VOLUME;
 
-        // AudioContext создаётся в suspended-состоянии до первого
-        // взаимодействия пользователя — это нормально.
         this.#ctx = new AudioContext();
 
         // ── Узлы ──────────────────────────────────────────────────────────────
