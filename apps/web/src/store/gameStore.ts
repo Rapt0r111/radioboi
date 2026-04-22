@@ -1,19 +1,28 @@
 // apps/web/src/store/gameStore.ts
-'use client';
+// PATCHED: added syncFromServer action for [FIX #3]
+"use client";
 
-import { create } from 'zustand';
-import type { Board, Coordinate, GamePhase, Missile } from '@radioboi/game-core';
+import type { Board, Coordinate, GamePhase, Missile } from "@radioboi/game-core";
+import { create } from "zustand";
 
 // ── Типы ─────────────────────────────────────────────────────────────────────
 
 type GameState = {
-  phase:          GamePhase;
-  playerId:       string | null;
-  roomId:         string | null;
-  ownBoard:       Board;
-  enemyBoard:     Board;
+  phase: GamePhase;
+  playerId: string | null;
+  roomId: string | null;
+  ownBoard: Board;
+  enemyBoard: Board;
   activeMissiles: Missile[];
-  isMyTurn:       boolean;
+  isMyTurn: boolean;
+};
+
+type SyncSnapshot = {
+  phase: GamePhase;
+  ownBoard: Board;
+  enemyBoard: Board;
+  isMyTurn: boolean;
+  winnerId?: string | undefined;
 };
 
 type GameActions = {
@@ -21,26 +30,30 @@ type GameActions = {
   setSession(playerId: string, roomId: string): void;
   placeShip(coords: Coordinate[]): void;
   addMissile(missile: Missile): void;
-  applyEnemyShot(coord: Coordinate, result: 'hit' | 'miss' | 'sunk'): void;
-  applyOwnHit(coord: Coordinate, result: 'hit' | 'miss' | 'sunk'): void;
+  applyEnemyShot(coord: Coordinate, result: "hit" | "miss" | "sunk"): void;
+  applyOwnHit(coord: Coordinate, result: "hit" | "miss" | "sunk"): void;
   interceptMissile(missileId: string): void;
   toggleTurn(): void;
+  // [FIX #3] — authoritative snapshot from server (SYNC_STATE).
+  // Replaces boards, phase, and turn flag atomically so the client stays
+  // consistent after reconnect or any phase transition.
+  syncFromServer(snapshot: SyncSnapshot): void;
   reset(): void;
 };
 
 type GameStore = GameState & GameActions;
 
-// ── Фабрика начального состояния (новый объект при каждом вызове) ─────────────
+// ── Фабрика начального состояния ─────────────────────────────────────────────
 
 function makeInitialState(): GameState {
   return {
-    phase:          'lobby',
-    playerId:       null,
-    roomId:         null,
-    ownBoard:       {},
-    enemyBoard:     {},
+    phase: "lobby",
+    playerId: null,
+    roomId: null,
+    ownBoard: {} as Board,
+    enemyBoard: {} as Board,
     activeMissiles: [],
-    isMyTurn:       false,
+    isMyTurn: false,
   };
 }
 
@@ -61,7 +74,7 @@ export const useGameStore = create<GameStore>((set) => ({
     set((state) => {
       const next: Board = { ...state.ownBoard };
       for (const coord of coords) {
-        next[coord] = 'ship';
+        next[coord] = "ship";
       }
       return { ownBoard: next };
     });
@@ -73,7 +86,6 @@ export const useGameStore = create<GameStore>((set) => ({
     }));
   },
 
-  // result уже является подтипом CellState — прямое присваивание корректно
   applyEnemyShot(coord, result) {
     set((state) => ({
       enemyBoard: { ...state.enemyBoard, [coord]: result },
@@ -98,6 +110,12 @@ export const useGameStore = create<GameStore>((set) => ({
     set((state) => ({ isMyTurn: !state.isMyTurn }));
   },
 
+  // [FIX #3] — full authoritative sync from SYNC_STATE server event.
+  // Overwrites boards and turn flag in a single atomic update.
+  syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn }) {
+    set({ phase, ownBoard, enemyBoard, isMyTurn });
+  },
+
   reset() {
     set(makeInitialState());
   },
@@ -105,8 +123,8 @@ export const useGameStore = create<GameStore>((set) => ({
 
 // ── Селекторы ─────────────────────────────────────────────────────────────────
 
-export const selectPhase          = (s: GameStore) => s.phase;
-export const selectOwnBoard       = (s: GameStore) => s.ownBoard;
-export const selectEnemyBoard     = (s: GameStore) => s.enemyBoard;
+export const selectPhase = (s: GameStore) => s.phase;
+export const selectOwnBoard = (s: GameStore) => s.ownBoard;
+export const selectEnemyBoard = (s: GameStore) => s.enemyBoard;
 export const selectActiveMissiles = (s: GameStore) => s.activeMissiles;
-export const selectIsMyTurn       = (s: GameStore) => s.isMyTurn;
+export const selectIsMyTurn = (s: GameStore) => s.isMyTurn;

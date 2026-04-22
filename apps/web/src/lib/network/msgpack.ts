@@ -1,7 +1,7 @@
 // apps/web/src/lib/network/msgpack.ts
 
-import { decode, encode } from '@msgpack/msgpack';
-import type { ClientGameEvent, ServerGameEvent } from '@radioboi/game-core';
+import { decode, encode } from "@msgpack/msgpack";
+import type { ClientGameEvent, ServerGameEvent } from "@radioboi/game-core";
 
 // ── Encode (client → server) ──────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ export class FrameDecodeError extends Error {
     public readonly raw: ArrayBuffer | Blob,
   ) {
     super(message);
-    this.name = 'FrameDecodeError';
+    this.name = "FrameDecodeError";
   }
 }
 
@@ -42,19 +42,17 @@ export class FrameDecodeError extends Error {
  * @throws {FrameDecodeError} if the frame is not valid MessagePack,
  *   or lacks a string `type` field.
  */
-export async function decodeServerEvent(
-  data: ArrayBuffer | Blob,
-): Promise<ServerGameEvent> {
+export async function decodeServerEvent(data: ArrayBuffer | Blob): Promise<ServerGameEvent> {
   try {
     const buffer = data instanceof Blob ? await data.arrayBuffer() : data;
     const decoded = decode(new Uint8Array(buffer));
 
     if (
-      typeof decoded !== 'object'
-      || decoded === null
-      || typeof (decoded as Record<string, unknown>)['type'] !== 'string'
+      typeof decoded !== "object" ||
+      decoded === null ||
+      typeof (decoded as Record<string, unknown>)["type"] !== "string"
     ) {
-      throw new FrameDecodeError('Frame missing `type` field', data);
+      throw new FrameDecodeError("Frame missing `type` field", data);
     }
 
     return decoded as ServerGameEvent;

@@ -3,13 +3,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title:       "Морской радиобой",
+  title: "Морской радиобой",
   description: "Реалтайм PvP-игра с азбукой Морзе",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     // suppressHydrationWarning обязателен: globals.css устанавливает
     // color-scheme: dark на <html>, что браузер применяет до гидрации

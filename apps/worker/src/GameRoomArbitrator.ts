@@ -1,6 +1,20 @@
 // apps/worker/src/GameRoomArbitrator.ts
+// PATCHED: see comments tagged [FIX #1] and [FIX #4]
 
-import type { Env } from './types.js';
+import type { RoomPhase, RoomState } from "./game-logic.js";
+import {
+  addPlayer,
+  applyShipsPlaced,
+  createRoomState,
+  getEnemyBoard,
+  getOpponentId,
+  getOwnBoard,
+  MAX_INTERCEPT_ATTEMPTS,
+  prepareAttack,
+  processInterceptAttempt,
+  recordMorseSequence,
+} from "./game-logic.js";
+import { validateMorseForCoord } from "./morse.js";
 import {
   decodeEvent,
   makeError,
@@ -9,75 +23,61 @@ import {
   makePlayerJoined,
   makeResolveHit,
   makeSyncState,
-} from './protocol.js';
-import {
-  MAX_INTERCEPT_ATTEMPTS,
-  addPlayer,
-  applyShipsPlaced,
-  createRoomState,
-  getEnemyBoard,
-  getOpponentId,
-  getOwnBoard,
-  prepareAttack,
-  processInterceptAttempt,
-  recordMorseSequence,
-} from './game-logic.js';
-import type { RoomPhase, RoomState } from './game-logic.js';
-import { validateMorseForCoord } from './morse.js';
+} from "./protocol.js";
+import type { Env } from "./types.js";
 
 // ── Coordinate helpers (inlined — no game-core dep in worker) ─────────────────
 
-const COLUMNS = [
-  'АБВ', 'ГДЕ', 'ЖЗИ', 'ЙКЛ', 'МНО',
-  'ПРС', 'ТУФ', 'ХЦЧ', 'ШЩЪ', 'ЫЭЮ',
-] as const;
+const COLUMNS = ["АБВ", "ГДЕ", "ЖЗИ", "ЙКЛ", "МНО", "ПРС", "ТУФ", "ХЦЧ", "ШЩЪ", "ЫЭЮ"] as const;
 
-const ROWS = ['000','001','002','003','004','005','006','007','008','009'] as const;
+const ROWS = ["000", "001", "002", "003", "004", "005", "006", "007", "008", "009"] as const;
 
 function isValidCoord(s: string): boolean {
   if (s.length !== 6) return false;
-  return (COLUMNS as ReadonlyArray<string>).includes(s.slice(0, 3))
-      && (ROWS    as ReadonlyArray<string>).includes(s.slice(3, 6));
+  return (
+    (COLUMNS as ReadonlyArray<string>).includes(s.slice(0, 3)) &&
+    (ROWS as ReadonlyArray<string>).includes(s.slice(3, 6))
+  );
 }
 
 function coordToIndices(coord: string): { colIndex: number; rowIndex: number } | null {
   if (!isValidCoord(coord)) return null;
   const colIndex = (COLUMNS as ReadonlyArray<string>).indexOf(coord.slice(0, 3));
-  const rowIndex = (ROWS    as ReadonlyArray<string>).indexOf(coord.slice(3, 6));
+  const rowIndex = (ROWS as ReadonlyArray<string>).indexOf(coord.slice(3, 6));
   return colIndex === -1 || rowIndex === -1 ? null : { colIndex, rowIndex };
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STATE_KEY     = 'room:state';
-const WS_TAG_PREFIX = 'player:';
+const STATE_KEY = "room:state";
+const WS_TAG_PREFIX = "player:";
 
 // ── Durable Object ────────────────────────────────────────────────────────────
 
 export class GameRoomArbitrator implements DurableObject {
   readonly #state: DurableObjectState;
-  readonly #env:   Env;
+  readonly #env: Env;
 
   constructor(state: DurableObjectState, env: Env) {
     this.#state = state;
-    this.#env   = env;
+    this.#env = env;
     this.#state.getWebSockets();
   }
 
   // ── HTTP upgrade → WebSocket ───────────────────────────────────────────────
 
   async fetch(request: Request): Promise<Response> {
-    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
-      return new Response('Expected WebSocket upgrade', { status: 426 });
+    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+      return new Response("Expected WebSocket upgrade", { status: 426 });
     }
 
-    const url        = new URL(request.url);
-    const roomId     = url.pathname.split('/').pop() ?? 'unknown';
-    const playerId   = url.searchParams.get('playerId');
-    const playerName = url.searchParams.get('playerName') ?? 'Player';
+    const url = new URL(request.url);
+    const roomId = url.pathname.split("/").pop() ?? "unknown";
+    const playerId = url.searchParams.get("playerId");
+    const playerName = url.searchParams.get("playerName") ?? "Player";
 
     if (!playerId) {
-      return new Response('Missing playerId query param', { status: 400 });
+      return new Response("Missing playerId query param", { status: 400 });
     }
 
     const { 0: client, 1: server } = new WebSocketPair();
@@ -85,9 +85,9 @@ export class GameRoomArbitrator implements DurableObject {
 
     const roomState = await this.#loadState(roomId);
     const addResult = addPlayer(roomState, {
-      id:      playerId,
-      name:    playerName,
-      wsTag:   `${WS_TAG_PREFIX}${playerId}`,
+      id: playerId,
+      name: playerName,
+      wsTag: `${WS_TAG_PREFIX}${playerId}`,
       isReady: roomState.players.find((p) => p.id === playerId)?.isReady ?? false,
     });
 
@@ -131,22 +131,22 @@ export class GameRoomArbitrator implements DurableObject {
     const roomState = await this.#loadState();
 
     switch (event.type) {
-      case 'JOIN_ROOM':
+      case "JOIN_ROOM":
         break;
-      case 'SHIPS_PLACED':
+      case "SHIPS_PLACED":
         await this.#handleShipsPlaced(ws, senderId, event.payload, roomState);
         break;
-      case 'ATTACK_PREP':
+      case "ATTACK_PREP":
         await this.#handleAttackPrep(ws, senderId, event.payload, roomState);
         break;
-      case 'MISSILE_LAUNCHED':
+      case "MISSILE_LAUNCHED":
         await this.#handleMissileLaunched(ws, senderId, event.payload, roomState);
         break;
-      case 'INTERCEPT_ATTEMPT':
+      case "INTERCEPT_ATTEMPT":
         await this.#handleInterceptAttempt(ws, senderId, event.payload, roomState);
         break;
       default:
-        ws.send(makeError('UNKNOWN_EVENT', `Unknown event type: ${event.type}`));
+        ws.send(makeError("UNKNOWN_EVENT", `Unknown event type: ${event.type}`));
     }
   }
 
@@ -155,42 +155,43 @@ export class GameRoomArbitrator implements DurableObject {
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    ws.close(1011, 'WebSocket error');
+    ws.close(1011, "WebSocket error");
   }
 
   // ── Game event handlers ────────────────────────────────────────────────────
 
   async #handleShipsPlaced(
-    ws:       WebSocket,
+    ws: WebSocket,
     playerId: string,
-    payload:  Record<string, unknown>,
-    state:    RoomState,
+    payload: Record<string, unknown>,
+    state: RoomState,
   ): Promise<void> {
-    if (state.phase !== 'placement') {
-      ws.send(makeError('GAME_NOT_STARTED', 'Ship placement is not open'));
+    if (state.phase !== "placement") {
+      ws.send(makeError("GAME_NOT_STARTED", "Ship placement is not open"));
       return;
     }
     if (state.players.find((p) => p.id === playerId)?.isReady) {
-      ws.send(makeError('INVALID_PLACEMENT', 'Ships already placed'));
+      ws.send(makeError("INVALID_PLACEMENT", "Ships already placed"));
       return;
     }
 
-    const ships = payload['ships'];
+    const ships = payload["ships"];
     if (!Array.isArray(ships) || ships.length === 0) {
-      ws.send(makeError('INVALID_PLACEMENT', 'ships must be a non-empty array'));
+      ws.send(makeError("INVALID_PLACEMENT", "ships must be a non-empty array"));
       return;
     }
     for (const ship of ships) {
       if (
-        typeof ship !== 'object' || ship === null
-        || !Array.isArray((ship as Record<string, unknown>)['coords'])
+        typeof ship !== "object" ||
+        ship === null ||
+        !Array.isArray((ship as Record<string, unknown>)["coords"])
       ) {
-        ws.send(makeError('INVALID_PLACEMENT', 'Each ship must have a coords array'));
+        ws.send(makeError("INVALID_PLACEMENT", "Each ship must have a coords array"));
         return;
       }
       for (const coord of (ship as { coords: unknown[] }).coords) {
-        if (typeof coord !== 'string' || !isValidCoord(coord)) {
-          ws.send(makeError('INVALID_COORDINATE', `Invalid coordinate: ${String(coord)}`));
+        if (typeof coord !== "string" || !isValidCoord(coord)) {
+          ws.send(makeError("INVALID_COORDINATE", `Invalid coordinate: ${String(coord)}`));
           return;
         }
       }
@@ -199,30 +200,38 @@ export class GameRoomArbitrator implements DurableObject {
     applyShipsPlaced(state, playerId, ships as Array<{ coords: string[] }>);
     await this.#saveState(state);
 
-    // FIX: TypeScript narrowed `state.phase` to `'placement'` via the guard
-    // at the top of this handler.  `applyShipsPlaced` may mutate it to
-    // `'battle'` when both players are ready, but control-flow analysis
-    // cannot see through an opaque function call.  Reading through the
-    // shared `RoomPhase` alias re-widens the type to the full union.
-    const phaseAfterPlacement: RoomPhase = state.phase;
+    // [FIX #1] — use `as RoomPhase` to break TypeScript's control-flow narrowing.
+    //
+    // The guard `if (state.phase !== 'placement')` at the top of this handler
+    // causes TypeScript to narrow state.phase to the literal `'placement'`.
+    // applyShipsPlaced() may mutate state.phase to 'battle' (when both players
+    // are ready), but TypeScript cannot see through opaque function calls.
+    //
+    // A plain explicit annotation `const x: RoomPhase = state.phase` does NOT
+    // re-widen — TS tracks that x was assigned the narrowed value and keeps
+    // it as 'placement', making the comparison below a type error.
+    //
+    // `as RoomPhase` is a type assertion that breaks the narrowing chain at
+    // the value level, giving us the full union for the comparison.
+    const phaseAfterPlacement = state.phase as RoomPhase;
 
-    if (phaseAfterPlacement === 'battle') {
+    if (phaseAfterPlacement === "battle") {
       this.#broadcast(makeGameStarted(state.currentTurnId!), null);
       this.#sendSyncToAll(state);
     }
   }
 
   async #handleAttackPrep(
-    ws:       WebSocket,
+    ws: WebSocket,
     playerId: string,
-    payload:  Record<string, unknown>,
-    state:    RoomState,
+    payload: Record<string, unknown>,
+    state: RoomState,
   ): Promise<void> {
-    const target    = payload['target'];
-    const missileId = payload['missileId'];
+    const target = payload["target"];
+    const missileId = payload["missileId"];
 
-    if (typeof target !== 'string' || typeof missileId !== 'string') {
-      ws.send(makeError('INVALID_COORDINATE', 'target and missileId are required'));
+    if (typeof target !== "string" || typeof missileId !== "string") {
+      ws.send(makeError("INVALID_COORDINATE", "target and missileId are required"));
       return;
     }
 
@@ -236,40 +245,40 @@ export class GameRoomArbitrator implements DurableObject {
   }
 
   async #handleMissileLaunched(
-    ws:       WebSocket,
+    ws: WebSocket,
     playerId: string,
-    payload:  Record<string, unknown>,
-    state:    RoomState,
+    payload: Record<string, unknown>,
+    state: RoomState,
   ): Promise<void> {
-    const missileId     = payload['missileId'];
-    const target        = payload['target'];
-    const morseSequence = payload['morseSequence'];
-    const timestamp     = payload['timestamp'];
+    const missileId = payload["missileId"];
+    const target = payload["target"];
+    const morseSequence = payload["morseSequence"];
+    const timestamp = payload["timestamp"];
 
     if (
-      typeof missileId !== 'string'
-      || typeof target !== 'string'
-      || !Array.isArray(morseSequence)
-      || typeof timestamp !== 'number'
+      typeof missileId !== "string" ||
+      typeof target !== "string" ||
+      !Array.isArray(morseSequence) ||
+      typeof timestamp !== "number"
     ) {
-      ws.send(makeError('INVALID_COORDINATE', 'Invalid MISSILE_LAUNCHED payload'));
+      ws.send(makeError("INVALID_COORDINATE", "Invalid MISSILE_LAUNCHED payload"));
       return;
     }
 
     const attack = state.pendingAttack;
     if (!attack || attack.missileId !== missileId || attack.attackerId !== playerId) {
-      ws.send(makeError('NO_PENDING_ATTACK', 'No matching ATTACK_PREP found'));
+      ws.send(makeError("NO_PENDING_ATTACK", "No matching ATTACK_PREP found"));
       return;
     }
 
     const indices = coordToIndices(target);
     if (!indices) {
-      ws.send(makeError('INVALID_COORDINATE', `Invalid target coordinate: ${target}`));
+      ws.send(makeError("INVALID_COORDINATE", `Invalid target coordinate: ${target}`));
       return;
     }
 
     if (!validateMorseForCoord(morseSequence as string[], indices.colIndex, indices.rowIndex)) {
-      ws.send(makeError('MORSE_MISMATCH', 'Morse sequence does not match target coordinate'));
+      ws.send(makeError("MORSE_MISMATCH", "Morse sequence does not match target coordinate"));
       return;
     }
 
@@ -280,32 +289,37 @@ export class GameRoomArbitrator implements DurableObject {
     if (opponentId) {
       this.#sendToPlayer(
         opponentId,
-        makeIncomingMissile(missileId, morseSequence as string[], timestamp, MAX_INTERCEPT_ATTEMPTS),
+        makeIncomingMissile(
+          missileId,
+          morseSequence as string[],
+          timestamp,
+          MAX_INTERCEPT_ATTEMPTS,
+        ),
       );
     }
   }
 
   async #handleInterceptAttempt(
-    ws:       WebSocket,
+    ws: WebSocket,
     playerId: string,
-    payload:  Record<string, unknown>,
-    state:    RoomState,
+    payload: Record<string, unknown>,
+    state: RoomState,
   ): Promise<void> {
-    const missileId     = payload['missileId'];
-    const decodedCoord  = payload['decodedCoord'];
-    const attemptNumber = payload['attemptNumber'];
+    const missileId = payload["missileId"];
+    const decodedCoord = payload["decodedCoord"];
+    const attemptNumber = payload["attemptNumber"];
 
     if (
-      typeof missileId !== 'string'
-      || typeof decodedCoord !== 'string'
-      || typeof attemptNumber !== 'number'
+      typeof missileId !== "string" ||
+      typeof decodedCoord !== "string" ||
+      typeof attemptNumber !== "number"
     ) {
-      ws.send(makeError('INVALID_COORDINATE', 'Invalid INTERCEPT_ATTEMPT payload'));
+      ws.send(makeError("INVALID_COORDINATE", "Invalid INTERCEPT_ATTEMPT payload"));
       return;
     }
 
     if (!isValidCoord(decodedCoord)) {
-      ws.send(makeError('INVALID_COORDINATE', `Invalid coordinate: ${decodedCoord}`));
+      ws.send(makeError("INVALID_COORDINATE", `Invalid coordinate: ${decodedCoord}`));
       return;
     }
 
@@ -320,15 +334,24 @@ export class GameRoomArbitrator implements DurableObject {
       forceResolve,
     );
 
+    // [FIX #4] — persist state even on failed intercept attempts.
+    //
+    // processInterceptAttempt mutates attack.attempts = attemptNumber regardless
+    // of whether the decode was correct.  Without saving here, that mutation is
+    // lost if the Durable Object hibernates between attempts.  Although the
+    // current forceResolve logic relies on the CLIENT's attemptNumber (making
+    // the omission non-fatal today), persisting is the correct behaviour and
+    // closes a potential exploit where a client repeatedly sends attemptNumber=1.
     if (resolveResult === null) {
+      await this.#saveState(state);
       // Wrong decode, attempts remain — client may retry.
       return;
     }
 
     await this.#saveState(state);
 
-    const lastShot   = state.shotLog[state.shotLog.length - 1];
-    const shotTarget = lastShot?.target ?? '';
+    const lastShot = state.shotLog[state.shotLog.length - 1];
+    const shotTarget = lastShot?.target ?? "";
     const defenderDecodedCorrectly = decodedCoord === shotTarget;
 
     this.#broadcast(
@@ -336,7 +359,7 @@ export class GameRoomArbitrator implements DurableObject {
         missileId,
         shotTarget,
         resolveResult.result,
-        state.currentTurnId ?? (lastShot?.attackerId ?? playerId),
+        state.currentTurnId ?? lastShot?.attackerId ?? playerId,
         resolveResult.isGameOver,
         defenderDecodedCorrectly,
         resolveResult.winnerId ?? undefined,
@@ -351,7 +374,11 @@ export class GameRoomArbitrator implements DurableObject {
 
   #sendToPlayer(playerId: string, frame: Uint8Array): void {
     for (const ws of this.#state.getWebSockets(`${WS_TAG_PREFIX}${playerId}`)) {
-      try { ws.send(frame); } catch { /* closed */ }
+      try {
+        ws.send(frame);
+      } catch {
+        /* closed */
+      }
     }
   }
 
@@ -361,7 +388,11 @@ export class GameRoomArbitrator implements DurableObject {
         const tags = this.#state.getTags(ws);
         if (tags.includes(`${WS_TAG_PREFIX}${excludePlayerId}`)) continue;
       }
-      try { ws.send(frame); } catch { /* closed */ }
+      try {
+        ws.send(frame);
+      } catch {
+        /* closed */
+      }
     }
   }
 
@@ -386,7 +417,7 @@ export class GameRoomArbitrator implements DurableObject {
   async #loadState(roomId?: string): Promise<RoomState> {
     const stored = await this.#state.storage.get<RoomState>(STATE_KEY);
     if (stored) return stored;
-    return createRoomState(roomId ?? 'room');
+    return createRoomState(roomId ?? "room");
   }
 
   async #saveState(state: RoomState): Promise<void> {

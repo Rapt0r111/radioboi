@@ -3,7 +3,7 @@
 // All network frames use @msgpack/msgpack to minimise bytes and avoid
 // JSON string-parsing overhead on the hot path.
 
-import { decode, encode } from '@msgpack/msgpack';
+import { decode, encode } from "@msgpack/msgpack";
 
 // ── Generic event shape (worker-internal, no @radioboi/game-core import) ──────
 
@@ -37,16 +37,16 @@ export function decodeEvent(msg: string | ArrayBuffer): RawEvent | null {
   try {
     // Cloudflare WebSocket Hibernation API can deliver string frames too.
     // We only handle binary; text frames are rejected.
-    if (typeof msg === 'string') return null;
+    if (typeof msg === "string") return null;
 
     const buf = msg instanceof ArrayBuffer ? new Uint8Array(msg) : msg;
     const value = decode(buf);
 
     if (
-      typeof value !== 'object'
-      || value === null
-      || typeof (value as Record<string, unknown>)['type'] !== 'string'
-      || typeof (value as Record<string, unknown>)['payload'] !== 'object'
+      typeof value !== "object" ||
+      value === null ||
+      typeof (value as Record<string, unknown>)["type"] !== "string" ||
+      typeof (value as Record<string, unknown>)["payload"] !== "object"
     ) {
       return null;
     }
@@ -68,41 +68,41 @@ export function makePlayerJoined(
   playerCount: 1 | 2,
 ): Uint8Array {
   return encodeEvent({
-    type:    'PLAYER_JOINED',
+    type: "PLAYER_JOINED",
     payload: { playerId, playerName, playerCount },
   });
 }
 
 export function makeGameStarted(firstTurnPlayerId: string): Uint8Array {
   return encodeEvent({
-    type:    'GAME_STARTED',
+    type: "GAME_STARTED",
     payload: { firstTurnPlayerId },
   });
 }
 
 export function makeIncomingMissile(
-  missileId:     string,
+  missileId: string,
   morseSequence: string[],
-  timestamp:     number,
-  maxAttempts:   number,
+  timestamp: number,
+  maxAttempts: number,
 ): Uint8Array {
   return encodeEvent({
-    type:    'INCOMING_MISSILE',
+    type: "INCOMING_MISSILE",
     payload: { missileId, morseSequence, timestamp, maxAttempts },
   });
 }
 
 export function makeResolveHit(
-  missileId:               string,
-  target:                  string,
-  result:                  'hit' | 'miss' | 'sunk',
-  nextTurnPlayerId:        string,
-  isGameOver:              boolean,
+  missileId: string,
+  target: string,
+  result: "hit" | "miss" | "sunk",
+  nextTurnPlayerId: string,
+  isGameOver: boolean,
   defenderDecodedCorrectly: boolean,
-  winnerId?:               string,
+  winnerId?: string,
 ): Uint8Array {
   return encodeEvent({
-    type:    'RESOLVE_HIT',
+    type: "RESOLVE_HIT",
     payload: {
       missileId,
       target,
@@ -116,15 +116,15 @@ export function makeResolveHit(
 }
 
 export function makeSyncState(
-  phase:           string,
-  ownBoard:        Record<string, string>,
-  enemyBoard:      Record<string, string>,
-  activeMissiles:  unknown[],
-  isMyTurn:        boolean,
-  winnerId?:       string,
+  phase: string,
+  ownBoard: Record<string, string>,
+  enemyBoard: Record<string, string>,
+  activeMissiles: unknown[],
+  isMyTurn: boolean,
+  winnerId?: string,
 ): Uint8Array {
   return encodeEvent({
-    type:    'SYNC_STATE',
+    type: "SYNC_STATE",
     payload: {
       phase,
       ownBoard,
@@ -137,5 +137,5 @@ export function makeSyncState(
 }
 
 export function makeError(code: string, message: string): Uint8Array {
-  return encodeEvent({ type: 'ERROR', payload: { code, message } });
+  return encodeEvent({ type: "ERROR", payload: { code, message } });
 }

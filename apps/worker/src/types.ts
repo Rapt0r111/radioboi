@@ -3,6 +3,6 @@
 // Kept separate to break the circular-import chain.
 
 export interface Env {
-  ROOM_STATE: KVNamespace;           // matches [[kv_namespaces]] binding
-  GAME_ROOM:  DurableObjectNamespace; // matches [durable_objects] name
+  ROOM_STATE: KVNamespace; // matches [[kv_namespaces]] binding
+  GAME_ROOM: DurableObjectNamespace; // matches [durable_objects] name
 }

@@ -14,11 +14,11 @@ const nextConfig: NextConfig = {
       {
         source: "/(.*)",
         headers: [
-          { key: "X-Content-Type-Options",  value: "nosniff"   },
-          { key: "X-Frame-Options",          value: "DENY"      },
-          { key: "Referrer-Policy",          value: "same-origin" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "same-origin" },
           // autoplay=(self) is required for Morse audio via Web Audio API.
-          { key: "Permissions-Policy",       value: "autoplay=(self)" },
+          { key: "Permissions-Policy", value: "autoplay=(self)" },
         ],
       },
     ];

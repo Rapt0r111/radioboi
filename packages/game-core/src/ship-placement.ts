@@ -3,8 +3,13 @@
 // Used by the Cloudflare Worker to authorise SHIPS_PLACED events
 // and by the client-side placement UI for immediate feedback.
 
-import { getAdjacentCoordinates, isValidCoordinate, makeCoordinate, parseCoordinate } from './coordinates.js';
-import type { Board, Coordinate } from './types.js';
+import {
+  getAdjacentCoordinates,
+  isValidCoordinate,
+  makeCoordinate,
+  parseCoordinate,
+} from "./coordinates.js";
+import type { Board, Coordinate } from "./types.js";
 
 // ── Fleet definition ──────────────────────────────────────────────────────────
 
@@ -28,16 +33,14 @@ export const FLEET_TOTAL_CELLS: number = [...REQUIRED_FLEET.entries()].reduce(
 // ── Validation result ─────────────────────────────────────────────────────────
 
 export type PlacementError =
-  | { kind: 'INVALID_COORDINATE'; coord: string }
-  | { kind: 'SHIP_TOO_SHORT' }
-  | { kind: 'SHIP_NOT_LINEAR'; shipIndex: number }
-  | { kind: 'SHIPS_OVERLAP' }
-  | { kind: 'SHIPS_TOUCH'; shipA: number; shipB: number }
-  | { kind: 'WRONG_FLEET'; expected: string; got: string };
+  | { kind: "INVALID_COORDINATE"; coord: string }
+  | { kind: "SHIP_TOO_SHORT" }
+  | { kind: "SHIP_NOT_LINEAR"; shipIndex: number }
+  | { kind: "SHIPS_OVERLAP" }
+  | { kind: "SHIPS_TOUCH"; shipA: number; shipB: number }
+  | { kind: "WRONG_FLEET"; expected: string; got: string };
 
-export type PlacementResult =
-  | { ok: true }
-  | { ok: false; error: PlacementError };
+export type PlacementResult = { ok: true } | { ok: false; error: PlacementError };
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -90,7 +93,7 @@ export function validatePlacement(
   for (const ship of ships) {
     for (const coord of ship.coords) {
       if (!isValidCoordinate(coord)) {
-        return { ok: false, error: { kind: 'INVALID_COORDINATE', coord } };
+        return { ok: false, error: { kind: "INVALID_COORDINATE", coord } };
       }
     }
   }
@@ -99,10 +102,10 @@ export function validatePlacement(
   for (let i = 0; i < ships.length; i++) {
     const ship = ships[i]!;
     if (ship.coords.length < 1) {
-      return { ok: false, error: { kind: 'SHIP_TOO_SHORT' } };
+      return { ok: false, error: { kind: "SHIP_TOO_SHORT" } };
     }
     if (ship.coords.length > 1 && !isLinear(ship.coords)) {
-      return { ok: false, error: { kind: 'SHIP_NOT_LINEAR', shipIndex: i } };
+      return { ok: false, error: { kind: "SHIP_NOT_LINEAR", shipIndex: i } };
     }
   }
 
@@ -111,7 +114,7 @@ export function validatePlacement(
   for (const ship of ships) {
     for (const coord of ship.coords) {
       if (occupied.has(coord)) {
-        return { ok: false, error: { kind: 'SHIPS_OVERLAP' } };
+        return { ok: false, error: { kind: "SHIPS_OVERLAP" } };
       }
       occupied.add(coord);
     }
@@ -125,7 +128,7 @@ export function validatePlacement(
     for (let j = i + 1; j < ships.length; j++) {
       for (const coord of ships[j]!.coords) {
         if (exclusionZone.has(coord)) {
-          return { ok: false, error: { kind: 'SHIPS_TOUCH', shipA: i, shipB: j } };
+          return { ok: false, error: { kind: "SHIPS_TOUCH", shipA: i, shipB: j } };
         }
       }
     }
@@ -143,9 +146,9 @@ export function validatePlacement(
       return {
         ok: false,
         error: {
-          kind: 'WRONG_FLEET',
+          kind: "WRONG_FLEET",
           expected: JSON.stringify(Object.fromEntries(REQUIRED_FLEET)),
-          got:      JSON.stringify(Object.fromEntries(actualFleet)),
+          got: JSON.stringify(Object.fromEntries(actualFleet)),
         },
       };
     }
@@ -156,9 +159,9 @@ export function validatePlacement(
       return {
         ok: false,
         error: {
-          kind: 'WRONG_FLEET',
+          kind: "WRONG_FLEET",
           expected: JSON.stringify(Object.fromEntries(REQUIRED_FLEET)),
-          got:      JSON.stringify(Object.fromEntries(actualFleet)),
+          got: JSON.stringify(Object.fromEntries(actualFleet)),
         },
       };
     }
@@ -178,7 +181,7 @@ export function buildBoardFromShips(
   const board: Board = {} as Board;
   for (const ship of ships) {
     for (const coord of ship.coords) {
-      board[coord] = 'ship';
+      board[coord] = "ship";
     }
   }
   return board;
@@ -249,7 +252,9 @@ export function colIndexToMorseLetter(colIndex: number): string {
 export function morseLetterToColIndex(letter: string): number {
   const idx = letter.toUpperCase().charCodeAt(0) - 65;
   if (idx < 0 || idx > 9) {
-    throw new RangeError(`morseLetterToColIndex: letter "${letter}" maps to index ${idx}, out of 0–9`);
+    throw new RangeError(
+      `morseLetterToColIndex: letter "${letter}" maps to index ${idx}, out of 0–9`,
+    );
   }
   return idx;
 }
@@ -262,7 +267,7 @@ export function coordinateToMorseNotation(coord: Coordinate): { letter: string; 
   const { colIndex, rowIndex } = parseCoordinate(coord);
   return {
     letter: colIndexToMorseLetter(colIndex),
-    digit:  String(rowIndex),
+    digit: String(rowIndex),
   };
 }
 

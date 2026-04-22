@@ -10,14 +10,42 @@
 // ── Code table ────────────────────────────────────────────────────────────────
 
 const MORSE_TABLE: Readonly<Record<string, string>> = {
-  A: '.-',    B: '-...',  C: '-.-.',  D: '-..',   E: '.',
-  F: '..-.',  G: '--.',   H: '....',  I: '..',    J: '.---',
-  K: '-.-',   L: '.-..',  M: '--',    N: '-.',    O: '---',
-  P: '.--.',  Q: '--.-',  R: '.-.',   S: '...',   T: '-',
-  U: '..-',   V: '...-',  W: '.--',   X: '-..-',  Y: '-.--',
-  Z: '--..',
-  '0': '-----', '1': '.----', '2': '..---', '3': '...--', '4': '....-',
-  '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.',
+  A: ".-",
+  B: "-...",
+  C: "-.-.",
+  D: "-..",
+  E: ".",
+  F: "..-.",
+  G: "--.",
+  H: "....",
+  I: "..",
+  J: ".---",
+  K: "-.-",
+  L: ".-..",
+  M: "--",
+  N: "-.",
+  O: "---",
+  P: ".--.",
+  Q: "--.-",
+  R: ".-.",
+  S: "...",
+  T: "-",
+  U: "..-",
+  V: "...-",
+  W: ".--",
+  X: "-..-",
+  Y: "-.--",
+  Z: "--..",
+  "0": "-----",
+  "1": ".----",
+  "2": "..---",
+  "3": "...--",
+  "4": "....-",
+  "5": ".....",
+  "6": "-....",
+  "7": "--...",
+  "8": "---..",
+  "9": "----.",
 };
 
 // Reverse lookup: morse string → character
@@ -56,7 +84,7 @@ export function morseToChar(morse: string): string | null {
  */
 export function coordIndicesToMorse(colIndex: number, rowIndex: number): CoordMorseTokens {
   const letter = String.fromCharCode(65 + colIndex); // A–J
-  const digit  = String(rowIndex);                   // 0–9
+  const digit = String(rowIndex); // 0–9
   const colMorse = MORSE_TABLE[letter];
   const rowMorse = MORSE_TABLE[digit];
   if (colMorse === undefined || rowMorse === undefined) {
@@ -74,7 +102,7 @@ export function morseToCoordIndices(
   rowMorse: string,
 ): { colIndex: number; rowIndex: number } | null {
   const letter = REVERSE_TABLE[colMorse];
-  const digit  = REVERSE_TABLE[rowMorse];
+  const digit = REVERSE_TABLE[rowMorse];
 
   if (!letter || !digit) return null;
 
@@ -99,7 +127,7 @@ export function morseToCoordIndices(
  * pair where both halves map to valid entries.
  */
 export function splitMorseSequence(sequence: readonly string[]): CoordMorseTokens | null {
-  const flat = sequence.join('');
+  const flat = sequence.join("");
   for (let splitAt = 1; splitAt < flat.length; splitAt++) {
     const colToken = flat.slice(0, splitAt);
     const rowToken = flat.slice(splitAt);

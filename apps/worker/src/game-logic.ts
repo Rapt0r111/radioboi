@@ -10,9 +10,9 @@
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
-export type CellState = 'ship' | 'hit' | 'miss' | 'sunk';
-export type Coord     = string;          // 6-char Cyrillic coordinate string
-export type BoardMap  = Record<Coord, CellState>;
+export type CellState = "ship" | "hit" | "miss" | "sunk";
+export type Coord = string; // 6-char Cyrillic coordinate string
+export type BoardMap = Record<Coord, CellState>;
 
 /** Serialisable representation of one ship on the board. */
 export type ShipRecord = {
@@ -23,45 +23,45 @@ export type ShipRecord = {
 };
 
 export type PlayerRecord = {
-  id:       string;
-  name:     string;
+  id: string;
+  name: string;
   /** WS hibernation tag stored as `player:<id>`. */
-  wsTag:    string;
-  isReady:  boolean;   // ships placed?
+  wsTag: string;
+  isReady: boolean; // ships placed?
 };
 
 export type PendingAttack = {
-  attackerId:    string;
-  target:        Coord;
-  missileId:     string;
+  attackerId: string;
+  target: Coord;
+  missileId: string;
   morseSequence: string[];
-  attempts:      number;
+  attempts: number;
 };
 
-export type RoomPhase = 'lobby' | 'placement' | 'battle' | 'gameOver';
+export type RoomPhase = "lobby" | "placement" | "battle" | "gameOver";
 
 /**
  * Full game state persisted in Durable Object storage under key "state".
  * Stored as a plain JSON object — no class instances.
  */
 export type RoomState = {
-  roomId:          string;
-  phase:           RoomPhase;
-  players:         PlayerRecord[];        // max 2
-  boards:          Record<string, BoardMap>;        // playerId → board
-  ships:           Record<string, ShipRecord[]>;    // playerId → ships
-  currentTurnId:   string | null;
-  pendingAttack:   PendingAttack | null;
-  winnerId:        string | null;
+  roomId: string;
+  phase: RoomPhase;
+  players: PlayerRecord[]; // max 2
+  boards: Record<string, BoardMap>; // playerId → board
+  ships: Record<string, ShipRecord[]>; // playerId → ships
+  currentTurnId: string | null;
+  pendingAttack: PendingAttack | null;
+  winnerId: string | null;
   /** Sequential shot log for history panel. */
-  shotLog:         ShotLogEntry[];
+  shotLog: ShotLogEntry[];
 };
 
 export type ShotLogEntry = {
   attackerId: string;
-  target:     Coord;
-  result:     'hit' | 'miss' | 'sunk';
-  ts:         number;
+  target: Coord;
+  result: "hit" | "miss" | "sunk";
+  ts: number;
 };
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -69,14 +69,14 @@ export type ShotLogEntry = {
 export function createRoomState(roomId: string): RoomState {
   return {
     roomId,
-    phase:          'lobby',
-    players:        [],
-    boards:         {},
-    ships:          {},
-    currentTurnId:  null,
-    pendingAttack:  null,
-    winnerId:       null,
-    shotLog:        [],
+    phase: "lobby",
+    players: [],
+    boards: {},
+    ships: {},
+    currentTurnId: null,
+    pendingAttack: null,
+    winnerId: null,
+    shotLog: [],
   };
 }
 
@@ -85,7 +85,7 @@ export function createRoomState(roomId: string): RoomState {
 export function addPlayer(
   state: RoomState,
   player: PlayerRecord,
-): { ok: true } | { ok: false; reason: 'ROOM_FULL' | 'ALREADY_JOINED' } {
+): { ok: true } | { ok: false; reason: "ROOM_FULL" | "ALREADY_JOINED" } {
   if (state.players.some((p) => p.id === player.id)) {
     // Reconnect — update wsTag but don't duplicate
     const idx = state.players.findIndex((p) => p.id === player.id);
@@ -93,11 +93,11 @@ export function addPlayer(
     return { ok: true };
   }
   if (state.players.length >= 2) {
-    return { ok: false, reason: 'ROOM_FULL' };
+    return { ok: false, reason: "ROOM_FULL" };
   }
   state.players.push(player);
-  if (state.players.length === 2 && state.phase === 'lobby') {
-    state.phase = 'placement';
+  if (state.players.length === 2 && state.phase === "lobby") {
+    state.phase = "placement";
   }
   return { ok: true };
 }
@@ -122,23 +122,22 @@ export function applyShipsPlaced(
 
   for (const ship of ships) {
     for (const coord of ship.coords) {
-      board[coord] = 'ship';
+      board[coord] = "ship";
     }
     shipRecords.push({ coords: ship.coords, isSunk: false });
   }
 
   state.boards[playerId] = board;
-  state.ships[playerId]  = shipRecords;
+  state.ships[playerId] = shipRecords;
 
   const player = state.players.find((p) => p.id === playerId);
   if (player) player.isReady = true;
 
   // Both ready → move to battle
   if (state.players.length === 2 && state.players.every((p) => p.isReady)) {
-    state.phase = 'battle';
+    state.phase = "battle";
     // Random first turn
-    state.currentTurnId =
-      state.players[Math.random() < 0.5 ? 0 : 1]!.id;
+    state.currentTurnId = state.players[Math.random() < 0.5 ? 0 : 1]!.id;
   }
 }
 
@@ -151,17 +150,17 @@ export function prepareAttack(
   target: Coord,
   missileId: string,
 ): { ok: true } | { ok: false; reason: string } {
-  if (state.phase !== 'battle')        return { ok: false, reason: 'GAME_NOT_STARTED' };
-  if (state.currentTurnId !== attackerId) return { ok: false, reason: 'NOT_YOUR_TURN' };
-  if (state.pendingAttack !== null)    return { ok: false, reason: 'ATTACK_ALREADY_PENDING' };
+  if (state.phase !== "battle") return { ok: false, reason: "GAME_NOT_STARTED" };
+  if (state.currentTurnId !== attackerId) return { ok: false, reason: "NOT_YOUR_TURN" };
+  if (state.pendingAttack !== null) return { ok: false, reason: "ATTACK_ALREADY_PENDING" };
 
   const opponentId = getOpponentId(state, attackerId);
-  if (!opponentId) return { ok: false, reason: 'NO_OPPONENT' };
+  if (!opponentId) return { ok: false, reason: "NO_OPPONENT" };
 
   const opponentBoard = state.boards[opponentId] ?? {};
   const cellState = opponentBoard[target];
-  if (cellState === 'hit' || cellState === 'miss' || cellState === 'sunk') {
-    return { ok: false, reason: 'CELL_ALREADY_SHOT' };
+  if (cellState === "hit" || cellState === "miss" || cellState === "sunk") {
+    return { ok: false, reason: "CELL_ALREADY_SHOT" };
   }
 
   state.pendingAttack = {
@@ -169,7 +168,7 @@ export function prepareAttack(
     target,
     missileId,
     morseSequence: [],
-    attempts:      0,
+    attempts: 0,
   };
 
   return { ok: true };
@@ -182,16 +181,16 @@ export function recordMorseSequence(
   morseSequence: string[],
 ): { ok: true } | { ok: false; reason: string } {
   if (!state.pendingAttack || state.pendingAttack.missileId !== missileId) {
-    return { ok: false, reason: 'NO_PENDING_ATTACK' };
+    return { ok: false, reason: "NO_PENDING_ATTACK" };
   }
   state.pendingAttack.morseSequence = morseSequence;
   return { ok: true };
 }
 
 export type ResolveResult = {
-  result:     'hit' | 'miss' | 'sunk';
+  result: "hit" | "miss" | "sunk";
   isGameOver: boolean;
-  winnerId:   string | null;
+  winnerId: string | null;
 };
 
 /** Max decode attempts before the server auto-resolves in the attacker's favour. */
@@ -232,45 +231,42 @@ export function processInterceptAttempt(
  * Core hit-resolution logic.
  * Mutates the opponent's board in-place and clears pendingAttack.
  */
-export function resolveHit(
-  state: RoomState,
-  attackerId: string,
-  target: Coord,
-): ResolveResult {
-  const opponentId   = getOpponentId(state, attackerId)!;
+export function resolveHit(state: RoomState, attackerId: string, target: Coord): ResolveResult {
+  const opponentId = getOpponentId(state, attackerId)!;
   const opponentBoard = state.boards[opponentId] ?? (state.boards[opponentId] = {});
   const opponentShips = state.ships[opponentId] ?? [];
 
-  const wasShip = opponentBoard[target] === 'ship' || opponentBoard[target] === undefined
-    ? opponentShips.some((s) => s.coords.includes(target))
-    : false;
+  const wasShip =
+    opponentBoard[target] === "ship" || opponentBoard[target] === undefined
+      ? opponentShips.some((s) => s.coords.includes(target))
+      : false;
 
-  let result: 'hit' | 'miss' | 'sunk';
+  let result: "hit" | "miss" | "sunk";
 
   if (!wasShip) {
-    opponentBoard[target] = 'miss';
-    result = 'miss';
+    opponentBoard[target] = "miss";
+    result = "miss";
   } else {
-    opponentBoard[target] = 'hit';
+    opponentBoard[target] = "hit";
 
     // Check if the ship is now sunk
     const ship = opponentShips.find((s) => s.coords.includes(target));
     if (ship) {
       const allHit = ship.coords.every(
-        (c) => opponentBoard[c] === 'hit' || opponentBoard[c] === 'sunk',
+        (c) => opponentBoard[c] === "hit" || opponentBoard[c] === "sunk",
       );
       if (allHit) {
         // Mark all cells of this ship as sunk
         for (const c of ship.coords) {
-          opponentBoard[c] = 'sunk';
+          opponentBoard[c] = "sunk";
         }
         ship.isSunk = true;
-        result = 'sunk';
+        result = "sunk";
       } else {
-        result = 'hit';
+        result = "hit";
       }
     } else {
-      result = 'hit';
+      result = "hit";
     }
   }
 
@@ -280,16 +276,16 @@ export function resolveHit(
   // Check game over
   const allSunk = opponentShips.length > 0 && opponentShips.every((s) => s.isSunk);
   const isGameOver = allSunk;
-  const winnerId   = isGameOver ? attackerId : null;
+  const winnerId = isGameOver ? attackerId : null;
 
   if (isGameOver) {
-    state.phase    = 'gameOver';
+    state.phase = "gameOver";
     state.winnerId = winnerId;
   }
 
   // Advance turn (hit/sunk = attacker gets another turn; miss = opponent's turn)
   if (!isGameOver) {
-    state.currentTurnId = result === 'miss' ? opponentId : attackerId;
+    state.currentTurnId = result === "miss" ? opponentId : attackerId;
   }
 
   // Clear pending attack
@@ -314,11 +310,11 @@ export function getEnemyBoard(state: RoomState, viewerId: string): BoardMap {
   const opponentId = getOpponentId(state, viewerId);
   if (!opponentId) return {};
 
-  const full   = state.boards[opponentId] ?? {};
+  const full = state.boards[opponentId] ?? {};
   const masked: BoardMap = {};
 
   for (const [coord, cell] of Object.entries(full)) {
-    if (cell === 'hit' || cell === 'miss' || cell === 'sunk') {
+    if (cell === "hit" || cell === "miss" || cell === "sunk") {
       masked[coord] = cell;
     }
     // 'ship' cells are NOT included — opponent cannot see unshot ships

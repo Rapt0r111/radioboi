@@ -1,90 +1,38 @@
 // packages/game-core/src/network-types.ts
-// Shared contract between Cloudflare Worker and Next.js client.
-// All network messages are serialised with @msgpack/msgpack (binary frames).
-// NEVER add DOM types here — this file is imported by the Worker (no DOM).
+// PATCHED: see comment [FIX #2] on AttackPrepEvent
 
-import type { Board, Coordinate, GamePhase, Missile } from './types.js';
+import type { Board, Coordinate, GamePhase, Missile } from "./types.js";
 
 // ── Morse primitives ──────────────────────────────────────────────────────────
 
-/** A single Morse symbol transmitted over the wire. */
-export type MorseSymbol = '.' | '-';
+export type MorseSymbol = "." | "-";
 
-/**
- * Compact Morse sequence: an ordered array of dots/dashes representing
- * one logical token (letter or digit).  Tokens are separated at the
- * application layer — the array carries ALL symbols of a full coordinate.
- *
- * Example: column B (−...) + row 5 (.....) → ['-','.','.','.','.','.','.','.','.']
- * The worker receives this verbatim and compares against its stored target.
- */
 export type MorseSequence = MorseSymbol[];
 
 // ── Event-type registry ───────────────────────────────────────────────────────
 
-/**
- * Exhaustive enum of every message type sent between client and server.
- * Using `as const` object (not TS enum) so wrangler bundles it correctly
- * without needing `isolatedModules`-safe const enums.
- */
 export const GameEventType = {
-  // ── Client → Server ────────────────────────────────────────────────────────
-  /** First frame after WebSocket upgrade; declares identity. */
-  JOIN_ROOM:         'JOIN_ROOM',
-  /** Sent once when the player finishes placing all ships. */
-  SHIPS_PLACED:      'SHIPS_PLACED',
-  /**
-   * Attacker registers the intended target cell with the server
-   * BEFORE starting Morse input.  Lets the server lock the cell
-   * and reject duplicate attacks.
-   */
-  ATTACK_PREP:       'ATTACK_PREP',
-  /**
-   * Attacker submits the Morse sequence after local validation passes.
-   * Server re-validates the sequence against the stored target and,
-   * if correct, forwards INCOMING_MISSILE to the defender.
-   */
-  MISSILE_LAUNCHED:  'MISSILE_LAUNCHED',
-  /**
-   * Defender submits their decoded coordinate.
-   * Server compares against the stored target and broadcasts RESOLVE_HIT.
-   */
-  INTERCEPT_ATTEMPT: 'INTERCEPT_ATTEMPT',
-
-  // ── Server → Client ────────────────────────────────────────────────────────
-  /** Broadcast when a new player connects to the room. */
-  PLAYER_JOINED:     'PLAYER_JOINED',
-  /** Broadcast when both players have placed ships; battle begins. */
-  GAME_STARTED:      'GAME_STARTED',
-  /**
-   * Sent exclusively to the DEFENDER.
-   * Contains the raw Morse sequence but NOT the decoded coordinate —
-   * the defender must decode it themselves.
-   */
-  INCOMING_MISSILE:  'INCOMING_MISSILE',
-  /** Broadcast to both players with the full hit/miss/sunk result. */
-  RESOLVE_HIT:       'RESOLVE_HIT',
-  /**
-   * Full-state snapshot sent on reconnect or phase transition.
-   * The server tailors ownBoard / enemyBoard per recipient.
-   */
-  SYNC_STATE:        'SYNC_STATE',
-  /** Sent to a specific player when their action is invalid. */
-  ERROR:             'ERROR',
+  JOIN_ROOM: "JOIN_ROOM",
+  SHIPS_PLACED: "SHIPS_PLACED",
+  ATTACK_PREP: "ATTACK_PREP",
+  MISSILE_LAUNCHED: "MISSILE_LAUNCHED",
+  INTERCEPT_ATTEMPT: "INTERCEPT_ATTEMPT",
+  PLAYER_JOINED: "PLAYER_JOINED",
+  GAME_STARTED: "GAME_STARTED",
+  INCOMING_MISSILE: "INCOMING_MISSILE",
+  RESOLVE_HIT: "RESOLVE_HIT",
+  SYNC_STATE: "SYNC_STATE",
+  ERROR: "ERROR",
 } as const;
 
-export type GameEventType = typeof GameEventType[keyof typeof GameEventType];
+export type GameEventType = (typeof GameEventType)[keyof typeof GameEventType];
 
 // ── Per-event payload types ───────────────────────────────────────────────────
-
-// ---- Client-originated -------------------------------------------------------
 
 export type JoinRoomEvent = {
   type: typeof GameEventType.JOIN_ROOM;
   payload: {
-    /** Stable player UUID (generated client-side, persisted in sessionStorage). */
     playerId: string;
-    /** Display name shown in the UI. */
     playerName: string;
   };
 };
@@ -92,40 +40,37 @@ export type JoinRoomEvent = {
 export type ShipsPlacedEvent = {
   type: typeof GameEventType.SHIPS_PLACED;
   payload: {
-    /**
-     * Full list of ships, each as an ordered array of occupied coordinates.
-     * The server validates placement rules (no overlaps, no diagonal adjacency,
-     * correct fleet composition) and rejects with ERROR if invalid.
-     */
     ships: ReadonlyArray<{ coords: readonly Coordinate[] }>;
   };
 };
 
+// [FIX #2] — added `missileId` to AttackPrepEvent payload.
+//
+// The server's #handleAttackPrep handler reads BOTH `target` and `missileId`
+// from the payload and passes them to prepareAttack(). Without `missileId`
+// in the type, any client following the type contract would omit it, causing
+// the server to return INVALID_COORDINATE on every ATTACK_PREP — making the
+// battle phase permanently broken.
 export type AttackPrepEvent = {
   type: typeof GameEventType.ATTACK_PREP;
   payload: {
     /** The cell the attacker intends to fire at. */
     target: Coordinate;
+    /**
+     * Stable UUID generated by the attacker.
+     * Sent here so the server can lock it in PendingAttack; the same ID must
+     * be echoed back in the subsequent MISSILE_LAUNCHED event.
+     */
+    missileId: string;
   };
 };
 
 export type MissileLaunchedEvent = {
   type: typeof GameEventType.MISSILE_LAUNCHED;
   payload: {
-    /** UUID generated by the attacker when confirming the target. */
     missileId: string;
-    /**
-     * Decoded target — sent so the server can verify the Morse sequence
-     * matches what was registered in ATTACK_PREP.
-     */
     target: Coordinate;
-    /**
-     * The full Morse sequence the attacker tapped out.
-     * Server re-decodes this independently and rejects if it does not
-     * resolve to `target`.
-     */
     morseSequence: MorseSequence;
-    /** Unix timestamp (ms) of transmission start — used by defender UI. */
     timestamp: number;
   };
 };
@@ -133,23 +78,17 @@ export type MissileLaunchedEvent = {
 export type InterceptAttemptEvent = {
   type: typeof GameEventType.INTERCEPT_ATTEMPT;
   payload: {
-    /** Must match the missileId in the preceding INCOMING_MISSILE. */
     missileId: string;
-    /** Coordinate the defender decoded from the Morse sequence. */
     decodedCoord: Coordinate;
-    /** 1-based attempt counter so the server can enforce max-attempts. */
     attemptNumber: number;
   };
 };
-
-// ---- Server-originated -------------------------------------------------------
 
 export type PlayerJoinedEvent = {
   type: typeof GameEventType.PLAYER_JOINED;
   payload: {
     playerId: string;
     playerName: string;
-    /** 1 or 2 — lets the client know whether the room is now full. */
     playerCount: 1 | 2;
   };
 };
@@ -157,7 +96,6 @@ export type PlayerJoinedEvent = {
 export type GameStartedEvent = {
   type: typeof GameEventType.GAME_STARTED;
   payload: {
-    /** ID of the player who fires first. */
     firstTurnPlayerId: string;
   };
 };
@@ -166,34 +104,23 @@ export type IncomingMissileEvent = {
   type: typeof GameEventType.INCOMING_MISSILE;
   payload: {
     missileId: string;
-    /**
-     * Morse sequence to play/display to the defender.
-     * Coordinate is intentionally absent — defender must decode manually.
-     */
     morseSequence: MorseSequence;
     timestamp: number;
-    /** Server-configured ceiling on decode attempts before auto-resolve. */
     maxAttempts: number;
   };
 };
 
-export type HitResult = 'hit' | 'miss' | 'sunk';
+export type HitResult = "hit" | "miss" | "sunk";
 
 export type ResolveHitEvent = {
   type: typeof GameEventType.RESOLVE_HIT;
   payload: {
     missileId: string;
-    /** Revealed to both players after resolution. */
     target: Coordinate;
     result: HitResult;
-    /** Player whose turn it is next. */
     nextTurnPlayerId: string;
     isGameOver: boolean;
     winnerId?: string | undefined;
-    /**
-     * Whether the defender decoded the coordinate correctly.
-     * Displayed in the UI as a performance indicator.
-     */
     defenderDecodedCorrectly: boolean;
   };
 };
@@ -202,15 +129,10 @@ export type SyncStateEvent = {
   type: typeof GameEventType.SYNC_STATE;
   payload: {
     phase: GamePhase;
-    /**
-     * The recipient's own board — includes ship positions.
-     * The enemy board only contains hit/miss/sunk cells (no ship positions).
-     */
     ownBoard: Board;
     enemyBoard: Board;
     activeMissiles: Missile[];
     isMyTurn: boolean;
-    /** Populated only when phase === 'gameOver'. */
     winnerId?: string | undefined;
   };
 };
@@ -218,7 +140,6 @@ export type SyncStateEvent = {
 export type ErrorEvent = {
   type: typeof GameEventType.ERROR;
   payload: {
-    /** Machine-readable error code for client-side i18n. */
     code: ErrorCode;
     message: string;
   };
@@ -227,22 +148,21 @@ export type ErrorEvent = {
 // ── Error codes ───────────────────────────────────────────────────────────────
 
 export const ErrorCode = {
-  ROOM_FULL:            'ROOM_FULL',
-  INVALID_PLACEMENT:    'INVALID_PLACEMENT',
-  NOT_YOUR_TURN:        'NOT_YOUR_TURN',
-  CELL_ALREADY_SHOT:    'CELL_ALREADY_SHOT',
-  MORSE_MISMATCH:       'MORSE_MISMATCH',
-  INVALID_COORDINATE:   'INVALID_COORDINATE',
-  MAX_ATTEMPTS_REACHED: 'MAX_ATTEMPTS_REACHED',
-  GAME_NOT_STARTED:     'GAME_NOT_STARTED',
-  INTERNAL:             'INTERNAL',
+  ROOM_FULL: "ROOM_FULL",
+  INVALID_PLACEMENT: "INVALID_PLACEMENT",
+  NOT_YOUR_TURN: "NOT_YOUR_TURN",
+  CELL_ALREADY_SHOT: "CELL_ALREADY_SHOT",
+  MORSE_MISMATCH: "MORSE_MISMATCH",
+  INVALID_COORDINATE: "INVALID_COORDINATE",
+  MAX_ATTEMPTS_REACHED: "MAX_ATTEMPTS_REACHED",
+  GAME_NOT_STARTED: "GAME_NOT_STARTED",
+  INTERNAL: "INTERNAL",
 } as const;
 
-export type ErrorCode = typeof ErrorCode[keyof typeof ErrorCode];
+export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
-// ── Discriminated union ───────────────────────────────────────────────────────
+// ── Discriminated unions ──────────────────────────────────────────────────────
 
-/** All events the CLIENT can send to the server. */
 export type ClientGameEvent =
   | JoinRoomEvent
   | ShipsPlacedEvent
@@ -250,7 +170,6 @@ export type ClientGameEvent =
   | MissileLaunchedEvent
   | InterceptAttemptEvent;
 
-/** All events the SERVER can push to a client. */
 export type ServerGameEvent =
   | PlayerJoinedEvent
   | GameStartedEvent
@@ -259,5 +178,4 @@ export type ServerGameEvent =
   | SyncStateEvent
   | ErrorEvent;
 
-/** Full union — useful for codec functions that handle both directions. */
 export type GameEvent = ClientGameEvent | ServerGameEvent;

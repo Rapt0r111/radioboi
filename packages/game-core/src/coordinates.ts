@@ -1,6 +1,6 @@
 // packages/game-core/src/coordinates.ts
 
-import type { Coordinate } from './types.js';
+import type { Coordinate } from "./types.js";
 
 // ── Константы поля ────────────────────────────────────────────────────────────
 
@@ -9,16 +9,16 @@ import type { Coordinate } from './types.js';
  * Индекс в массиве = colIndex (0..9).
  */
 export const COLUMNS = [
-  'АБВ', // 0
-  'ГДЕ', // 1
-  'ЖЗИ', // 2
-  'ЙКЛ', // 3
-  'МНО', // 4
-  'ПРС', // 5
-  'ТУФ', // 6
-  'ХЦЧ', // 7
-  'ШЩЪ', // 8
-  'ЫЭЮ', // 9
+  "АБВ", // 0
+  "ГДЕ", // 1
+  "ЖЗИ", // 2
+  "ЙКЛ", // 3
+  "МНО", // 4
+  "ПРС", // 5
+  "ТУФ", // 6
+  "ХЦЧ", // 7
+  "ШЩЪ", // 8
+  "ЫЭЮ", // 9
 ] as const;
 
 /**
@@ -26,21 +26,21 @@ export const COLUMNS = [
  * Индекс в массиве = rowIndex (0..9).
  */
 export const ROWS = [
-  '000', // 0
-  '001', // 1
-  '002', // 2
-  '003', // 3
-  '004', // 4
-  '005', // 5
-  '006', // 6
-  '007', // 7
-  '008', // 8
-  '009', // 9
+  "000", // 0
+  "001", // 1
+  "002", // 2
+  "003", // 3
+  "004", // 4
+  "005", // 5
+  "006", // 6
+  "007", // 7
+  "008", // 8
+  "009", // 9
 ] as const;
 
 // Быстрые Set-ы для O(1)-проверки
 const COLUMN_SET = new Set<string>(COLUMNS);
-const ROW_SET    = new Set<string>(ROWS);
+const ROW_SET = new Set<string>(ROWS);
 
 // ── Публичные функции ─────────────────────────────────────────────────────────
 
@@ -59,8 +59,12 @@ export function isValidCoordinate(str: string): str is Coordinate {
  */
 export function makeCoordinate(colIndex: number, rowIndex: number): Coordinate {
   if (
-    !Number.isInteger(colIndex) || colIndex < 0 || colIndex > 9 ||
-    !Number.isInteger(rowIndex) || rowIndex < 0 || rowIndex > 9
+    !Number.isInteger(colIndex) ||
+    colIndex < 0 ||
+    colIndex > 9 ||
+    !Number.isInteger(rowIndex) ||
+    rowIndex < 0 ||
+    rowIndex > 9
   ) {
     throw new RangeError(
       `makeCoordinate: индексы должны быть целыми числами 0–9, получено col=${colIndex}, row=${rowIndex}`,
@@ -81,8 +85,8 @@ export function parseCoordinate(coord: Coordinate): { colIndex: number; rowIndex
   // indexOf возвращает number, но не сужается до «не -1» через guard —
   // поэтому TypeScript считает COLUMNS[colIndex] как T | undefined.
   // Явная проверка + throw решает проблему без приведения типов.
-  const colIndex = COLUMNS.indexOf(col as typeof COLUMNS[number]);
-  const rowIndex = ROWS.indexOf(row as typeof ROWS[number]);
+  const colIndex = COLUMNS.indexOf(col as (typeof COLUMNS)[number]);
+  const rowIndex = ROWS.indexOf(row as (typeof ROWS)[number]);
   if (colIndex === -1 || rowIndex === -1) {
     throw new Error(`parseCoordinate: невалидная координата «${coord}»`);
   }

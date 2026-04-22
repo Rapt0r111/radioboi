@@ -3,32 +3,35 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev":        "next dev --turbopack",
-    "build":      "next build",
-    "start":      "next start",
-    "lint":       "biome lint ./app",
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "biome lint ./app",
     "type-check": "tsc --noEmit",
-    "clean":      "rm -rf .next .open-next dist"
+    "clean": "rm -rf .next .open-next dist"
   },
   "dependencies": {
-    "@msgpack/msgpack":       "latest",
+    "@msgpack/msgpack": "latest",
     "@opennextjs/cloudflare": "latest",
-    "@radioboi/game-core":    "workspace:*",
+    "@radioboi/game-core": "workspace:*",
     "@radioboi/morse-engine": "workspace:*",
-    "comlink":                "latest",
-    "next":                   "latest",
-    "react":                  "latest",
-    "react-dom":              "latest",
-    "zustand":                "latest"
+    "comlink": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zustand": "latest"
   },
   "devDependencies": {
-    "@tailwindcss/postcss":        "latest",
-    "@types/node":                 "latest",
-    "@types/react":                "latest",
-    "@types/react-dom":            "latest",
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
     "babel-plugin-react-compiler": "latest",
-    "tailwindcss":                 "latest",
-    "typescript":                  "latest"
+    "tailwindcss": "latest",
+    "typescript": "latest"
   },
-  "trustedDependencies": ["sharp", "unrs-resolver"]
+  "trustedDependencies": [
+    "sharp",
+    "unrs-resolver"
+  ]
 }
