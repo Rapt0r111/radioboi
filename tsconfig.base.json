@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    // ─── Strictness ───────────────────────────────────────────────────────────
+    "strict":                        true,
+    "strictNullChecks":              true,
+    "noImplicitAny":                 true,
+    "noImplicitReturns":             true,
+    "noFallthroughCasesInSwitch":    true,
+    "noUncheckedIndexedAccess":      true,
+    "exactOptionalPropertyTypes":    true,
+ 
+    // ─── Module ───────────────────────────────────────────────────────────────
+    "esModuleInterop":               true,
+    "skipLibCheck":                  true,
+    "forceConsistentCasingInFileNames": true,
+ 
+    // ─── Output (overridden per package) ──────────────────────────────────────
+    "declaration":                   true,
+    "declarationMap":                true,
+    "sourceMap":                     true
+  }
+}

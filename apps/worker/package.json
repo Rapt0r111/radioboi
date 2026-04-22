@@ -1,0 +1,22 @@
+{
+  "name": "@radioboi/worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cloudflare Worker: Durable Objects (GameRoomArbitrator) + KV",
+  "type": "module",
+  "scripts": {
+    "dev":        "wrangler dev",
+    "deploy":     "wrangler deploy",
+    "type-check": "tsc --noEmit",
+    "lint":       "biome lint ./src",
+    "clean":      "rm -rf dist"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "typescript":                "latest",
+    "wrangler":                  "latest"
+  }
+}

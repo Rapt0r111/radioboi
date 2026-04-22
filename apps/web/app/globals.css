@@ -1,0 +1,48 @@
+/* Путь: /apps/web/app/globals.css */
+
+/* Tailwind CSS v4: директива @import вместо @tailwind base/components/utilities */
+@import "tailwindcss";
+
+/* Дизайн-токены игры (Tailwind v4 @theme) */
+@theme {
+  --color-ocean-950:   #020d1a;
+  --color-ocean-900:   #041528;
+  --color-ocean-800:   #062040;
+  --color-radar-green: #00ff88;
+  --color-radar-dim:   #00552e;
+  --color-morse-amber: #ffaa00;
+  --color-hit-red:     #ff3b3b;
+  --color-miss-white:  #e0e8f0;
+  --font-mono-game:    "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { color-scheme: dark; scroll-behavior: smooth; }
+
+  body {
+    background-color: var(--color-ocean-950);
+    color:            var(--color-miss-white);
+    font-family:      var(--font-mono-game);
+    min-height:       100dvh;
+    margin:           0;
+  }
+
+  :focus-visible {
+    outline:        2px solid var(--color-radar-green);
+    outline-offset: 2px;
+  }
+}
+
+/* ── Анимации (используются в будущих компонентах) ─────────────────────── */
+
+@keyframes radar-pulse {
+  0%, 100% { opacity: 0.2; transform: scale(1);    }
+  50%       { opacity: 1;   transform: scale(1.05); }
+}
+
+@keyframes morse-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.next/
+.open-next/
+.turbo/
+.wrangler/
+.env
+.env.local
+.env.*.local
+.dev.vars
+bun.lock
+Thumbs.db
+desktop.ini

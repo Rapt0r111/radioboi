@@ -1,0 +1,25 @@
+
+name                = "radioboi-worker"
+main                = "src/index.ts"
+compatibility_date  = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── KV Namespace (хранение состояния комнат) ─────────────────────────────
+[[kv_namespaces]]
+binding    = "ROOM_STATE"
+id         = "d2006d944b59472c9a5dfee5d4ac52a2"
+preview_id = "0c0408ceb0064351bd2b1c14646df2e5"
+
+# ── Durable Objects ───────────────────────────────────────────────────────
+[[durable_objects.bindings]]
+name       = "GAME_ROOM"
+class_name = "GameRoomArbitrator"
+
+# Миграция: регистрирует класс в платформе Cloudflare.
+[[migrations]]
+tag          = "v1"
+new_classes  = ["GameRoomArbitrator"]
+
+# ── Среды ─────────────────────────────────────────────────────────────────
+[env.production]
+name = "radioboi-worker-prod"

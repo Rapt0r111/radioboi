@@ -1,0 +1,15 @@
+{
+  "name": "@radioboi/morse-engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Кодирование/декодирование Морзе, генерация аудио, тайминги",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "lint":       "biome lint ./src"
+  }
+}
+ 
