@@ -1,0 +1,51 @@
+/* apps/web/src/styles/utilities.css
+   Tailwind v4 кастомные утилиты: CRT-эффект и вспомогательные классы.
+   Импортируй в globals.css: @import "./src/styles/utilities.css";
+*/
+
+/* ── CRT scanlines ────────────────────────────────────────────────────────── */
+
+/**
+ * Накладывает поверх элемента псевдо-слой горизонтальных строчек экрана ЭЛТ.
+ * Реализовано ИСКЛЮЧИТЕЛЬНО через repeating-linear-gradient — никакого JS.
+ * Используй на контейнере игрового экрана: class="crt-scanlines"
+ */
+@utility crt-scanlines {
+  position: relative;
+
+  &::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(0, 0, 0, 0.18) 2px,
+      rgba(0, 0, 0, 0.18) 3px
+    );
+    /* Линии строго по пикселям, без масштабирования */
+    background-size: 100% 3px;
+    /* Мягкая виньетка для усиления CRT-атмосферы */
+    mask-image: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.4) 100%);
+  }
+}
+
+/* ── Radar glow ─────────────────────────────────────────────────────────── */
+
+@utility radar-glow {
+  box-shadow:
+    0 0 8px var(--color-radar-green),
+    0 0 24px rgba(0, 255, 136, 0.3),
+    inset 0 0 12px rgba(0, 255, 136, 0.05);
+}
+
+/* ── Morse amber text glow ──────────────────────────────────────────────── */
+
+@utility morse-glow {
+  text-shadow:
+    0 0 6px var(--color-morse-amber),
+    0 0 16px rgba(255, 170, 0, 0.5);
+}
