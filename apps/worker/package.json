@@ -12,7 +12,8 @@
     "clean":      "rm -rf dist"
   },
   "dependencies": {
-    "@msgpack/msgpack": "latest"
+    "@msgpack/msgpack": "latest",
+    "@radioboi/game-core": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
