@@ -1,15 +1,14 @@
 // apps/worker/src/GameRoomArbitrator.ts
-// PATCHED: see comments tagged [FIX #1] and [FIX #4]
 
 import type { RoomPhase, RoomState } from "./game-logic.js";
 import {
+  MAX_INTERCEPT_ATTEMPTS,
   addPlayer,
   applyShipsPlaced,
   createRoomState,
   getEnemyBoard,
   getOpponentId,
   getOwnBoard,
-  MAX_INTERCEPT_ATTEMPTS,
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
@@ -175,16 +174,18 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
-    const ships = payload["ships"];
+    // FIX(useLiteralKeys): payload["ships"] → payload.ships
+    const ships = payload.ships;
     if (!Array.isArray(ships) || ships.length === 0) {
       ws.send(makeError("INVALID_PLACEMENT", "ships must be a non-empty array"));
       return;
     }
     for (const ship of ships) {
+      // FIX(useLiteralKeys): (ship as ...)["coords"] → .coords
       if (
         typeof ship !== "object" ||
         ship === null ||
-        !Array.isArray((ship as Record<string, unknown>)["coords"])
+        !Array.isArray((ship as Record<string, unknown>).coords)
       ) {
         ws.send(makeError("INVALID_PLACEMENT", "Each ship must have a coords array"));
         return;
@@ -200,19 +201,12 @@ export class GameRoomArbitrator implements DurableObject {
     applyShipsPlaced(state, playerId, ships as Array<{ coords: string[] }>);
     await this.#saveState(state);
 
-    // [FIX #1] — use `as RoomPhase` to break TypeScript's control-flow narrowing.
-    //
-    // The guard `if (state.phase !== 'placement')` at the top of this handler
-    // causes TypeScript to narrow state.phase to the literal `'placement'`.
-    // applyShipsPlaced() may mutate state.phase to 'battle' (when both players
-    // are ready), but TypeScript cannot see through opaque function calls.
-    //
-    // A plain explicit annotation `const x: RoomPhase = state.phase` does NOT
-    // re-widen — TS tracks that x was assigned the narrowed value and keeps
-    // it as 'placement', making the comparison below a type error.
-    //
-    // `as RoomPhase` is a type assertion that breaks the narrowing chain at
-    // the value level, giving us the full union for the comparison.
+    // FIX(TS2367): use `as RoomPhase` to break TypeScript's control-flow narrowing.
+    // The guard `if (state.phase !== 'placement')` above narrows state.phase to the
+    // literal `'placement'`. applyShipsPlaced() may mutate it to `'battle'` when
+    // both players are ready, but TS cannot see through opaque function calls.
+    // A plain type annotation does NOT re-widen — TS tracks the narrowed value.
+    // `as RoomPhase` is a type assertion that breaks the narrowing chain.
     const phaseAfterPlacement = state.phase as RoomPhase;
 
     if (phaseAfterPlacement === "battle") {
@@ -227,8 +221,9 @@ export class GameRoomArbitrator implements DurableObject {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    const target = payload["target"];
-    const missileId = payload["missileId"];
+    // FIX(useLiteralKeys): payload["target"] → payload.target
+    const target = payload.target;
+    const missileId = payload.missileId;
 
     if (typeof target !== "string" || typeof missileId !== "string") {
       ws.send(makeError("INVALID_COORDINATE", "target and missileId are required"));
@@ -250,10 +245,11 @@ export class GameRoomArbitrator implements DurableObject {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    const missileId = payload["missileId"];
-    const target = payload["target"];
-    const morseSequence = payload["morseSequence"];
-    const timestamp = payload["timestamp"];
+    // FIX(useLiteralKeys): all bracket payload accesses → dot notation
+    const missileId = payload.missileId;
+    const target = payload.target;
+    const morseSequence = payload.morseSequence;
+    const timestamp = payload.timestamp;
 
     if (
       typeof missileId !== "string" ||
@@ -305,9 +301,10 @@ export class GameRoomArbitrator implements DurableObject {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    const missileId = payload["missileId"];
-    const decodedCoord = payload["decodedCoord"];
-    const attemptNumber = payload["attemptNumber"];
+    // FIX(useLiteralKeys): all bracket payload accesses → dot notation
+    const missileId = payload.missileId;
+    const decodedCoord = payload.decodedCoord;
+    const attemptNumber = payload.attemptNumber;
 
     if (
       typeof missileId !== "string" ||
@@ -334,17 +331,9 @@ export class GameRoomArbitrator implements DurableObject {
       forceResolve,
     );
 
-    // [FIX #4] — persist state even on failed intercept attempts.
-    //
-    // processInterceptAttempt mutates attack.attempts = attemptNumber regardless
-    // of whether the decode was correct.  Without saving here, that mutation is
-    // lost if the Durable Object hibernates between attempts.  Although the
-    // current forceResolve logic relies on the CLIENT's attemptNumber (making
-    // the omission non-fatal today), persisting is the correct behaviour and
-    // closes a potential exploit where a client repeatedly sends attemptNumber=1.
+    // Persist state even on failed intercept to save the updated attempt counter.
     if (resolveResult === null) {
       await this.#saveState(state);
-      // Wrong decode, attempts remain — client may retry.
       return;
     }
 

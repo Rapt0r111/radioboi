@@ -8,11 +8,12 @@ import {
   type ServerGameEvent,
 } from "@radioboi/game-core";
 import { useGameStore } from "@/src/store/gameStore.js";
-import { decodeServerEvent, encodeClientEvent, FrameDecodeError } from "./msgpack.js";
+import { FrameDecodeError, decodeServerEvent, encodeClientEvent } from "./msgpack.js";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const DEFAULT_WS_URL = process.env["NEXT_PUBLIC_WS_URL"] ?? "ws://localhost:8787";
+// FIX(useLiteralKeys): process.env["NEXT_PUBLIC_WS_URL"] → process.env.NEXT_PUBLIC_WS_URL
+const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8787";
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_JITTER = 0.2;
@@ -182,11 +183,8 @@ export class GameClient {
 
   /**
    * Applies known server events to the Zustand gameStore.
-   *
-   * Board state (ownBoard / enemyBoard) is always authoritative on the server.
-   * After each RESOLVE_HIT the server immediately sends SYNC_STATE with updated
-   * boards, so board mutations here are intentionally minimal — we only handle
-   * phase transitions and missile tracking.
+   * SYNC_STATE is the authoritative source for board state — it is sent by the
+   * server after every phase transition and after each RESOLVE_HIT.
    */
   #applyToStore(event: ServerGameEvent): void {
     const store = useGameStore.getState();
@@ -202,6 +200,7 @@ export class GameClient {
       case GameEventType.INCOMING_MISSILE:
         store.addMissile({
           id: event.payload.missileId,
+          // Defender does not know the target yet; placeholder required by type.
           target: "" as unknown as Coordinate,
           launchedAt: event.payload.timestamp,
         });
@@ -214,10 +213,7 @@ export class GameClient {
         }
         break;
 
-      // [FIX #3] — call syncFromServer() instead of only setPhase().
-      // This propagates ownBoard, enemyBoard, and isMyTurn from the server's
-      // authoritative snapshot, keeping the client consistent after reconnect
-      // or phase transitions (e.g. lobby → placement → battle).
+      // Full authoritative snapshot — sync phase, boards, and turn flag atomically.
       case GameEventType.SYNC_STATE:
         store.syncFromServer(event.payload);
         break;

@@ -42,11 +42,14 @@ export function decodeEvent(msg: string | ArrayBuffer): RawEvent | null {
     const buf = msg instanceof ArrayBuffer ? new Uint8Array(msg) : msg;
     const value = decode(buf);
 
+    // FIX(useLiteralKeys): replace bracket notation with dot notation.
+    // `record["key"]` and `record.key` are semantically identical when the
+    // key is a valid identifier string literal; biome prefers the latter.
     if (
       typeof value !== "object" ||
       value === null ||
-      typeof (value as Record<string, unknown>)["type"] !== "string" ||
-      typeof (value as Record<string, unknown>)["payload"] !== "object"
+      typeof (value as Record<string, unknown>).type !== "string" ||
+      typeof (value as Record<string, unknown>).payload !== "object"
     ) {
       return null;
     }

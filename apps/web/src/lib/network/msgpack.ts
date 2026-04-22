@@ -47,10 +47,11 @@ export async function decodeServerEvent(data: ArrayBuffer | Blob): Promise<Serve
     const buffer = data instanceof Blob ? await data.arrayBuffer() : data;
     const decoded = decode(new Uint8Array(buffer));
 
+    // FIX(useLiteralKeys): (decoded as Record<string, unknown>)["type"] → .type
     if (
       typeof decoded !== "object" ||
       decoded === null ||
-      typeof (decoded as Record<string, unknown>)["type"] !== "string"
+      typeof (decoded as Record<string, unknown>).type !== "string"
     ) {
       throw new FrameDecodeError("Frame missing `type` field", data);
     }

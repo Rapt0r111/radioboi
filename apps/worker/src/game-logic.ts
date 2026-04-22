@@ -87,9 +87,13 @@ export function addPlayer(
   player: PlayerRecord,
 ): { ok: true } | { ok: false; reason: "ROOM_FULL" | "ALREADY_JOINED" } {
   if (state.players.some((p) => p.id === player.id)) {
-    // Reconnect — update wsTag but don't duplicate
+    // Reconnect — update wsTag but don't duplicate.
+    // FIX(noNonNullAssertion): extract element to a local variable and guard.
     const idx = state.players.findIndex((p) => p.id === player.id);
-    state.players[idx] = { ...state.players[idx]!, wsTag: player.wsTag };
+    const existing = state.players[idx];
+    if (existing) {
+      state.players[idx] = { ...existing, wsTag: player.wsTag };
+    }
     return { ok: true };
   }
   if (state.players.length >= 2) {
@@ -133,11 +137,14 @@ export function applyShipsPlaced(
   const player = state.players.find((p) => p.id === playerId);
   if (player) player.isReady = true;
 
-  // Both ready → move to battle
+  // Both ready → move to battle.
   if (state.players.length === 2 && state.players.every((p) => p.isReady)) {
     state.phase = "battle";
-    // Random first turn
-    state.currentTurnId = state.players[Math.random() < 0.5 ? 0 : 1]!.id;
+    // FIX(noNonNullAssertion): use optional chaining; result is `string | undefined`.
+    // At this point state.players.length === 2 so the player exists, but TS
+    // cannot verify that through a dynamic index, so we fall back to null.
+    const randomIdx = Math.random() < 0.5 ? 0 : 1;
+    state.currentTurnId = state.players[randomIdx]?.id ?? null;
   }
 }
 
@@ -202,10 +209,14 @@ export const MAX_INTERCEPT_ATTEMPTS = 3;
  * @param decodedCoord  What the defender decoded.
  * @param forceResolve  True when max attempts exhausted — skip decode check.
  * @returns null if the attempt is wrong AND attempts remain; ResolveResult otherwise.
+ *
+ * FIX(noUnusedFunctionParameters): defenderId is intentionally unused — the
+ * server validates the missile ID against the pending attack instead of the
+ * player ID. Prefixed with _ to signal this is deliberate.
  */
 export function processInterceptAttempt(
   state: RoomState,
-  defenderId: string,
+  _defenderId: string,
   missileId: string,
   decodedCoord: Coord,
   attemptNumber: number,
@@ -232,8 +243,25 @@ export function processInterceptAttempt(
  * Mutates the opponent's board in-place and clears pendingAttack.
  */
 export function resolveHit(state: RoomState, attackerId: string, target: Coord): ResolveResult {
-  const opponentId = getOpponentId(state, attackerId)!;
-  const opponentBoard = state.boards[opponentId] ?? (state.boards[opponentId] = {});
+  // FIX(noNonNullAssertion): guard against null instead of using !
+  // resolveHit is only called during battle phase (2 players present), so
+  // opponentId is never null in practice. The guard satisfies TypeScript and
+  // protects against future misuse.
+  const opponentId = getOpponentId(state, attackerId);
+  if (!opponentId) {
+    // Unreachable in normal play — return a safe no-op result.
+    return { result: "miss", isGameOver: false, winnerId: null };
+  }
+
+  // FIX(noAssignInExpressions): separate board initialisation from the read.
+  // `state.boards[opponentId] ?? (state.boards[opponentId] = {})` is an
+  // assignment inside an expression, which biome forbids as confusing.
+  const existingBoard = state.boards[opponentId];
+  const opponentBoard: BoardMap = existingBoard ?? {};
+  if (!existingBoard) {
+    state.boards[opponentId] = opponentBoard;
+  }
+
   const opponentShips = state.ships[opponentId] ?? [];
 
   const wasShip =

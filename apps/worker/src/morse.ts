@@ -109,7 +109,9 @@ export function morseToCoordIndices(
   const colIndex = letter.charCodeAt(0) - 65; // A→0 … J→9
   const rowIndex = parseInt(digit, 10);
 
-  if (colIndex < 0 || colIndex > 9 || isNaN(rowIndex) || rowIndex < 0 || rowIndex > 9) {
+  // FIX(noGlobalIsNan): use Number.isNaN — the global isNaN coerces its
+  // argument before testing, which can mask bugs. Number.isNaN is strict.
+  if (colIndex < 0 || colIndex > 9 || Number.isNaN(rowIndex) || rowIndex < 0 || rowIndex > 9) {
     return null;
   }
 
