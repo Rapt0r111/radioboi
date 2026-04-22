@@ -25,25 +25,14 @@ import {
 } from "./protocol.js";
 import type { Env } from "./types.js";
 
-// ── Coordinate helpers (inlined — no game-core dep in worker) ─────────────────
+// ── Coordinate helpers (imported from game-core) ──────────────────────────────
 
-const COLUMNS = ["АБВ", "ГДЕ", "ЖЗИ", "ЙКЛ", "МНО", "ПРС", "ТУФ", "ХЦЧ", "ШЩЪ", "ЫЭЮ"] as const;
-
-const ROWS = ["000", "001", "002", "003", "004", "005", "006", "007", "008", "009"] as const;
-
-function isValidCoord(s: string): boolean {
-  if (s.length !== 6) return false;
-  return (
-    (COLUMNS as ReadonlyArray<string>).includes(s.slice(0, 3)) &&
-    (ROWS as ReadonlyArray<string>).includes(s.slice(3, 6))
-  );
-}
+import { isValidCoordinate, parseCoordinate as parseCoordCore } from "game-core";
 
 function coordToIndices(coord: string): { colIndex: number; rowIndex: number } | null {
-  if (!isValidCoord(coord)) return null;
-  const colIndex = (COLUMNS as ReadonlyArray<string>).indexOf(coord.slice(0, 3));
-  const rowIndex = (ROWS as ReadonlyArray<string>).indexOf(coord.slice(3, 6));
-  return colIndex === -1 || rowIndex === -1 ? null : { colIndex, rowIndex };
+  if (!isValidCoordinate(coord)) return null;
+  const { colIndex, rowIndex } = parseCoordCore(coord as any);
+  return { colIndex, rowIndex };
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -191,7 +180,7 @@ export class GameRoomArbitrator implements DurableObject {
         return;
       }
       for (const coord of (ship as { coords: unknown[] }).coords) {
-        if (typeof coord !== "string" || !isValidCoord(coord)) {
+        if (typeof coord !== "string" || !isValidCoordinate(coord)) {
           ws.send(makeError("INVALID_COORDINATE", `Invalid coordinate: ${String(coord)}`));
           return;
         }
@@ -312,7 +301,7 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
-    if (!isValidCoord(decodedCoord)) {
+    if (!isValidCoordinate(decodedCoord)) {
       ws.send(makeError("INVALID_COORDINATE", `Invalid coordinate: ${decodedCoord}`));
       return;
     }
