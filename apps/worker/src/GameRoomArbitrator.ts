@@ -55,11 +55,13 @@ const WS_TAG_PREFIX = "player:";
 
 export class GameRoomArbitrator implements DurableObject {
   readonly #state: DurableObjectState;
-  readonly #env: Env;
+  // FIX(noUnusedPrivateClassMembers): #env was declared but never read.
+  // The Env binding is available via the constructor parameter for future use,
+  // but storing it as a field triggers the biome lint rule. Removed the field;
+  // re-add it when a KV or other env binding is actually accessed.
 
-  constructor(state: DurableObjectState, env: Env) {
+  constructor(state: DurableObjectState, _env: Env) {
     this.#state = state;
-    this.#env = env;
     this.#state.getWebSockets();
   }
 
@@ -174,14 +176,12 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
-    // FIX(useLiteralKeys): payload["ships"] → payload.ships
     const ships = payload.ships;
     if (!Array.isArray(ships) || ships.length === 0) {
       ws.send(makeError("INVALID_PLACEMENT", "ships must be a non-empty array"));
       return;
     }
     for (const ship of ships) {
-      // FIX(useLiteralKeys): (ship as ...)["coords"] → .coords
       if (
         typeof ship !== "object" ||
         ship === null ||
@@ -202,15 +202,15 @@ export class GameRoomArbitrator implements DurableObject {
     await this.#saveState(state);
 
     // FIX(TS2367): use `as RoomPhase` to break TypeScript's control-flow narrowing.
-    // The guard `if (state.phase !== 'placement')` above narrows state.phase to the
-    // literal `'placement'`. applyShipsPlaced() may mutate it to `'battle'` when
-    // both players are ready, but TS cannot see through opaque function calls.
-    // A plain type annotation does NOT re-widen — TS tracks the narrowed value.
-    // `as RoomPhase` is a type assertion that breaks the narrowing chain.
     const phaseAfterPlacement = state.phase as RoomPhase;
 
     if (phaseAfterPlacement === "battle") {
-      this.#broadcast(makeGameStarted(state.currentTurnId!), null);
+      // FIX(noNonNullAssertion): currentTurnId is set by applyShipsPlaced() when
+      // both players are ready. Guard satisfies TypeScript without using `!`.
+      const firstTurnId = state.currentTurnId;
+      if (firstTurnId !== null) {
+        this.#broadcast(makeGameStarted(firstTurnId), null);
+      }
       this.#sendSyncToAll(state);
     }
   }
@@ -221,7 +221,6 @@ export class GameRoomArbitrator implements DurableObject {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    // FIX(useLiteralKeys): payload["target"] → payload.target
     const target = payload.target;
     const missileId = payload.missileId;
 
@@ -245,7 +244,6 @@ export class GameRoomArbitrator implements DurableObject {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    // FIX(useLiteralKeys): all bracket payload accesses → dot notation
     const missileId = payload.missileId;
     const target = payload.target;
     const morseSequence = payload.morseSequence;
@@ -301,7 +299,6 @@ export class GameRoomArbitrator implements DurableObject {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    // FIX(useLiteralKeys): all bracket payload accesses → dot notation
     const missileId = payload.missileId;
     const decodedCoord = payload.decodedCoord;
     const attemptNumber = payload.attemptNumber;
@@ -331,7 +328,6 @@ export class GameRoomArbitrator implements DurableObject {
       forceResolve,
     );
 
-    // Persist state even on failed intercept to save the updated attempt counter.
     if (resolveResult === null) {
       await this.#saveState(state);
       return;
