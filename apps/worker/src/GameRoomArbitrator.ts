@@ -1,22 +1,4 @@
 // apps/worker/src/GameRoomArbitrator.ts
-//
-// Cloudflare Durable Object — one instance per game room.
-//
-// Responsibilities:
-//   • Accept and manage exactly 2 WebSocket connections via the
-//     Hibernation API (cost-efficient; DO sleeps between messages).
-//   • Persist full RoomState in DO Storage; survives DO eviction.
-//   • Arbitrate every game phase: lobby → placement → battle → gameOver.
-//   • Validate ship placement, Morse sequences, and turn order.
-//   • Broadcast server events as binary MessagePack frames.
-//
-// Message flow (battle turn):
-//   1. Attacker  → ATTACK_PREP      (registers target)
-//   2. Attacker  → MISSILE_LAUNCHED (submits Morse; server validates + relays)
-//   3. Defender  ← INCOMING_MISSILE (Morse sequence, no coordinate)
-//   4. Defender  → INTERCEPT_ATTEMPT (decoded coordinate)
-//   5. Both      ← RESOLVE_HIT      (result + next turn)
-//   6. Reconnect ← SYNC_STATE       (full state snapshot)
 
 import type { Env } from './types.js';
 import {
@@ -39,12 +21,11 @@ import {
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
-  resolveHit,
 } from './game-logic.js';
-import type { RoomState } from './game-logic.js';
+import type { RoomPhase, RoomState } from './game-logic.js';
 import { validateMorseForCoord } from './morse.js';
 
-// ── Coordinate helpers (inlined — worker has no game-core dep) ────────────────
+// ── Coordinate helpers (inlined — no game-core dep in worker) ─────────────────
 
 const COLUMNS = [
   'АБВ', 'ГДЕ', 'ЖЗИ', 'ЙКЛ', 'МНО',
@@ -68,20 +49,18 @@ function coordToIndices(coord: string): { colIndex: number; rowIndex: number } |
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STATE_KEY    = 'room:state';
+const STATE_KEY     = 'room:state';
 const WS_TAG_PREFIX = 'player:';
 
 // ── Durable Object ────────────────────────────────────────────────────────────
 
 export class GameRoomArbitrator implements DurableObject {
   readonly #state: DurableObjectState;
-  // Env is available for future use (e.g., KV audit log).
-  readonly #env: Env;
+  readonly #env:   Env;
 
   constructor(state: DurableObjectState, env: Env) {
     this.#state = state;
     this.#env   = env;
-    // Restore hibernating WebSocket connections automatically.
     this.#state.getWebSockets();
   }
 
@@ -92,11 +71,8 @@ export class GameRoomArbitrator implements DurableObject {
       return new Response('Expected WebSocket upgrade', { status: 426 });
     }
 
-    // roomId is extracted from the URL path /room/<roomId> by the entry worker.
-    const url    = new URL(request.url);
-    const roomId = url.pathname.split('/').pop() ?? 'unknown';
-
-    // playerId comes from the query string: ?playerId=<uuid>
+    const url        = new URL(request.url);
+    const roomId     = url.pathname.split('/').pop() ?? 'unknown';
     const playerId   = url.searchParams.get('playerId');
     const playerName = url.searchParams.get('playerName') ?? 'Player';
 
@@ -105,10 +81,8 @@ export class GameRoomArbitrator implements DurableObject {
     }
 
     const { 0: client, 1: server } = new WebSocketPair();
-    // Tag the server socket with the playerId for retrieval during hibernation.
     this.#state.acceptWebSocket(server, [`${WS_TAG_PREFIX}${playerId}`]);
 
-    // Load-or-create room state, then register the player.
     const roomState = await this.#loadState(roomId);
     const addResult = addPlayer(roomState, {
       id:      playerId,
@@ -124,24 +98,18 @@ export class GameRoomArbitrator implements DurableObject {
 
     await this.#saveState(roomState);
 
-    // Notify all connected players of the new arrival.
     this.#broadcast(
-      makePlayerJoined(
-        playerId,
-        playerName,
-        roomState.players.length as 1 | 2,
-      ),
+      makePlayerJoined(playerId, playerName, roomState.players.length as 1 | 2),
       null,
     );
 
-    // Send full state snapshot to the reconnecting / newly-joined player.
     this.#sendToPlayer(
       playerId,
       makeSyncState(
         roomState.phase,
         getOwnBoard(roomState, playerId),
         getEnemyBoard(roomState, playerId),
-        [],   // activeMissiles — managed client-side
+        [],
         roomState.currentTurnId === playerId,
         roomState.winnerId ?? undefined,
       ),
@@ -154,37 +122,29 @@ export class GameRoomArbitrator implements DurableObject {
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     const event = decodeEvent(raw);
-    if (!event) return; // malformed frame — silently discard
+    if (!event) return;
 
-    // Identify the sender from the socket's hibernation tag.
     const tag = this.#state.getTags(ws).find((t) => t.startsWith(WS_TAG_PREFIX));
     if (!tag) return;
     const senderId = tag.slice(WS_TAG_PREFIX.length);
 
-    // All handlers need room state.
     const roomState = await this.#loadState();
 
     switch (event.type) {
       case 'JOIN_ROOM':
-        // Handled at connection time via fetch(); this is a no-op.
         break;
-
       case 'SHIPS_PLACED':
         await this.#handleShipsPlaced(ws, senderId, event.payload, roomState);
         break;
-
       case 'ATTACK_PREP':
         await this.#handleAttackPrep(ws, senderId, event.payload, roomState);
         break;
-
       case 'MISSILE_LAUNCHED':
         await this.#handleMissileLaunched(ws, senderId, event.payload, roomState);
         break;
-
       case 'INTERCEPT_ATTEMPT':
         await this.#handleInterceptAttempt(ws, senderId, event.payload, roomState);
         break;
-
       default:
         ws.send(makeError('UNKNOWN_EVENT', `Unknown event type: ${event.type}`));
     }
@@ -201,10 +161,10 @@ export class GameRoomArbitrator implements DurableObject {
   // ── Game event handlers ────────────────────────────────────────────────────
 
   async #handleShipsPlaced(
-    ws:        WebSocket,
-    playerId:  string,
-    payload:   Record<string, unknown>,
-    state:     RoomState,
+    ws:       WebSocket,
+    playerId: string,
+    payload:  Record<string, unknown>,
+    state:    RoomState,
   ): Promise<void> {
     if (state.phase !== 'placement') {
       ws.send(makeError('GAME_NOT_STARTED', 'Ship placement is not open'));
@@ -215,26 +175,20 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
-    // Minimal inline fleet validation (full validation lives in game-core
-    // on the client side; worker checks basics for anti-cheat).
     const ships = payload['ships'];
     if (!Array.isArray(ships) || ships.length === 0) {
       ws.send(makeError('INVALID_PLACEMENT', 'ships must be a non-empty array'));
       return;
     }
-
-    // Check each ship has a valid `coords` array with valid coordinates.
     for (const ship of ships) {
       if (
-        typeof ship !== 'object'
-        || ship === null
+        typeof ship !== 'object' || ship === null
         || !Array.isArray((ship as Record<string, unknown>)['coords'])
       ) {
         ws.send(makeError('INVALID_PLACEMENT', 'Each ship must have a coords array'));
         return;
       }
-      const coords = (ship as { coords: unknown[] }).coords;
-      for (const coord of coords) {
+      for (const coord of (ship as { coords: unknown[] }).coords) {
         if (typeof coord !== 'string' || !isValidCoord(coord)) {
           ws.send(makeError('INVALID_COORDINATE', `Invalid coordinate: ${String(coord)}`));
           return;
@@ -242,17 +196,18 @@ export class GameRoomArbitrator implements DurableObject {
       }
     }
 
-    applyShipsPlaced(
-      state,
-      playerId,
-      ships as Array<{ coords: string[] }>,
-    );
+    applyShipsPlaced(state, playerId, ships as Array<{ coords: string[] }>);
     await this.#saveState(state);
 
-    if (state.phase === 'battle') {
-      // Both players ready — announce game start with first turn.
+    // FIX: TypeScript narrowed `state.phase` to `'placement'` via the guard
+    // at the top of this handler.  `applyShipsPlaced` may mutate it to
+    // `'battle'` when both players are ready, but control-flow analysis
+    // cannot see through an opaque function call.  Reading through the
+    // shared `RoomPhase` alias re-widens the type to the full union.
+    const phaseAfterPlacement: RoomPhase = state.phase;
+
+    if (phaseAfterPlacement === 'battle') {
       this.#broadcast(makeGameStarted(state.currentTurnId!), null);
-      // Send each player a personalised sync so their boards are correct.
       this.#sendSyncToAll(state);
     }
   }
@@ -272,14 +227,12 @@ export class GameRoomArbitrator implements DurableObject {
     }
 
     const result = prepareAttack(state, playerId, target, missileId);
-
     if (!result.ok) {
       ws.send(makeError(result.reason, result.reason));
       return;
     }
 
     await this.#saveState(state);
-    // No broadcast needed — ATTACK_PREP is a silent server-side lock.
   }
 
   async #handleMissileLaunched(
@@ -309,20 +262,13 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
-    // Validate Morse sequence against the stored target
     const indices = coordToIndices(target);
     if (!indices) {
       ws.send(makeError('INVALID_COORDINATE', `Invalid target coordinate: ${target}`));
       return;
     }
 
-    const isValidMorse = validateMorseForCoord(
-      morseSequence as string[],
-      indices.colIndex,
-      indices.rowIndex,
-    );
-
-    if (!isValidMorse) {
+    if (!validateMorseForCoord(morseSequence as string[], indices.colIndex, indices.rowIndex)) {
       ws.send(makeError('MORSE_MISMATCH', 'Morse sequence does not match target coordinate'));
       return;
     }
@@ -330,7 +276,6 @@ export class GameRoomArbitrator implements DurableObject {
     recordMorseSequence(state, missileId, morseSequence as string[]);
     await this.#saveState(state);
 
-    // Relay Morse to defender (WITHOUT target coordinate)
     const opponentId = getOpponentId(state, playerId);
     if (opponentId) {
       this.#sendToPlayer(
@@ -376,21 +321,22 @@ export class GameRoomArbitrator implements DurableObject {
     );
 
     if (resolveResult === null) {
-      // Wrong decode but attempts remain — do NOT advance state; let client retry.
+      // Wrong decode, attempts remain — client may retry.
       return;
     }
 
     await this.#saveState(state);
 
-    const attackerId  = state.shotLog[state.shotLog.length - 1]?.attackerId ?? playerId;
-    const defenderDecodedCorrectly = decodedCoord === state.shotLog[state.shotLog.length - 1]?.target;
+    const lastShot   = state.shotLog[state.shotLog.length - 1];
+    const shotTarget = lastShot?.target ?? '';
+    const defenderDecodedCorrectly = decodedCoord === shotTarget;
 
     this.#broadcast(
       makeResolveHit(
         missileId,
-        state.shotLog[state.shotLog.length - 1]?.target ?? '',
+        shotTarget,
         resolveResult.result,
-        state.currentTurnId ?? attackerId,
+        state.currentTurnId ?? (lastShot?.attackerId ?? playerId),
         resolveResult.isGameOver,
         defenderDecodedCorrectly,
         resolveResult.winnerId ?? undefined,
@@ -398,35 +344,27 @@ export class GameRoomArbitrator implements DurableObject {
       null,
     );
 
-    // Send updated personalised boards to each player.
     this.#sendSyncToAll(state);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  /** Sends a binary frame to a specific player by their playerId tag. */
   #sendToPlayer(playerId: string, frame: Uint8Array): void {
-    const sockets = this.#state.getWebSockets(`${WS_TAG_PREFIX}${playerId}`);
-    for (const ws of sockets) {
-      try { ws.send(frame); } catch { /* socket may have closed */ }
+    for (const ws of this.#state.getWebSockets(`${WS_TAG_PREFIX}${playerId}`)) {
+      try { ws.send(frame); } catch { /* closed */ }
     }
   }
 
-  /**
-   * Broadcasts a binary frame to all connected sockets.
-   * If `excludePlayerId` is set, that player's sockets are skipped.
-   */
   #broadcast(frame: Uint8Array, excludePlayerId: string | null): void {
     for (const ws of this.#state.getWebSockets()) {
       if (excludePlayerId !== null) {
         const tags = this.#state.getTags(ws);
         if (tags.includes(`${WS_TAG_PREFIX}${excludePlayerId}`)) continue;
       }
-      try { ws.send(frame); } catch { /* socket may have closed */ }
+      try { ws.send(frame); } catch { /* closed */ }
     }
   }
 
-  /** Sends a personalised SYNC_STATE to every connected player. */
   #sendSyncToAll(state: RoomState): void {
     for (const player of state.players) {
       this.#sendToPlayer(
@@ -448,9 +386,7 @@ export class GameRoomArbitrator implements DurableObject {
   async #loadState(roomId?: string): Promise<RoomState> {
     const stored = await this.#state.storage.get<RoomState>(STATE_KEY);
     if (stored) return stored;
-    // Bootstrap a fresh room if none exists yet.
-    const id = roomId ?? 'room';
-    return createRoomState(id);
+    return createRoomState(roomId ?? 'room');
   }
 
   async #saveState(state: RoomState): Promise<void> {

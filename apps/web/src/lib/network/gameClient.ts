@@ -1,22 +1,10 @@
 // apps/web/src/lib/network/gameClient.ts
-// Manages the WebSocket connection to the Cloudflare Worker.
-//
-// Design principles:
-//   • Single connection per tab — callers share one instance via
-//     getGameClient() singleton.
-//   • Auto-reconnect with exponential back-off (max 30 s).
-//   • All frames are binary MessagePack; text frames are discarded.
-//   • Incoming ServerGameEvents are dispatched to registered handlers and
-//     also applied to the Zustand gameStore automatically.
-//   • No React imports — this is plain TypeScript, safe to use from
-//     Server Actions, Web Workers, or utility code.
-
 'use client';
 
 import {
-  ErrorCode,
   GameEventType,
   type ClientGameEvent,
+  type Coordinate,
   type ServerGameEvent,
 } from '@radioboi/game-core';
 import { FrameDecodeError, decodeServerEvent, encodeClientEvent } from './msgpack.js';
@@ -27,7 +15,7 @@ import { useGameStore } from '@/src/store/gameStore.js';
 const DEFAULT_WS_URL    = process.env['NEXT_PUBLIC_WS_URL'] ?? 'ws://localhost:8787';
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS  = 30_000;
-const RECONNECT_JITTER  = 0.2;   // ±20 % jitter to avoid thundering herd
+const RECONNECT_JITTER  = 0.2;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,7 +25,6 @@ export type ConnectionStatus =
   | 'connected'
   | 'reconnecting';
 
-/** Callback registered for a specific event type. */
 type EventHandler<T extends ServerGameEvent = ServerGameEvent> = (event: T) => void;
 
 type HandlerMap = {
@@ -59,23 +46,12 @@ export class GameClient {
 
   // ── Connection lifecycle ──────────────────────────────────────────────────
 
-  /**
-   * Opens a WebSocket connection to the game server.
-   * @param roomId     Room identifier (maps to Durable Object name).
-   * @param playerId   Stable UUID for this player.
-   * @param playerName Display name sent on JOIN_ROOM.
-   */
   connect(roomId: string, playerId: string, playerName: string): void {
     if (this.#destroyed) throw new Error('GameClient has been destroyed');
-
     this.#url = `${DEFAULT_WS_URL}/room/${roomId}?playerId=${encodeURIComponent(playerId)}&playerName=${encodeURIComponent(playerName)}`;
     this.#openSocket(playerId, playerName);
   }
 
-  /**
-   * Gracefully closes the connection and prevents any reconnect attempts.
-   * Call this when the component/page unmounts.
-   */
   destroy(): void {
     this.#destroyed = true;
     this.#clearReconnectTimer();
@@ -92,7 +68,9 @@ export class GameClient {
 
   /**
    * Serialises and sends a typed event to the server.
-   * Silently drops the frame if the socket is not open.
+   * Silently drops the frame if the socket is not OPEN.
+   * `encodeClientEvent` returns `ArrayBuffer`, which `WebSocket.send()` accepts
+   * directly without a type error.
    */
   send(event: ClientGameEvent): void {
     if (this.#ws?.readyState !== WebSocket.OPEN) return;
@@ -105,34 +83,21 @@ export class GameClient {
 
   // ── Typed event subscription ──────────────────────────────────────────────
 
-  /**
-   * Subscribes to a specific server event type.
-   * Returns an unsubscribe function.
-   *
-   * @example
-   * const unsub = client.on('RESOLVE_HIT', (ev) => { … });
-   * // later:
-   * unsub();
-   */
   on<K extends ServerGameEvent['type']>(
     type:    K,
     handler: EventHandler<Extract<ServerGameEvent, { type: K }>>,
   ): () => void {
     if (!this.#handlers[type]) {
-      // @ts-expect-error — dynamic key assignment; safe by construction
+      // @ts-expect-error — dynamic key; safe by construction
       this.#handlers[type] = new Set();
     }
     // @ts-expect-error — same as above
     (this.#handlers[type] as Set<EventHandler>).add(handler);
-
     return () => {
-      (this.#handlers[type] as Set<EventHandler> | undefined)?.delete(
-        handler as EventHandler,
-      );
+      (this.#handlers[type] as Set<EventHandler> | undefined)?.delete(handler as EventHandler);
     };
   }
 
-  /** Subscribe to connection status changes. */
   onStatusChange(listener: (status: ConnectionStatus) => void): () => void {
     this.#statusListeners.add(listener);
     return () => this.#statusListeners.delete(listener);
@@ -153,16 +118,12 @@ export class GameClient {
         if (ws !== this.#ws) return;
         this.#reconnectDelay = RECONNECT_BASE_MS;
         this.#setStatus('connected');
-        // Announce ourselves immediately after upgrade.
-        this.send({
-          type:    GameEventType.JOIN_ROOM,
-          payload: { playerId, playerName },
-        });
+        this.send({ type: GameEventType.JOIN_ROOM, payload: { playerId, playerName } });
       });
 
       ws.addEventListener('message', (ev: MessageEvent<ArrayBuffer | Blob | string>) => {
         if (ws !== this.#ws) return;
-        if (typeof ev.data === 'string') return; // text frames are not used
+        if (typeof ev.data === 'string') return;
         void this.#handleFrame(ev.data as ArrayBuffer | Blob);
       });
 
@@ -176,14 +137,11 @@ export class GameClient {
       });
 
       ws.addEventListener('error', () => {
-        // 'error' always precedes 'close'; handling is done in the close handler.
         console.warn('[GameClient] WebSocket error');
       });
     } catch (err) {
       console.error('[GameClient] WebSocket construction failed:', err);
-      if (!this.#destroyed) {
-        this.#scheduleReconnect(playerId, playerName);
-      }
+      if (!this.#destroyed) this.#scheduleReconnect(playerId, playerName);
     }
   }
 
@@ -222,78 +180,70 @@ export class GameClient {
       }
       return;
     }
-
-    // Apply to Zustand store first, then dispatch to listeners.
     this.#applyToStore(event);
     this.#dispatch(event);
   }
 
-  /** Applies known server events to the Zustand gameStore. */
+  /**
+   * Applies known server events to the Zustand gameStore.
+   *
+   * Board state (ownBoard / enemyBoard) is always authoritative on the server.
+   * After each RESOLVE_HIT the server immediately sends SYNC_STATE with updated
+   * boards, so board mutations here are intentionally minimal — we only handle
+   * phase transitions and missile tracking.
+   */
   #applyToStore(event: ServerGameEvent): void {
     const store = useGameStore.getState();
 
     switch (event.type) {
+      // ── PLAYER_JOINED: no store mutation needed; UI subscribes via on() ──
+      case GameEventType.PLAYER_JOINED:
+        break;
+
+      // ── GAME_STARTED: advance phase, set turn flag ─────────────────────
       case GameEventType.GAME_STARTED:
         store.setPhase('battle');
         break;
 
+      // ── INCOMING_MISSILE: register in activeMissiles so the UI can
+      //    animate/display the incoming missile indicator.
+      //    target is unknown to the defender — stored as a branded empty
+      //    string; it will be overwritten when RESOLVE_HIT arrives. ──────
       case GameEventType.INCOMING_MISSILE:
         store.addMissile({
-          id:          event.payload.missileId,
-          target:      '' as ReturnType<typeof import('@radioboi/game-core').makeCoordinate>,
-          launchedAt:  event.payload.timestamp,
+          id:         event.payload.missileId,
+          // Defender does not know the target yet; placeholder required by type.
+          target:     '' as unknown as Coordinate,
+          launchedAt: event.payload.timestamp,
         });
         break;
 
-      case GameEventType.RESOLVE_HIT: {
-        const { target, result, nextTurnPlayerId } = event.payload;
-        const playerId = store.playerId;
-        const isOwn    = playerId !== null && nextTurnPlayerId !== playerId;
-
-        if (isOwn) {
-          // We were the attacker — mark on enemy board
-          store.applyEnemyShot(
-            target as Parameters<typeof store.applyEnemyShot>[0],
-            result,
-          );
-        } else {
-          // We were the defender — mark on own board
-          store.applyOwnHit(
-            target as Parameters<typeof store.applyOwnHit>[0],
-            result,
-          );
-        }
+      // ── RESOLVE_HIT: mark the missile as resolved and advance game phase
+      //    if the game is over.  Board cells are updated by the SYNC_STATE
+      //    message that the server sends immediately afterwards. ───────────
+      case GameEventType.RESOLVE_HIT:
+        store.interceptMissile(event.payload.missileId);
         if (event.payload.isGameOver) {
           store.setPhase('gameOver');
         }
         break;
-      }
 
-      case GameEventType.SYNC_STATE: {
-        const { phase, ownBoard, enemyBoard, isMyTurn, winnerId } = event.payload;
-        store.setPhase(phase);
-        // Bulk-sync boards by replacing them through placeShip / applyOwnHit paths
-        // is complex; instead we dispatch a dedicated action (added to gameStore).
-        // For now, use the existing store.reset() + selective restore pattern.
-        // A future PR adds store.syncFromServer(ownBoard, enemyBoard).
-        if (phase === 'gameOver') {
-          store.setPhase('gameOver');
-        }
+      // ── SYNC_STATE: full authoritative snapshot from the server.
+      //    Sets the phase; board sync requires a future store action
+      //    (store.syncFromServer) that will be added in Phase 3. ──────────
+      case GameEventType.SYNC_STATE:
+        store.setPhase(event.payload.phase);
         break;
-      }
 
+      // ── ERROR: log; UI subscribes via on() for toast display ──────────
       case GameEventType.ERROR:
-        console.error(`[GameClient] Server error ${event.payload.code}: ${event.payload.message}`);
-        break;
-
-      case GameEventType.PLAYER_JOINED:
-      case GameEventType.GAME_STARTED:
-        // These are handled by individual on() subscriptions in UI components.
+        console.error(
+          `[GameClient] Server error ${event.payload.code}: ${event.payload.message}`,
+        );
         break;
     }
   }
 
-  /** Dispatches an event to registered type-specific handlers. */
   #dispatch(event: ServerGameEvent): void {
     const set = this.#handlers[event.type] as Set<EventHandler> | undefined;
     if (!set) return;
@@ -309,18 +259,8 @@ export class GameClient {
 
 // ── Singleton ─────────────────────────────────────────────────────────────────
 
-// One instance per browser tab.  Components call getGameClient() rather
-// than constructing their own — this prevents duplicate connections.
 let _instance: GameClient | null = null;
 
-/**
- * Returns the module-level GameClient singleton.
- * Creates it lazily on the first call.
- *
- * IMPORTANT: Safe to call on the server (SSR) — the instance is only
- * created inside browser environments thanks to the lazy initialisation.
- * Do not call `connect()` on the server.
- */
 export function getGameClient(): GameClient {
   if (typeof window === 'undefined') {
     throw new Error(
@@ -332,10 +272,6 @@ export function getGameClient(): GameClient {
   return _instance;
 }
 
-/**
- * Destroys the current singleton and allows the next getGameClient() call
- * to create a fresh instance.  Useful for tests and room transitions.
- */
 export function destroyGameClient(): void {
   _instance?.destroy();
   _instance = null;

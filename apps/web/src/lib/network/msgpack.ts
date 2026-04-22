@@ -1,7 +1,4 @@
 // apps/web/src/lib/network/msgpack.ts
-// Thin wrapper around @msgpack/msgpack for typed encode/decode.
-// Kept in its own file so it can be imported by both the game client
-// and any future Web Worker offload of serialisation.
 
 import { decode, encode } from '@msgpack/msgpack';
 import type { ClientGameEvent, ServerGameEvent } from '@radioboi/game-core';
@@ -10,10 +7,20 @@ import type { ClientGameEvent, ServerGameEvent } from '@radioboi/game-core';
 
 /**
  * Serialises a typed client event to a binary MessagePack frame.
- * The result should be sent as a WebSocket binary message.
+ *
+ * Returns a plain `ArrayBuffer` (not `Uint8Array<ArrayBufferLike>`) so that
+ * the browser's `WebSocket.send()` overload — which requires
+ * `BufferSource | Blob | string`, where BufferSource = `ArrayBuffer |
+ * ArrayBufferView<ArrayBuffer>` — accepts it without a type error.
+ *
+ * `Uint8Array.buffer` is typed as `ArrayBufferLike` (includes SharedArrayBuffer),
+ * so we use `.slice()` to guarantee a fresh, non-shared `ArrayBuffer`.
+ * The slice cost is O(n) but frames are small (< 1 KB), so it is negligible.
  */
-export function encodeClientEvent(event: ClientGameEvent): Uint8Array {
-  return encode(event);
+export function encodeClientEvent(event: ClientGameEvent): ArrayBuffer {
+  const u8 = encode(event);
+  // u8.byteOffset may be non-zero when msgpack reuses a pooled buffer.
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 }
 
 // ── Decode (server → client) ──────────────────────────────────────────────────
@@ -34,17 +41,12 @@ export class FrameDecodeError extends Error {
  *
  * @throws {FrameDecodeError} if the frame is not valid MessagePack,
  *   or lacks a string `type` field.
- *
- * NOTE: The return type is `ServerGameEvent` as a structural assertion —
- * runtime type narrowing is done at the call site via the `type` field of
- * the discriminated union.
  */
 export async function decodeServerEvent(
   data: ArrayBuffer | Blob,
 ): Promise<ServerGameEvent> {
   try {
-    const buffer =
-      data instanceof Blob ? await data.arrayBuffer() : data;
+    const buffer = data instanceof Blob ? await data.arrayBuffer() : data;
     const decoded = decode(new Uint8Array(buffer));
 
     if (
@@ -58,9 +60,6 @@ export async function decodeServerEvent(
     return decoded as ServerGameEvent;
   } catch (err) {
     if (err instanceof FrameDecodeError) throw err;
-    throw new FrameDecodeError(
-      `MessagePack decode failed: ${String(err)}`,
-      data,
-    );
+    throw new FrameDecodeError(`MessagePack decode failed: ${String(err)}`, data);
   }
 }
