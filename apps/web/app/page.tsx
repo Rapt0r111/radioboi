@@ -39,10 +39,10 @@ export default async function HomePage({ searchParams }: LobbyProps) {
     <main className="flex min-h-dvh flex-col items-center justify-center gap-12 px-4">
       {/* ── Заголовок ──────────────────────────────────────────────────────── */}
       <header className="text-center">
-        <h1 className="font-mono text-4xl font-bold tracking-widest text-[var(--color-radar-green)] morse-glow">
+        <h1 className="font-mono text-4xl font-bold tracking-widest text-radar-green morse-glow">
           ▸ МОРСКОЙ РАДИОБОЙ
         </h1>
-        <p className="mt-2 text-sm text-[var(--color-miss-white)]/50">
+        <p className="mt-2 text-sm text-miss-white/50">
           РЕАЛТАЙМ PvP · АЗБУКА МОРЗЕ · CLOUDFLARE
         </p>
       </header>
@@ -54,13 +54,13 @@ export default async function HomePage({ searchParams }: LobbyProps) {
           <button
             type="submit"
             className="
-              w-full rounded border border-[var(--color-radar-green)]
+              w-full rounded border border-radar-green
               px-6 py-3 font-mono text-sm font-bold
-              text-[var(--color-radar-green)] uppercase tracking-widest
+              text-radar-green uppercase tracking-widest
               transition-colors duration-150
-              hover:bg-[var(--color-radar-green)] hover:text-[var(--color-ocean-950)]
+              hover:bg-radar-green hover:text-ocean-950
               focus-visible:outline-none focus-visible:ring-2
-              focus-visible:ring-[var(--color-radar-green)]
+              focus-visible:ring-radar-green
               radar-glow
             "
           >
@@ -69,7 +69,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
         </form>
 
         {/* Разделитель */}
-        <div className="flex items-center gap-3 text-[var(--color-miss-white)]/30">
+        <div className="flex items-center gap-3 text-miss-white/30">
           <div className="h-px flex-1 bg-current" />
           <span className="font-mono text-xs uppercase">или</span>
           <div className="h-px flex-1 bg-current" />
@@ -79,7 +79,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
         <form action={handleJoin} className="flex flex-col gap-3">
           <label
             htmlFor="room-code"
-            className="font-mono text-xs uppercase tracking-widest text-[var(--color-miss-white)]/60"
+            className="font-mono text-xs uppercase tracking-widest text-miss-white/60"
           >
             Код комнаты (6 символов)
           </label>
@@ -94,25 +94,25 @@ export default async function HomePage({ searchParams }: LobbyProps) {
             spellCheck={false}
             required
             className="
-              rounded border border-[var(--color-ocean-800)]
-              bg-[var(--color-ocean-900)] px-4 py-3
+              rounded border border-ocean-800
+              bg-ocean-900 px-4 py-3
               font-mono text-lg font-bold tracking-[0.35em] uppercase
-              text-[var(--color-miss-white)] placeholder-[var(--color-miss-white)]/20
+              text-miss-white placeholder-miss-white/20
               outline-none transition-colors duration-150
-              focus:border-[var(--color-radar-dim)]
-              focus-visible:ring-2 focus-visible:ring-[var(--color-radar-green)]
+              focus:border-radar-dim
+              focus-visible:ring-2 focus-visible:ring-radar-green
             "
           />
           <button
             type="submit"
             className="
-              rounded border border-[var(--color-morse-amber)]
+              rounded border border-morse-amber
               px-6 py-3 font-mono text-sm font-bold
-              text-[var(--color-morse-amber)] uppercase tracking-widest
+              text-morse-amber uppercase tracking-widest
               transition-colors duration-150
-              hover:bg-[var(--color-morse-amber)] hover:text-[var(--color-ocean-950)]
+              hover:bg-morse-amber hover:text-ocean-950
               focus-visible:outline-none focus-visible:ring-2
-              focus-visible:ring-[var(--color-morse-amber)]
+              focus-visible:ring-morse-amber
             "
           >
             [ ВОЙТИ В КОМНАТУ ]
@@ -122,7 +122,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
           {error && (
             <p
               role="alert"
-              className="font-mono text-xs text-[var(--color-hit-red)] uppercase tracking-widest"
+              className="font-mono text-xs text-hit-red uppercase tracking-widest"
             >
               ✕ {decodeURIComponent(error)}
             </p>
@@ -131,7 +131,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
       </div>
 
       {/* ── Футер ──────────────────────────────────────────────────────────── */}
-      <footer className="font-mono text-[10px] text-[var(--color-miss-white)]/20">
+      <footer className="font-mono text-[10px] text-miss-white/20">
         RADIOBOI · CLOUDFLARE WORKERS · KV · DURABLE OBJECTS
       </footer>
     </main>

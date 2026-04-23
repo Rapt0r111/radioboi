@@ -20,6 +20,15 @@
     "indentWidth": 2,
     "lineWidth": 100
   },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": {
+          "level": "on"
+        }
+      }
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
@@ -38,6 +47,7 @@
       "quoteStyle": "double",
       "trailingCommas": "all",
       "semicolons": "always"
-    }
+    },
+    "jsxRuntime": "transparent"
   }
 }
