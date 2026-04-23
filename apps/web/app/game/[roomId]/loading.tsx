@@ -10,7 +10,7 @@ export default function GameLoading() {
       className="
         crt-scanlines
         flex min-h-dvh flex-col items-center justify-center gap-6
-        bg-[var(--color-ocean-950)] px-4
+        bg-ocean-950 px-4
       "
       role="status"
       aria-label="Загрузка игровой сессии"
@@ -18,32 +18,32 @@ export default function GameLoading() {
       {/* ── Рамка терминала ─────────────────────────────────────────────── */}
       <div
         className="
-          w-full max-w-lg rounded border border-[var(--color-radar-green)]/40
-          bg-[var(--color-ocean-900)] p-8
+          w-full max-w-lg rounded border border-radar-green/40
+          bg-ocean-900 p-8
           radar-glow
         "
       >
         {/* Строка заголовка терминала */}
-        <div className="mb-6 flex items-center gap-2 border-b border-[var(--color-radar-green)]/20 pb-3">
-          <span className="h-2 w-2 rounded-full bg-[var(--color-hit-red)]" aria-hidden="true" />
-          <span className="h-2 w-2 rounded-full bg-[var(--color-morse-amber)]" aria-hidden="true" />
-          <span className="h-2 w-2 rounded-full bg-[var(--color-radar-green)]" aria-hidden="true" />
-          <span className="ml-2 font-mono text-[10px] uppercase tracking-widest text-[var(--color-miss-white)]/30">
+        <div className="mb-6 flex items-center gap-2 border-b border-radar-green/20 pb-3">
+          <span className="h-2 w-2 rounded-full bg-hit-red" aria-hidden="true" />
+          <span className="h-2 w-2 rounded-full bg-morse-amber" aria-hidden="true" />
+          <span className="h-2 w-2 rounded-full bg-radar-green" aria-hidden="true" />
+          <span className="ml-2 font-mono text-[10px] uppercase tracking-widest text-miss-white/30">
             SECURE CHANNEL · RADIOBOI v0.1
           </span>
         </div>
 
         {/* Основной текст */}
         <div className="space-y-3 font-mono text-sm leading-relaxed">
-          <p className="text-[var(--color-radar-green)]/70">
-            <span className="text-[var(--color-radar-green)]">$</span> init --session secure
+          <p className="text-radar-green/70">
+            <span className="text-radar-green">$</span> init --session secure
           </p>
-          <p className="text-[var(--color-miss-white)]/80">▸ УСТАНОВКА СЕКРЕТНОГО СОЕДИНЕНИЯ...</p>
-          <p className="text-[var(--color-miss-white)]/60">▸ СИНХРОНИЗАЦИЯ ПРОТОКОЛА МОРЗЕ...</p>
-          <p className="text-[var(--color-miss-white)]/40">▸ ЗАГРУЗКА ИГРОВЫХ КОМПОНЕНТОВ...</p>
+          <p className="text-miss-white/80">▸ УСТАНОВКА СЕКРЕТНОГО СОЕДИНЕНИЯ...</p>
+          <p className="text-miss-white/60">▸ СИНХРОНИЗАЦИЯ ПРОТОКОЛА МОРЗЕ...</p>
+          <p className="text-miss-white/40">▸ ЗАГРУЗКА ИГРОВЫХ КОМПОНЕНТОВ...</p>
 
           {/* Мигающий курсор — через keyframe morse-blink из globals.css */}
-          <p className="mt-6 text-[var(--color-radar-green)] uppercase tracking-widest">
+          <p className="mt-6 text-radar-green uppercase tracking-widest">
             ПОЖАЛУЙСТА, ЖДИТЕ
             <span
               className="ml-1 inline-block"
@@ -57,7 +57,7 @@ export default function GameLoading() {
       </div>
 
       {/* ── Статус-строка ────────────────────────────────────────────────── */}
-      <p className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-miss-white)]/20">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-miss-white/20">
         RADIOBOI · CLOUDFLARE EDGE NETWORK
       </p>
     </div>

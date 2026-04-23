@@ -16,6 +16,7 @@ import { useGameStore } from "@/src/store/gameStore";
 function BoardGridPlaceholder({ label }: { label: string }) {
   return (
     <div
+      role="img"
       className="
         flex h-48 w-48 items-center justify-center rounded
         border border-[var(--color-ocean-800)]
@@ -32,6 +33,7 @@ function BoardGridPlaceholder({ label }: { label: string }) {
 function RadarPlaceholder() {
   return (
     <div
+      role="img"
       className="
         flex h-48 w-48 items-center justify-center rounded-full
         border border-[var(--color-radar-dim)]
@@ -48,6 +50,7 @@ function RadarPlaceholder() {
 function MorsePlaceholder() {
   return (
     <div
+      role="img"
       className="
         flex h-16 w-full max-w-sm items-center justify-center rounded
         border border-[var(--color-morse-amber)]/30
@@ -96,14 +99,14 @@ export function GameClientWrapper({ roomId }: Props) {
     <main className="crt-scanlines flex min-h-dvh flex-col items-center justify-center gap-8 px-4 py-8">
       {/* ── Заголовок сессии ──────────────────────────────────────────────── */}
       <header className="text-center">
-        <p className="font-mono text-xs uppercase tracking-widest text-[var(--color-radar-green)]/60">
+        <p className="font-mono text-xs uppercase tracking-widest text-radar-green/60">
           КОМНАТА
         </p>
-        <h1 className="font-mono text-2xl font-bold tracking-[0.3em] text-[var(--color-radar-green)] morse-glow">
+        <h1 className="font-mono text-2xl font-bold tracking-[0.3em] text-radar-green morse-glow">
           {roomId}
         </h1>
         {playerId && (
-          <p className="mt-1 font-mono text-[10px] text-[var(--color-miss-white)]/30">
+          <p className="mt-1 font-mono text-[10px] text-miss-white/30">
             ID: {playerId.slice(0, 8)}…
           </p>
         )}
@@ -115,21 +118,21 @@ export function GameClientWrapper({ roomId }: Props) {
         aria-label="Игровые поля"
       >
         <div className="flex flex-col items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-miss-white)]/40">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-miss-white/40">
             Ваше поле
           </span>
           <BoardGridPlaceholder label="Ваше поле" />
         </div>
 
         <div className="flex flex-col items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-miss-white)]/40">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-miss-white/40">
             Поле противника
           </span>
           <BoardGridPlaceholder label="Поле противника" />
         </div>
 
         <div className="flex flex-col items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-miss-white)]/40">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-miss-white/40">
             Радар
           </span>
           <RadarPlaceholder />
