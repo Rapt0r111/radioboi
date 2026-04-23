@@ -30,6 +30,25 @@ function generateRoomCode(): string {
   return Array.from(bytes, (b) => CHARS[b % CHARS.length]).join("");
 }
 
+/**
+ * Получает KV-неймспейс из Cloudflare-контекста.
+ * Если биндинг недоступен (нет wrangler.toml рядом с next.config.ts),
+ * бросает понятную ошибку вместо "Cannot read properties of undefined".
+ */
+function getKV(): KVNamespace {
+  const { env } = getCloudflareContext();
+  const kv = env.ROOM_STATE;
+  if (!kv) {
+    throw new Error(
+      "ROOM_STATE KV binding is not available.\n" +
+        "В локальной разработке убедитесь, что apps/web/wrangler.toml существует " +
+        "и содержит [[kv_namespaces]] с binding = \"ROOM_STATE\".\n" +
+        "initOpenNextCloudflareForDev() ищет wrangler.toml рядом с next.config.ts.",
+    );
+  }
+  return kv;
+}
+
 // ── Server Actions ────────────────────────────────────────────────────────────
 
 /**
@@ -39,9 +58,7 @@ function generateRoomCode(): string {
  * 3. Возвращает сгенерированный `roomId`.
  */
 export async function createRoomAction(): Promise<string> {
-  // getCloudflareContext() — синхронная функция; env типизирован через CloudflareEnv.
-  const { env } = getCloudflareContext();
-  const kv = env.ROOM_STATE; // KVNamespace — из cloudflare-env.d.ts
+  const kv = getKV();
 
   // Генерируем уникальный код. Ограничение попыток защищает от бесконечного цикла.
   let roomId = generateRoomCode();
@@ -75,8 +92,7 @@ export async function joinRoomAction(code: string): Promise<JoinResult> {
     return { error: "Invalid room code" };
   }
 
-  const { env } = getCloudflareContext();
-  const kv = env.ROOM_STATE;
+  const kv = getKV();
 
   const existing = await kv.get(normalized);
   if (existing === null) {

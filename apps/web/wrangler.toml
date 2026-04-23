@@ -1,0 +1,14 @@
+# apps/web/wrangler.toml
+# Используется ТОЛЬКО для локальной разработки через @opennextjs/cloudflare.
+# initOpenNextCloudflareForDev() ищет этот файл рядом с next.config.ts.
+# Для деплоя используется apps/worker/wrangler.toml.
+
+name                = "radioboi-web-dev"
+compatibility_date  = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── KV Namespace — должен совпадать с биндингом в apps/worker/wrangler.toml ──
+[[kv_namespaces]]
+binding    = "ROOM_STATE"
+id         = "d2006d944b59472c9a5dfee5d4ac52a2"
+preview_id = "0c0408ceb0064351bd2b1c14646df2e5"
