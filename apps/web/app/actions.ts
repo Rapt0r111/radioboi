@@ -1,8 +1,10 @@
 "use server";
 
-// apps/web/src/app/actions.ts
+// apps/web/app/actions.ts  ← ПРАВИЛЬНЫЙ ПУТЬ: рядом с layout.tsx
+//
 // Server Actions для управления комнатами через Cloudflare KV.
-// KV-биндинг `ROOM_STATE` доступен через @opennextjs/cloudflare.
+// Тип env.ROOM_STATE раскрывается через глобальную аугментацию CloudflareEnv
+// в apps/web/cloudflare-env.d.ts — никакого приведения типов не нужно.
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
@@ -13,15 +15,13 @@ type RoomRecord = {
   createdAt: number;
 };
 
-type JoinResult =
-  | { success: true; roomId: string }
-  | { error: string };
+type JoinResult = { success: true; roomId: string } | { error: string };
 
 // ── Вспомогательные функции ───────────────────────────────────────────────────
 
 /**
  * Генерирует случайный 6-значный буквенно-цифровой код, например `A7K9P2`.
- * Использует `crypto.getRandomValues` (доступно в Cloudflare Workers runtime).
+ * Использует `crypto.getRandomValues` (Web Crypto API — доступен в CF Workers).
  */
 function generateRoomCode(): string {
   const CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -35,24 +35,27 @@ function generateRoomCode(): string {
 /**
  * Создаёт новую комнату:
  * 1. Генерирует уникальный 6-значный код.
- * 2. Записывает запись в Cloudflare KV со статусом `waiting` и TTL 1 час.
+ * 2. Записывает в Cloudflare KV со статусом `waiting` и TTL 1 час.
  * 3. Возвращает сгенерированный `roomId`.
  */
 export async function createRoomAction(): Promise<string> {
-  const { env } = await getCloudflareContext();
-  const kv = env.ROOM_STATE as KVNamespace;
+  // getCloudflareContext() — синхронная функция; env типизирован через CloudflareEnv.
+  const { env } = getCloudflareContext();
+  const kv = env.ROOM_STATE; // KVNamespace — из cloudflare-env.d.ts
 
-  // Генерируем уникальный код (повторяем при коллизии, практически невероятной).
-  let roomId: string;
-  do {
+  // Генерируем уникальный код. Ограничение попыток защищает от бесконечного цикла.
+  let roomId = generateRoomCode();
+  let attempts = 0;
+  const MAX_ATTEMPTS = 10;
+
+  while ((await kv.get(roomId)) !== null) {
+    if (attempts++ >= MAX_ATTEMPTS) {
+      throw new Error("createRoomAction: не удалось сгенерировать уникальный код комнаты");
+    }
     roomId = generateRoomCode();
-  } while (await kv.get(roomId) !== null);
+  }
 
-  const record: RoomRecord = {
-    status: "waiting",
-    createdAt: Date.now(),
-  };
-
+  const record: RoomRecord = { status: "waiting", createdAt: Date.now() };
   await kv.put(roomId, JSON.stringify(record), { expirationTtl: 3600 });
 
   return roomId;
@@ -72,8 +75,8 @@ export async function joinRoomAction(code: string): Promise<JoinResult> {
     return { error: "Invalid room code" };
   }
 
-  const { env } = await getCloudflareContext();
-  const kv = env.ROOM_STATE as KVNamespace;
+  const { env } = getCloudflareContext();
+  const kv = env.ROOM_STATE;
 
   const existing = await kv.get(normalized);
   if (existing === null) {

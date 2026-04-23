@@ -80,10 +80,7 @@ class RadarRenderer {
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(cx, cy);
-    ctx.lineTo(
-      cx + Math.cos(this.#radarAngle) * radius,
-      cy + Math.sin(this.#radarAngle) * radius,
-    );
+    ctx.lineTo(cx + Math.cos(this.#radarAngle) * radius, cy + Math.sin(this.#radarAngle) * radius);
     ctx.strokeStyle = lineGrad;
     ctx.lineWidth = 2;
     ctx.stroke();

@@ -1,12 +1,139 @@
-// Путь: /apps/web/app/page.tsx
-// Фаза 0: заглушка главной страницы.
-// UI-компоненты будут добавлены в следующих фазах.
+// apps/web/app/page.tsx  ← ПРАВИЛЬНЫЙ ПУТЬ: заменяет заглушку Фазы 0
+//
+// Лобби — React Server Component.
+// Использует нативный form action={...} для Server Actions без клиентского JS.
 
-export default function HomePage() {
+import { redirect } from "next/navigation";
+import { createRoomAction, joinRoomAction } from "./actions";
+
+// searchParams нужен для отображения ошибки после неудачного join (без JS).
+type LobbyProps = {
+  searchParams: Promise<{ error?: string }>;
+};
+
+export default async function HomePage({ searchParams }: LobbyProps) {
+  const { error } = await searchParams;
+
+  // ── Server Action: создать комнату ──────────────────────────────────────────
+  async function handleCreate() {
+    "use server";
+    const roomId = await createRoomAction();
+    redirect(`/game/${roomId}`);
+  }
+
+  // ── Server Action: войти в комнату ──────────────────────────────────────────
+  async function handleJoin(formData: FormData) {
+    "use server";
+    const raw = formData.get("code");
+    const code = typeof raw === "string" ? raw : "";
+    const result = await joinRoomAction(code);
+    if ("success" in result && result.success) {
+      redirect(`/game/${result.roomId}`);
+    } else {
+      const msg = "error" in result ? result.error : "Unknown error";
+      redirect(`/?error=${encodeURIComponent(msg)}`);
+    }
+  }
+
   return (
-    <main className="p-8">
-      <h1 className="text-2xl font-bold text-[var(--color-radar-green)]">🚢 Морской радиобой</h1>
-      <p className="mt-2 text-[var(--color-miss-white)]/70">Инфраструктура готова.</p>
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-12 px-4">
+      {/* ── Заголовок ──────────────────────────────────────────────────────── */}
+      <header className="text-center">
+        <h1 className="font-mono text-4xl font-bold tracking-widest text-[var(--color-radar-green)] morse-glow">
+          ▸ МОРСКОЙ РАДИОБОЙ
+        </h1>
+        <p className="mt-2 text-sm text-[var(--color-miss-white)]/50">
+          РЕАЛТАЙМ PvP · АЗБУКА МОРЗЕ · CLOUDFLARE
+        </p>
+      </header>
+
+      {/* ── Панель действий ────────────────────────────────────────────────── */}
+      <div className="flex w-full max-w-sm flex-col gap-6">
+        {/* Создать комнату */}
+        <form action={handleCreate}>
+          <button
+            type="submit"
+            className="
+              w-full rounded border border-[var(--color-radar-green)]
+              px-6 py-3 font-mono text-sm font-bold
+              text-[var(--color-radar-green)] uppercase tracking-widest
+              transition-colors duration-150
+              hover:bg-[var(--color-radar-green)] hover:text-[var(--color-ocean-950)]
+              focus-visible:outline-none focus-visible:ring-2
+              focus-visible:ring-[var(--color-radar-green)]
+              radar-glow
+            "
+          >
+            [ СОЗДАТЬ КОМНАТУ ]
+          </button>
+        </form>
+
+        {/* Разделитель */}
+        <div className="flex items-center gap-3 text-[var(--color-miss-white)]/30">
+          <div className="h-px flex-1 bg-current" />
+          <span className="font-mono text-xs uppercase">или</span>
+          <div className="h-px flex-1 bg-current" />
+        </div>
+
+        {/* Войти в комнату по коду */}
+        <form action={handleJoin} className="flex flex-col gap-3">
+          <label
+            htmlFor="room-code"
+            className="font-mono text-xs uppercase tracking-widest text-[var(--color-miss-white)]/60"
+          >
+            Код комнаты (6 символов)
+          </label>
+          <input
+            id="room-code"
+            name="code"
+            type="text"
+            placeholder="A7K9P2"
+            maxLength={6}
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            required
+            className="
+              rounded border border-[var(--color-ocean-800)]
+              bg-[var(--color-ocean-900)] px-4 py-3
+              font-mono text-lg font-bold tracking-[0.35em] uppercase
+              text-[var(--color-miss-white)] placeholder-[var(--color-miss-white)]/20
+              outline-none transition-colors duration-150
+              focus:border-[var(--color-radar-dim)]
+              focus-visible:ring-2 focus-visible:ring-[var(--color-radar-green)]
+            "
+          />
+          <button
+            type="submit"
+            className="
+              rounded border border-[var(--color-morse-amber)]
+              px-6 py-3 font-mono text-sm font-bold
+              text-[var(--color-morse-amber)] uppercase tracking-widest
+              transition-colors duration-150
+              hover:bg-[var(--color-morse-amber)] hover:text-[var(--color-ocean-950)]
+              focus-visible:outline-none focus-visible:ring-2
+              focus-visible:ring-[var(--color-morse-amber)]
+            "
+          >
+            [ ВОЙТИ В КОМНАТУ ]
+          </button>
+
+          {/* Ошибка входа (без JS — через searchParam) */}
+          {error && (
+            <p
+              role="alert"
+              className="font-mono text-xs text-[var(--color-hit-red)] uppercase tracking-widest"
+            >
+              ✕ {decodeURIComponent(error)}
+            </p>
+          )}
+        </form>
+      </div>
+
+      {/* ── Футер ──────────────────────────────────────────────────────────── */}
+      <footer className="font-mono text-[10px] text-[var(--color-miss-white)]/20">
+        RADIOBOI · CLOUDFLARE WORKERS · KV · DURABLE OBJECTS
+      </footer>
     </main>
   );
 }

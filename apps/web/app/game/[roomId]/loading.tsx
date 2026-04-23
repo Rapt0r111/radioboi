@@ -1,6 +1,8 @@
-// apps/web/src/app/game/[roomId]/loading.tsx
+// apps/web/app/game/[roomId]/loading.tsx  ← ПРАВИЛЬНЫЙ ПУТЬ
+//
 // Next.js автоматически показывает этот компонент во время загрузки RSC / Client.
 // Стилизован под CRT-терминал с мигающим курсором.
+// Анимация morse-blink объявлена в app/globals.css — никакого нового CSS.
 
 export default function GameLoading() {
   return (
@@ -34,20 +36,13 @@ export default function GameLoading() {
         {/* Основной текст */}
         <div className="space-y-3 font-mono text-sm leading-relaxed">
           <p className="text-[var(--color-radar-green)]/70">
-            <span className="text-[var(--color-radar-green)]">$</span>{" "}
-            init --session secure
+            <span className="text-[var(--color-radar-green)]">$</span> init --session secure
           </p>
-          <p className="text-[var(--color-miss-white)]/80">
-            ▸ УСТАНОВКА СЕКРЕТНОГО СОЕДИНЕНИЯ...
-          </p>
-          <p className="text-[var(--color-miss-white)]/60">
-            ▸ СИНХРОНИЗАЦИЯ ПРОТОКОЛА МОРЗЕ...
-          </p>
-          <p className="text-[var(--color-miss-white)]/40">
-            ▸ ЗАГРУЗКА ИГРОВЫХ КОМПОНЕНТОВ...
-          </p>
+          <p className="text-[var(--color-miss-white)]/80">▸ УСТАНОВКА СЕКРЕТНОГО СОЕДИНЕНИЯ...</p>
+          <p className="text-[var(--color-miss-white)]/60">▸ СИНХРОНИЗАЦИЯ ПРОТОКОЛА МОРЗЕ...</p>
+          <p className="text-[var(--color-miss-white)]/40">▸ ЗАГРУЗКА ИГРОВЫХ КОМПОНЕНТОВ...</p>
 
-          {/* Строка ожидания с мигающим курсором (CSS-анимация) */}
+          {/* Мигающий курсор — через keyframe morse-blink из globals.css */}
           <p className="mt-6 text-[var(--color-radar-green)] uppercase tracking-widest">
             ПОЖАЛУЙСТА, ЖДИТЕ
             <span
@@ -61,7 +56,7 @@ export default function GameLoading() {
         </div>
       </div>
 
-      {/* ── Статус-строка под рамкой ─────────────────────────────────────── */}
+      {/* ── Статус-строка ────────────────────────────────────────────────── */}
       <p className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-miss-white)]/20">
         RADIOBOI · CLOUDFLARE EDGE NETWORK
       </p>

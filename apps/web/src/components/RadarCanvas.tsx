@@ -23,8 +23,7 @@ type Props = {
 };
 
 // Используем useLayoutEffect в браузере, useEffect на сервере (SSR guard).
-const useIsomorphicLayoutEffect =
-  typeof window !== "undefined" ? useLayoutEffect : useEffect;
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 export function RadarCanvas({ radarRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -34,10 +33,9 @@ export function RadarCanvas({ radarRef }: Props) {
     if (!canvas) return;
 
     // 1. Создаём воркер
-    const worker = new Worker(
-      new URL("../workers/radarWorker.ts", import.meta.url),
-      { type: "module" },
-    );
+    const worker = new Worker(new URL("../workers/radarWorker.ts", import.meta.url), {
+      type: "module",
+    });
 
     // 2. Оборачиваем в Comlink-прокси
     const proxy = Comlink.wrap<RadarRendererProxy>(worker);
@@ -71,7 +69,7 @@ export function RadarCanvas({ radarRef }: Props) {
       ref={canvasRef}
       className="absolute inset-0 pointer-events-none"
       aria-hidden="true"
-      tabIndex={-1}   // ← removes from focus order, satisfies the rule
+      tabIndex={-1} // ← removes from focus order, satisfies the rule
     />
   );
 }

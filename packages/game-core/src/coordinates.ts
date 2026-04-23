@@ -61,9 +61,7 @@ export function makeCoordinate(colIndex: number, rowIndex: number): Coordinate {
   const row = ROWS[rowIndex];
   if (col === undefined || row === undefined) {
     // Unreachable — range is validated by the guard above.
-    throw new RangeError(
-      `makeCoordinate: unreachable state col=${colIndex} row=${rowIndex}`,
-    );
+    throw new RangeError(`makeCoordinate: unreachable state col=${colIndex} row=${rowIndex}`);
   }
   return (col + row) as Coordinate;
 }

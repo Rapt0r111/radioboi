@@ -1,7 +1,7 @@
 // apps/web/src/components/BoardGrid.tsx
 "use client";
 
-import { COLUMNS, ROWS, type Board, type CellState, type Coordinate } from "@radioboi/game-core";
+import { type Board, type CellState, COLUMNS, type Coordinate, ROWS } from "@radioboi/game-core";
 
 function cellClass(state: CellState | undefined, isEnemy: boolean): string {
   const base =
@@ -27,11 +27,16 @@ function cellClass(state: CellState | undefined, isEnemy: boolean): string {
 
 function cellSymbol(state: CellState | undefined, isEnemy: boolean): string {
   switch (state) {
-    case "hit":  return "✕";
-    case "sunk": return "✕";
-    case "miss": return "·";
-    case "ship": return isEnemy ? "" : "▪";
-    default:     return "";
+    case "hit":
+      return "✕";
+    case "sunk":
+      return "✕";
+    case "miss":
+      return "·";
+    case "ship":
+      return isEnemy ? "" : "▪";
+    default:
+      return "";
   }
 }
 
@@ -84,7 +89,7 @@ export function BoardGrid({ board, isEnemy, onCellClick }: Props) {
               return (
                 <td key={coord} className="p-0">
                   <button
-                    type="button"                          // ← fixes useButtonType
+                    type="button" // ← fixes useButtonType
                     aria-label={`${col}${rowIndex} — ${state ?? "пусто"}`}
                     className={cellClass(state, isEnemy)}
                     onClick={() => onCellClick?.(coord)}

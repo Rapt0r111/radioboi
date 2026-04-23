@@ -76,6 +76,10 @@ export function GameClientWrapper({ roomId }: Props) {
   const playerId = useGameStore((s) => s.playerId);
 
   useEffect(() => {
+    // Если playerId уже инициализирован — ничего делать не нужно.
+    // Используем реактивное значение из хука (а не imperative getState()).
+    if (playerId) return;
+
     // Берём сохранённый playerId или генерируем новый.
     // sessionStorage гарантирует один и тот же ID на протяжении вкладки.
     let id = sessionStorage.getItem(PLAYER_ID_KEY);
@@ -84,11 +88,9 @@ export function GameClientWrapper({ roomId }: Props) {
       sessionStorage.setItem(PLAYER_ID_KEY, id);
     }
 
-    // Регистрируем сессию в глобальном сторе только если playerId ещё не установлен.
-    if (!useGameStore.getState().playerId) {
-      setSession(id, roomId);
-    }
-  }, [roomId, setSession]);
+    setSession(id, roomId);
+    // playerId в deps: если стор сброшен (reset()), эффект переинициализирует сессию.
+  }, [roomId, setSession, playerId]);
 
   return (
     <main className="crt-scanlines flex min-h-dvh flex-col items-center justify-center gap-8 px-4 py-8">

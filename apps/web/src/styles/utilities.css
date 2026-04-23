@@ -29,7 +29,7 @@
     /* Линии строго по пикселям, без масштабирования */
     background-size: 100% 3px;
     /* Мягкая виньетка для усиления CRT-атмосферы */
-    mask-image: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.4) 100%);
+    mask-image: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.4) 100%);
   }
 }
 
