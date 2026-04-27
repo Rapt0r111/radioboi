@@ -1,5 +1,4 @@
 // apps/web/src/store/gameStore.ts
-// PATCHED: added syncFromServer action for [FIX #3]
 "use client";
 
 import type { Board, Coordinate, GamePhase, Missile } from "@radioboi/game-core";
@@ -15,6 +14,7 @@ type GameState = {
   enemyBoard: Board;
   activeMissiles: Missile[];
   isMyTurn: boolean;
+  winnerId: string | null; // NEW: хранит ID победителя
 };
 
 type SyncSnapshot = {
@@ -34,16 +34,13 @@ type GameActions = {
   applyOwnHit(coord: Coordinate, result: "hit" | "miss" | "sunk"): void;
   interceptMissile(missileId: string): void;
   toggleTurn(): void;
-  // [FIX #3] — authoritative snapshot from server (SYNC_STATE).
-  // Replaces boards, phase, and turn flag atomically so the client stays
-  // consistent after reconnect or any phase transition.
   syncFromServer(snapshot: SyncSnapshot): void;
   reset(): void;
 };
 
 type GameStore = GameState & GameActions;
 
-// ── Фабрика начального состояния ─────────────────────────────────────────────
+// ── Начальное состояние ───────────────────────────────────────────────────────
 
 function makeInitialState(): GameState {
   return {
@@ -54,6 +51,7 @@ function makeInitialState(): GameState {
     enemyBoard: {} as Board,
     activeMissiles: [],
     isMyTurn: false,
+    winnerId: null,
   };
 }
 
@@ -110,10 +108,16 @@ export const useGameStore = create<GameStore>((set) => ({
     set((state) => ({ isMyTurn: !state.isMyTurn }));
   },
 
-  // [FIX #3] — full authoritative sync from SYNC_STATE server event.
-  // Overwrites boards and turn flag in a single atomic update.
-  syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn }) {
-    set({ phase, ownBoard, enemyBoard, isMyTurn });
+  // Полная синхронизация от сервера (SYNC_STATE).
+  // Сохраняет winnerId если он присутствует в снапшоте.
+  syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn, winnerId }) {
+    set({
+      phase,
+      ownBoard,
+      enemyBoard,
+      isMyTurn,
+      ...(winnerId !== undefined ? { winnerId } : {}),
+    });
   },
 
   reset() {
@@ -128,3 +132,4 @@ export const selectOwnBoard = (s: GameStore) => s.ownBoard;
 export const selectEnemyBoard = (s: GameStore) => s.enemyBoard;
 export const selectActiveMissiles = (s: GameStore) => s.activeMissiles;
 export const selectIsMyTurn = (s: GameStore) => s.isMyTurn;
+export const selectWinnerId = (s: GameStore) => s.winnerId;
