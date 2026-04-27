@@ -31,7 +31,6 @@ import { isValidCoordinate, parseCoordinate as parseCoordCore } from "@radioboi/
 
 function coordToIndices(coord: string): { colIndex: number; rowIndex: number } | null {
   if (!isValidCoordinate(coord)) return null;
-  // После isValidCoordinate() TypeScript сужает тип до Coordinate — as any не нужен
   return parseCoordCore(coord);
 }
 
@@ -44,10 +43,6 @@ const WS_TAG_PREFIX = "player:";
 
 export class GameRoomArbitrator implements DurableObject {
   readonly #state: DurableObjectState;
-  // FIX(noUnusedPrivateClassMembers): #env was declared but never read.
-  // The Env binding is available via the constructor parameter for future use,
-  // but storing it as a field triggers the biome lint rule. Removed the field;
-  // re-add it when a KV or other env binding is actually accessed.
 
   constructor(state: DurableObjectState, _env: Env) {
     this.#state = state;
@@ -88,22 +83,19 @@ export class GameRoomArbitrator implements DurableObject {
 
     await this.#saveState(roomState);
 
+    // Broadcast PLAYER_JOINED so clients can show "opponent connected" indicators.
     this.#broadcast(
       makePlayerJoined(playerId, playerName, roomState.players.length as 1 | 2),
       null,
     );
 
-    this.#sendToPlayer(
-      playerId,
-      makeSyncState(
-        roomState.phase,
-        getOwnBoard(roomState, playerId),
-        getEnemyBoard(roomState, playerId),
-        [],
-        roomState.currentTurnId === playerId,
-        roomState.winnerId ?? undefined,
-      ),
-    );
+    // FIX (CRITICAL): Send SYNC_STATE to ALL connected players, not just the
+    // joining one. Without this, Player 1 never receives the phase change from
+    // "lobby" → "placement" when Player 2 joins, and stays stuck on the
+    // waiting screen forever. #sendSyncToAll iterates state.players, so when
+    // Player 1 is alone it only sends to Player 1; when Player 2 joins it
+    // sends the updated "placement" phase to both.
+    this.#sendSyncToAll(roomState);
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -122,6 +114,7 @@ export class GameRoomArbitrator implements DurableObject {
 
     switch (event.type) {
       case "JOIN_ROOM":
+        // Already handled in fetch(); a re-send after reconnect is a no-op.
         break;
       case "SHIPS_PLACED":
         await this.#handleShipsPlaced(ws, senderId, event.payload, roomState);
@@ -190,17 +183,28 @@ export class GameRoomArbitrator implements DurableObject {
     applyShipsPlaced(state, playerId, ships as Array<{ coords: string[] }>);
     await this.#saveState(state);
 
-    // FIX(TS2367): use `as RoomPhase` to break TypeScript's control-flow narrowing.
     const phaseAfterPlacement = state.phase as RoomPhase;
 
     if (phaseAfterPlacement === "battle") {
-      // FIX(noNonNullAssertion): currentTurnId is set by applyShipsPlaced() when
-      // both players are ready. Guard satisfies TypeScript without using `!`.
       const firstTurnId = state.currentTurnId;
       if (firstTurnId !== null) {
         this.#broadcast(makeGameStarted(firstTurnId), null);
       }
       this.#sendSyncToAll(state);
+    } else {
+      // One player placed ships — acknowledge only to them so they see the
+      // "waiting" state, but keep opponent's view unchanged.
+      this.#sendToPlayer(
+        playerId,
+        makeSyncState(
+          state.phase,
+          getOwnBoard(state, playerId),
+          getEnemyBoard(state, playerId),
+          [],
+          state.currentTurnId === playerId,
+          state.winnerId ?? undefined,
+        ),
+      );
     }
   }
 
@@ -318,6 +322,9 @@ export class GameRoomArbitrator implements DurableObject {
     );
 
     if (resolveResult === null) {
+      // Wrong decode, attempts remain — save and let client retry.
+      // Send a lightweight error so the defender gets immediate "wrong" feedback.
+      ws.send(makeError("MORSE_MISMATCH", "Incorrect decode — try again"));
       await this.#saveState(state);
       return;
     }

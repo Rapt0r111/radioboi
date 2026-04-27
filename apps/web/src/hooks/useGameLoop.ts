@@ -1,6 +1,11 @@
 "use client";
 
-import { GameEventType, type GamePhase, type Missile, type MorseSymbol } from "@radioboi/game-core";
+import {
+  GameEventType,
+  type GamePhase,
+  type Missile,
+  type MorseSymbol,
+} from "@radioboi/game-core";
 import type { MorseEngine } from "@radioboi/morse-engine";
 import { MORSE_REVERSE } from "@radioboi/morse-engine";
 import { type RefObject, useEffect, useRef } from "react";
@@ -19,6 +24,8 @@ export type GameLoopRuntimeState = {
   incomingMissileDeadline: number | null;
   incomingMissileId: string | null;
   incomingMissileSequence: number[] | null;
+  /** Set to true when the server confirmed the last intercept decode was wrong. */
+  lastInterceptWrong: boolean;
 };
 
 type GameStoreState = ReturnType<typeof useGameStore.getState>;
@@ -29,6 +36,7 @@ const DEFAULT_RUNTIME_STATE: GameLoopRuntimeState = {
   incomingMissileDeadline: null,
   incomingMissileId: null,
   incomingMissileSequence: null,
+  lastInterceptWrong: false,
 };
 
 function readRuntimeState(): GameLoopRuntimeState {
@@ -39,6 +47,7 @@ function readRuntimeState(): GameLoopRuntimeState {
     incomingMissileDeadline: state.incomingMissileDeadline ?? null,
     incomingMissileId: state.incomingMissileId ?? null,
     incomingMissileSequence: state.incomingMissileSequence ?? null,
+    lastInterceptWrong: state.lastInterceptWrong ?? false,
   };
 }
 
@@ -112,6 +121,7 @@ export function useGameLoop(
         incomingMissileDeadline: Date.now() + INTERCEPT_WINDOW_MS,
         incomingMissileId: event.payload.missileId,
         incomingMissileSequence: playbackSequence,
+        lastInterceptWrong: false,
       });
 
       void morseEngine?.playSequence(playbackSequence);
@@ -129,9 +139,8 @@ export function useGameLoop(
       removeMissileFromStore(event.payload.missileId);
       boardUpdater(event.payload.target, event.payload.result);
 
-      if (event.payload.isGameOver) {
-        store.setPhase("gameOver");
-      }
+      // gameClient.ts #applyToStore already calls store.setPhase("gameOver") when
+      // isGameOver is true — no need to duplicate it here.
 
       if (event.payload.result === "sunk") {
         void morseEngine?.playSequence(
@@ -166,12 +175,22 @@ export function useGameLoop(
       }
     });
 
-    // NOTE: in the current repo contract `MISSILE_LAUNCHED` is a client event,
-    // so outgoing radar animation is started locally in GameClientWrapper.
+    // Track server-confirmed wrong intercept decodes so the UI can show feedback.
+    const stopError = transport.on(GameEventType.ERROR, (event) => {
+      if (event.payload.code === "MORSE_MISMATCH") {
+        const runtime = readRuntimeState();
+        // Only flag as wrong if we're currently in an intercept (missile in flight).
+        if (runtime.incomingMissileId !== null) {
+          patchGameLoopRuntimeState({ lastInterceptWrong: true });
+        }
+      }
+    });
+
     const cleanup = () => {
       stopIncoming();
       stopResolve();
       stopSync();
+      stopError();
       cleanupRef.current = () => {};
     };
 

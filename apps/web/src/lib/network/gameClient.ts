@@ -12,7 +12,6 @@ import { decodeServerEvent, encodeClientEvent, FrameDecodeError } from "./msgpac
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-// FIX(useLiteralKeys): process.env["NEXT_PUBLIC_WS_URL"] → process.env.NEXT_PUBLIC_WS_URL
 const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8787";
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
@@ -63,12 +62,6 @@ export class GameClient {
 
   // ── Sending ───────────────────────────────────────────────────────────────
 
-  /**
-   * Serialises and sends a typed event to the server.
-   * Silently drops the frame if the socket is not OPEN.
-   * `encodeClientEvent` returns `ArrayBuffer`, which `WebSocket.send()` accepts
-   * directly without a type error.
-   */
   send(event: ClientGameEvent): void {
     if (this.#ws?.readyState !== WebSocket.OPEN) return;
     try {
@@ -183,17 +176,24 @@ export class GameClient {
 
   /**
    * Applies known server events to the Zustand gameStore.
-   * SYNC_STATE is the authoritative source for board state — it is sent by the
-   * server after every phase transition and after each RESOLVE_HIT.
+   *
+   * SYNC_STATE is the authoritative source of truth — sent after every phase
+   * transition and after each RESOLVE_HIT.  We also apply a few events
+   * eagerly so the UI reacts immediately without waiting for SYNC_STATE.
    */
   #applyToStore(event: ServerGameEvent): void {
     const store = useGameStore.getState();
 
     switch (event.type) {
       case GameEventType.PLAYER_JOINED:
+        // When a second player joins, the server now sends SYNC_STATE to all
+        // players (see GameRoomArbitrator fix), so phase "lobby" → "placement"
+        // is handled by the SYNC_STATE handler below.  Nothing extra needed.
         break;
 
       case GameEventType.GAME_STARTED:
+        // Eagerly advance to battle phase. SYNC_STATE follows immediately and
+        // will also set isMyTurn correctly.
         store.setPhase("battle");
         break;
 
@@ -219,7 +219,13 @@ export class GameClient {
         break;
 
       case GameEventType.ERROR:
-        console.error(`[GameClient] Server error ${event.payload.code}: ${event.payload.message}`);
+        // MORSE_MISMATCH on an intercept attempt is expected game feedback —
+        // log at info level, not error, to avoid console noise.
+        if (event.payload.code === "MORSE_MISMATCH") {
+          console.info(`[GameClient] Server: ${event.payload.message}`);
+        } else {
+          console.error(`[GameClient] Server error ${event.payload.code}: ${event.payload.message}`);
+        }
         break;
     }
   }

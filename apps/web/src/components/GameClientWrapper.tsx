@@ -45,6 +45,7 @@ type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   incomingMissileDeadline?: number | null;
   incomingMissileId?: string | null;
   incomingMissileSequence?: number[] | null;
+  lastInterceptWrong?: boolean;
 };
 
 function getOrCreatePlayerId(): string {
@@ -158,6 +159,9 @@ export function GameClientWrapper({ roomId }: Props) {
   const incomingMissileSequence = useGameStore(
     (state) => (state as RuntimeCarrier).incomingMissileSequence ?? null,
   );
+  const lastInterceptWrong = useGameStore(
+    (state) => (state as RuntimeCarrier).lastInterceptWrong ?? false,
+  );
 
   const [morseEngine, setMorseEngine] = useState<MorseEngine | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -199,11 +203,21 @@ export function GameClientWrapper({ roomId }: Props) {
     return () => window.clearInterval(timerId);
   }, [incomingMissileDeadline]);
 
+  // Reset selected target when turn or intercept context changes.
   useEffect(() => {
     if (!isMyTurn || incomingMissileId !== null || phase !== "battle") {
       setSelectedTarget(null);
     }
   }, [incomingMissileId, isMyTurn, phase]);
+
+  // Show server-confirmed wrong-decode feedback in the status line.
+  useEffect(() => {
+    if (lastInterceptWrong) {
+      setStatusLine("✕ Неверная расшифровка. Слушайте ещё раз и повторите.");
+      // Clear the flag so subsequent correct attempts reset the message.
+      patchGameLoopRuntimeState({ lastInterceptWrong: false });
+    }
+  }, [lastInterceptWrong]);
 
   const handleSequenceComplete = useEffectEvent((coord: Coordinate) => {
     if (!transport) {
@@ -215,6 +229,7 @@ export function GameClientWrapper({ roomId }: Props) {
       const attemptNumber = incomingMissileAttempts + 1;
       patchGameLoopRuntimeState({
         incomingMissileAttempts: Math.min(attemptNumber, INTERCEPT_ATTEMPT_LIMIT),
+        lastInterceptWrong: false, // optimistic clear; server may set it back
       });
       transport.send({
         payload: { attemptNumber, decodedCoord: coord, missileId: incomingMissileId },
@@ -233,7 +248,7 @@ export function GameClientWrapper({ roomId }: Props) {
       return;
     }
     if (coord !== selectedTarget) {
-      setStatusLine(`Передача не совпала. Ожидали ${formatCoord(selectedTarget)}.`);
+      setStatusLine(`✕ Передача не совпала. Ожидали ${formatCoord(selectedTarget)}. Повторите.`);
       return;
     }
 
@@ -250,11 +265,11 @@ export function GameClientWrapper({ roomId }: Props) {
       type: GameEventType.MISSILE_LAUNCHED,
     });
     setSelectedTarget(null);
-    setStatusLine(`Передача подтверждена: ${formatCoord(coord)}.`);
+    setStatusLine(`✓ Передача подтверждена: ${formatCoord(coord)}. Ожидайте результата.`);
   });
 
   // ── Phase-based rendering ─────────────────────────────────────────────────
-  // Все хуки выше — ранние возвраты только после них.
+  // All hooks above — early returns only after them.
 
   if (phase === "lobby") {
     return <LobbyOverlay roomId={roomId} morseEngine={morseEngine} />;
@@ -382,7 +397,15 @@ export function GameClientWrapper({ roomId }: Props) {
                   <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-[var(--color-radar-green)]/60">
                     Радиоканал
                   </p>
-                  <p className="font-mono text-sm text-[var(--color-miss-white)]/70">
+                  <p
+                    className={`font-mono text-sm ${
+                      statusLine.startsWith("✕")
+                        ? "text-[var(--color-hit-red)]"
+                        : statusLine.startsWith("✓")
+                          ? "text-[var(--color-radar-green)]"
+                          : "text-[var(--color-miss-white)]/70"
+                    }`}
+                  >
                     {statusLine}
                   </p>
                 </div>
