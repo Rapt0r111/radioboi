@@ -42,7 +42,7 @@ function getKV(): KVNamespace {
     throw new Error(
       "ROOM_STATE KV binding is not available.\n" +
         "В локальной разработке убедитесь, что apps/web/wrangler.toml существует " +
-        "и содержит [[kv_namespaces]] с binding = \"ROOM_STATE\".\n" +
+        'и содержит [[kv_namespaces]] с binding = "ROOM_STATE".\n' +
         "initOpenNextCloudflareForDev() ищет wrangler.toml рядом с next.config.ts.",
     );
   }

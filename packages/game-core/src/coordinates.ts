@@ -1,6 +1,6 @@
 // packages/game-core/src/coordinates.ts
 
-import type { Coordinate } from "./types.js";
+import type { Coordinate } from "./types";
 
 // ── Константы поля ────────────────────────────────────────────────────────────
 

@@ -7,8 +7,8 @@ import {
   GameEventType,
   type ServerGameEvent,
 } from "@radioboi/game-core";
-import { useGameStore } from "@/src/store/gameStore.js";
-import { decodeServerEvent, encodeClientEvent, FrameDecodeError } from "./msgpack.js";
+import { useGameStore } from "@/src/store/gameStore";
+import { decodeServerEvent, encodeClientEvent, FrameDecodeError } from "./msgpack";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 

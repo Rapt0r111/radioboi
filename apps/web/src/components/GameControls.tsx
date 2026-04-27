@@ -248,10 +248,7 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
               <span>▶ ПОВТОРИТЬ СИГНАЛ</span>
 
               {/* Пипки счётчика повторений */}
-              <span
-                className="flex gap-0.5"
-                aria-hidden="true"
-              >
+              <span className="flex gap-0.5" aria-hidden="true">
                 {Array.from({ length: MAX_REPEATS }).map((_, i) => (
                   <span
                     key={i}

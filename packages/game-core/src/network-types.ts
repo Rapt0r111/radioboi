@@ -1,7 +1,7 @@
 // packages/game-core/src/network-types.ts
 // PATCHED: see comment [FIX #2] on AttackPrepEvent
 
-import type { Board, Coordinate, GamePhase, Missile } from "./types.js";
+import type { Board, Coordinate, GamePhase, Missile } from "./types";
 
 // ── Morse primitives ──────────────────────────────────────────────────────────
 

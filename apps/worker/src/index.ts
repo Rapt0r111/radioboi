@@ -2,10 +2,10 @@
 // Единственная задача этого файла — точка входа воркера.
 // Env и GameRoomArbitrator живут в своих модулях.
 
-export { GameRoomArbitrator } from "./GameRoomArbitrator.js";
-export type { Env } from "./types.js";
+export { GameRoomArbitrator } from "./GameRoomArbitrator";
+export type { Env } from "./types";
 
-import type { Env } from "./types.js";
+import type { Env } from "./types";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

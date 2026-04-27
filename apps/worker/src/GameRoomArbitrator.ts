@@ -1,6 +1,6 @@
 // apps/worker/src/GameRoomArbitrator.ts
 
-import type { RoomPhase, RoomState } from "./game-logic.js";
+import type { RoomPhase, RoomState } from "./game-logic";
 import {
   addPlayer,
   applyShipsPlaced,
@@ -12,8 +12,8 @@ import {
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
-} from "./game-logic.js";
-import { validateMorseForCoord } from "./morse.js";
+} from "./game-logic";
+import { validateMorseForCoord } from "./morse";
 import {
   decodeEvent,
   makeError,
@@ -22,8 +22,8 @@ import {
   makePlayerJoined,
   makeResolveHit,
   makeSyncState,
-} from "./protocol.js";
-import type { Env } from "./types.js";
+} from "./protocol";
+import type { Env } from "./types";
 
 // ── Coordinate helpers (imported from game-core) ──────────────────────────────
 

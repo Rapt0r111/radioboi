@@ -1,6 +1,7 @@
 // apps/web/next.config.ts
-import type { NextConfig } from "next";
+
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+import type { NextConfig } from "next";
 
 initOpenNextCloudflareForDev();
 

@@ -42,9 +42,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
         <h1 className="font-mono text-4xl font-bold tracking-widest text-radar-green morse-glow">
           ▸ МОРСКОЙ РАДИОБОЙ
         </h1>
-        <p className="mt-2 text-sm text-miss-white/50">
-          РЕАЛТАЙМ PvP · АЗБУКА МОРЗЕ · CLOUDFLARE
-        </p>
+        <p className="mt-2 text-sm text-miss-white/50">РЕАЛТАЙМ PvP · АЗБУКА МОРЗЕ · CLOUDFLARE</p>
       </header>
 
       {/* ── Панель действий ────────────────────────────────────────────────── */}
@@ -120,10 +118,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
 
           {/* Ошибка входа (без JS — через searchParam) */}
           {error && (
-            <p
-              role="alert"
-              className="font-mono text-xs text-hit-red uppercase tracking-widest"
-            >
+            <p role="alert" className="font-mono text-xs text-hit-red uppercase tracking-widest">
               ✕ {decodeURIComponent(error)}
             </p>
           )}

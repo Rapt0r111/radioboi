@@ -1,4 +1,4 @@
-// packages/morse-engine/src/MorseEngine.ts
+// packages/morse-engine/src/audioEngine.ts
 // Аудио-движок на нативном Web Audio API.
 // Запрещено: внешние библиотеки, AudioWorklet.
 // Цепочка: OscillatorNode → BiquadFilterNode → GainNode(envelope) → GainNode(master) → destination

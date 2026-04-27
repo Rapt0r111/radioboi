@@ -8,7 +8,7 @@ export {
   makeCoordinate,
   parseCoordinate,
   ROWS,
-} from "./coordinates.js";
+} from "./coordinates";
 export type {
   AttackPrepEvent,
   ClientGameEvent,
@@ -27,14 +27,14 @@ export type {
   ServerGameEvent,
   ShipsPlacedEvent,
   SyncStateEvent,
-} from "./network-types.js";
+} from "./network-types";
 // ── Network types ─────────────────────────────────────────────────────────────
 export {
   ErrorCode,
   GameEventType,
-} from "./network-types.js";
+} from "./network-types";
 
-export type { PlacementError, PlacementResult } from "./ship-placement.js";
+export type { PlacementError, PlacementResult } from "./ship-placement";
 // ── Ship placement ────────────────────────────────────────────────────────────
 export {
   buildBoardFromShips,
@@ -49,6 +49,6 @@ export {
   morseNotationToCoordinate,
   REQUIRED_FLEET,
   validatePlacement,
-} from "./ship-placement.js";
+} from "./ship-placement";
 // ── Core types ────────────────────────────────────────────────────────────────
-export type { Board, CellState, Coordinate, GamePhase, Missile } from "./types.js";
+export type { Board, CellState, Coordinate, GamePhase, Missile } from "./types";

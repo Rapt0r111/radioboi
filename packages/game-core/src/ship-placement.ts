@@ -6,8 +6,8 @@ import {
   isValidCoordinate,
   makeCoordinate,
   parseCoordinate,
-} from "./coordinates.js";
-import type { Board, Coordinate } from "./types.js";
+} from "./coordinates";
+import type { Board, Coordinate } from "./types";
 
 // ── Fleet definition ──────────────────────────────────────────────────────────
 
