@@ -3,11 +3,20 @@
 
 import { type Board, type CellState, COLUMNS, type Coordinate, ROWS } from "@radioboi/game-core";
 
-function cellClass(state: CellState | undefined, isEnemy: boolean): string {
+function cellClass(state: CellState | undefined, isEnemy: boolean, isPlacement: boolean): string {
   const base =
     "relative flex items-center justify-center text-[10px] font-mono " +
     "border border-[var(--color-ocean-800)] transition-colors duration-150 " +
     "cursor-pointer select-none aspect-square";
+
+  if (isPlacement) {
+    switch (state) {
+      case "ship":
+        return `${base} bg-[var(--color-radar-green)]/20 border-[var(--color-radar-green)]/60`;
+      default:
+        return `${base} bg-[var(--color-ocean-900)] hover:bg-[var(--color-ocean-800)]`;
+    }
+  }
 
   switch (state) {
     case "ship":
@@ -25,7 +34,8 @@ function cellClass(state: CellState | undefined, isEnemy: boolean): string {
   }
 }
 
-function cellSymbol(state: CellState | undefined, isEnemy: boolean): string {
+function cellSymbol(state: CellState | undefined, isEnemy: boolean, isPlacement: boolean): string {
+  if (isPlacement && state === "ship") return "▪";
   switch (state) {
     case "hit":
       return "✕";
@@ -43,14 +53,15 @@ function cellSymbol(state: CellState | undefined, isEnemy: boolean): string {
 type Props = {
   board: Board;
   isEnemy: boolean;
+  isPlacement?: boolean;
   onCellClick?: (coord: Coordinate) => void;
 };
 
-export function BoardGrid({ board, isEnemy, onCellClick }: Props) {
+export function BoardGrid({ board, isEnemy, isPlacement = false, onCellClick }: Props) {
   return (
     <table
       className="border-separate border-spacing-0.5"
-      aria-label={isEnemy ? "Поле противника" : "Ваше поле"}
+      aria-label={isPlacement ? "Расстановка кораблей" : isEnemy ? "Поле противника" : "Ваше поле"}
     >
       {/* Заголовок столбцов */}
       <thead>
@@ -87,15 +98,24 @@ export function BoardGrid({ board, isEnemy, onCellClick }: Props) {
               const state = board[coord];
 
               return (
-                <td key={coord} className="p-0">
+                <td key={coord} className="p-0" data-coord={coord}>
                   <button
-                    type="button" // ← fixes useButtonType
+                    type="button"
+                    data-coord={coord}
                     aria-label={`${col}${rowIndex} — ${state ?? "пусто"}`}
-                    className={cellClass(state, isEnemy)}
+                    className={cellClass(state, isEnemy, isPlacement)}
                     onClick={() => onCellClick?.(coord)}
-                    disabled={!isEnemy || state === "hit" || state === "miss" || state === "sunk"}
+                    disabled={
+                      !isPlacement && !isEnemy
+                        ? false
+                        : !isPlacement && !isEnemy
+                          ? true
+                          : !isEnemy && !isPlacement
+                            ? false
+                            : isEnemy && (state === "hit" || state === "miss" || state === "sunk")
+                    }
                   >
-                    {cellSymbol(state, isEnemy)}
+                    {cellSymbol(state, isEnemy, isPlacement)}
                   </button>
                 </td>
               );

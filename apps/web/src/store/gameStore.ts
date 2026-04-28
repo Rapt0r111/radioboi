@@ -4,8 +4,6 @@
 import type { Board, Coordinate, GamePhase, Missile } from "@radioboi/game-core";
 import { create } from "zustand";
 
-// ── Типы ─────────────────────────────────────────────────────────────────────
-
 type GameState = {
   phase: GamePhase;
   playerId: string | null;
@@ -14,7 +12,7 @@ type GameState = {
   enemyBoard: Board;
   activeMissiles: Missile[];
   isMyTurn: boolean;
-  winnerId: string | null; // NEW: хранит ID победителя
+  winnerId: string | null;
 };
 
 type SyncSnapshot = {
@@ -40,8 +38,6 @@ type GameActions = {
 
 type GameStore = GameState & GameActions;
 
-// ── Начальное состояние ───────────────────────────────────────────────────────
-
 function makeInitialState(): GameState {
   return {
     phase: "lobby",
@@ -55,45 +51,30 @@ function makeInitialState(): GameState {
   };
 }
 
-// ── Стор ─────────────────────────────────────────────────────────────────────
-
 export const useGameStore = create<GameStore>((set) => ({
   ...makeInitialState(),
 
-  setPhase(phase) {
-    set({ phase });
-  },
-
-  setSession(playerId, roomId) {
-    set({ playerId, roomId });
-  },
+  setPhase(phase) { set({ phase }); },
+  setSession(playerId, roomId) { set({ playerId, roomId }); },
 
   placeShip(coords) {
     set((state) => {
       const next: Board = { ...state.ownBoard };
-      for (const coord of coords) {
-        next[coord] = "ship";
-      }
+      for (const coord of coords) next[coord] = "ship";
       return { ownBoard: next };
     });
   },
 
   addMissile(missile) {
-    set((state) => ({
-      activeMissiles: [...state.activeMissiles, missile],
-    }));
+    set((state) => ({ activeMissiles: [...state.activeMissiles, missile] }));
   },
 
   applyEnemyShot(coord, result) {
-    set((state) => ({
-      enemyBoard: { ...state.enemyBoard, [coord]: result },
-    }));
+    set((state) => ({ enemyBoard: { ...state.enemyBoard, [coord]: result } }));
   },
 
   applyOwnHit(coord, result) {
-    set((state) => ({
-      ownBoard: { ...state.ownBoard, [coord]: result },
-    }));
+    set((state) => ({ ownBoard: { ...state.ownBoard, [coord]: result } }));
   },
 
   interceptMissile(missileId) {
@@ -104,28 +85,14 @@ export const useGameStore = create<GameStore>((set) => ({
     }));
   },
 
-  toggleTurn() {
-    set((state) => ({ isMyTurn: !state.isMyTurn }));
-  },
+  toggleTurn() { set((state) => ({ isMyTurn: !state.isMyTurn })); },
 
-  // Полная синхронизация от сервера (SYNC_STATE).
-  // Сохраняет winnerId если он присутствует в снапшоте.
   syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn, winnerId }) {
-    set({
-      phase,
-      ownBoard,
-      enemyBoard,
-      isMyTurn,
-      ...(winnerId !== undefined ? { winnerId } : {}),
-    });
+    set({ phase, ownBoard, enemyBoard, isMyTurn, winnerId: winnerId ?? null });
   },
 
-  reset() {
-    set(makeInitialState());
-  },
+  reset() { set(makeInitialState()); },
 }));
-
-// ── Селекторы ─────────────────────────────────────────────────────────────────
 
 export const selectPhase = (s: GameStore) => s.phase;
 export const selectOwnBoard = (s: GameStore) => s.ownBoard;
