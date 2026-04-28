@@ -192,10 +192,18 @@ export function GameClientWrapper({ roomId }: Props) {
     return () => window.clearInterval(timerId);
   }, [incomingMissileDeadline, attackerTurnStart, isMyTurn]);
 
+  const activeMissilesCount = useGameStore((s) => s.activeMissiles.length);
+
+  // Сбрасываем missileInFlight как только активных ракет не осталось
+  useEffect(() => {
+    if (activeMissilesCount === 0) {
+      setMissileInFlight(false);
+    }
+  }, [activeMissilesCount]);
+
   useEffect(() => {
     if (!isMyTurn || incomingMissileId !== null || phase !== "battle") {
       setSelectedTarget(null);
-      setMissileInFlight(false);
     }
   }, [incomingMissileId, isMyTurn, phase]);
 
@@ -321,8 +329,8 @@ export function GameClientWrapper({ roomId }: Props) {
             <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
               {/* Статус хода */}
               <div className={`rounded border px-3 py-1.5 ${isMyTurn
-                  ? "border-radar-green/50 text-radar-green"
-                  : "border-ocean-800 text-miss-white/40"
+                ? "border-radar-green/50 text-radar-green"
+                : "border-ocean-800 text-miss-white/40"
                 }`}>
                 {turnLabel}
               </div>
@@ -330,8 +338,8 @@ export function GameClientWrapper({ roomId }: Props) {
               {/* Таймер перехватчика */}
               {interceptSecondsLeft !== null && (
                 <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${interceptSecondsLeft <= 5
-                    ? "border-hit-red/70 text-hit-red animate-pulse"
-                    : "border-morse-amber/50 text-morse-amber"
+                  ? "border-hit-red/70 text-hit-red animate-pulse"
+                  : "border-morse-amber/50 text-morse-amber"
                   }`}>
                   ⏱ {interceptSecondsLeft}с перехват
                 </div>
@@ -340,8 +348,8 @@ export function GameClientWrapper({ roomId }: Props) {
               {/* Таймер атакующего */}
               {attackerSecondsLeft !== null && (
                 <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${isAttackerWarning
-                    ? "border-morse-amber/70 text-morse-amber"
-                    : "border-ocean-800 text-miss-white/30"
+                  ? "border-morse-amber/70 text-morse-amber"
+                  : "border-ocean-800 text-miss-white/30"
                   }`}>
                   ⏱ {attackerSecondsLeft}с ход
                 </div>
@@ -375,8 +383,8 @@ export function GameClientWrapper({ roomId }: Props) {
                 </p>
               </div>
               <div className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${selectedTarget !== null
-                  ? "border-morse-amber/60 text-morse-amber"
-                  : "border-ocean-800 text-miss-white/25"
+                ? "border-morse-amber/60 text-morse-amber"
+                : "border-ocean-800 text-miss-white/25"
                 }`}>
                 ⊕ {formatCoord(selectedTarget)}
               </div>
@@ -396,7 +404,9 @@ export function GameClientWrapper({ roomId }: Props) {
                   setStatusLine(`Цель захвачена: ${formatCoord(coord)}. Передайте её по Морзе.`);
                 }}
               />
-              <RadarCanvas radarRef={radarRef} />
+              <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 5 }}>
+                <RadarCanvas radarRef={radarRef} />
+              </div>
             </div>
 
             {/* История ходов под вражеским полем */}
@@ -426,8 +436,8 @@ export function GameClientWrapper({ roomId }: Props) {
                       <div
                         key={i}
                         className={`h-2 w-2 rounded-full transition-colors ${i < incomingMissileAttempts
-                            ? "bg-hit-red"
-                            : "bg-ocean-800"
+                          ? "bg-hit-red"
+                          : "bg-ocean-800"
                           }`}
                       />
                     ))}
