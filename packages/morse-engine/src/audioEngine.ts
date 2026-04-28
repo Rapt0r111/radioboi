@@ -39,6 +39,9 @@ export class MorseEngine {
   /** Используется для отмены ожидания в playSequence при stop(). */
   #playbackId: number = 0;
 
+  // FIX BUG 1: храним текущую скорость воспроизведения для playSequence без аргумента
+  #unitMs: number = DEFAULT_UNIT_MS;
+
   constructor(options: MorseEngineOptions = {}) {
     // FIX: SSR guard — AudioContext недоступен вне браузера
     if (typeof window === "undefined" || typeof AudioContext === "undefined") {
@@ -128,6 +131,20 @@ export class MorseEngine {
     );
   }
 
+  /**
+   * FIX BUG 1: Устанавливает скорость воспроизведения (длительность 1 единицы в мс).
+   * Применяется как дефолт в playSequence — то есть к входящим ракетам при autoplay.
+   * При ручном повторе GameControls передаёт unitMs явно.
+   * 1200 / wpm = unitMs (стандарт PARIS).
+   */
+  setSpeed(unitMs: number): void {
+    this.#unitMs = Math.max(20, unitMs);
+  }
+
+  get currentUnitMs(): number {
+    return this.#unitMs;
+  }
+
   get isPlaying(): boolean {
     return this.#isPlaying;
   }
@@ -137,21 +154,26 @@ export class MorseEngine {
   /**
    * Воспроизводит последовательность тайминговых единиц Морзе.
    *
+   * FIX BUG 1: по умолчанию использует this.#unitMs (задаётся через setSpeed),
+   * а не жёстко захардкоженный DEFAULT_UNIT_MS.
+   *
    * @param sequence Выход `encodeToMorse()`: положительные числа — звук,
    *                 отрицательные — пауза (в условных единицах).
-   * @param unitMs   Длительность одной условной единицы в мс. По умолчанию 100.
+   * @param unitMs   Длительность одной условной единицы в мс. По умолчанию текущий unitMs.
    * @returns Promise, резолвящийся по окончании воспроизведения.
    *          При вызове `stop()` резолвится досрочно.
    */
   #resolvePlayback: (() => void) | null = null;
 
-  async playSequence(sequence: number[], unitMs: number = DEFAULT_UNIT_MS): Promise<void> {
+  async playSequence(sequence: number[], unitMs?: number): Promise<void> {
+    // FIX BUG 1: используем сохранённую скорость если явно не передана
+    const resolvedUnitMs = unitMs ?? this.#unitMs;
     await this.resume();
     this.stop(); // отменит предыдущее воспроизведение и вызовет старый resolve
 
     this.#isPlaying = true;
     const id = ++this.#playbackId;
-    const unitS = unitMs / 1000;
+    const unitS = resolvedUnitMs / 1000;
     const endTimeS = this.#scheduleSequence(sequence, unitS);
 
     return new Promise<void>((resolve) => {

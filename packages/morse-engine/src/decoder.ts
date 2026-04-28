@@ -33,7 +33,8 @@ const WORD_TIMEOUT_FACTOR = 4.5; // 7 единиц − 2.5 уже истекло
 // ── Класс ─────────────────────────────────────────────────────────────────────
 
 export class FuzzyDecoder {
-  readonly #dotDuration: number;
+  // FIX BUG 1: убрали readonly — dotDuration теперь изменяется через setDotDuration()
+  #dotDuration: number;
 
   // Callbacks
   readonly #onChar: ((char: string) => void) | undefined;
@@ -57,6 +58,15 @@ export class FuzzyDecoder {
 
   get dotDuration(): number {
     return this.#dotDuration;
+  }
+
+  /**
+   * FIX BUG 1: Обновляет базовую длительность точки в реальном времени.
+   * Вызывается при изменении WPM: dotDuration = 1200 / wpm (мс на единицу).
+   * Все последующие нажатия будут классифицироваться по новому порогу.
+   */
+  setDotDuration(ms: number): void {
+    this.#dotDuration = Math.max(20, ms); // минимум 20мс для защиты от слишком быстрых тапов
   }
 
   /** Текущая накопленная морзе-строка (до завершения символа). */
@@ -127,7 +137,7 @@ export class FuzzyDecoder {
   /**
    * Определяет, является ли нажатие точкой или тире.
    *
-   * Допуски:
+   * Допуски (пересчитываются динамически при каждом вызове):
    *   Точка: 1 мс … dotDuration × 1.3
    *   Тире:  dotDuration × 1.5 и выше
    */
