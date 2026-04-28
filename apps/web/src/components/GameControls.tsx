@@ -7,6 +7,9 @@
 //  • Ползунок тональности Морзе (440–800 Гц)
 //  • Ползунок скорости (10–30 WPM)
 //  • Кнопка «Повторить сигнал» — только в фазе защиты, макс. 3 нажатия.
+//
+// FIX BUG 1: WPM-ползунок теперь вызывает engine.setSpeed() (для playSequence)
+// И onSpeedChange(unitMs) — чтобы родитель передал unitMs в MorseTelegraph → FuzzyDecoder.
 
 import type { MorseEngine } from "@radioboi/morse-engine";
 import { useRef, useState } from "react";
@@ -37,13 +40,6 @@ function wpmToUnitMs(wpm: number): number {
   return Math.round(1200 / wpm);
 }
 
-// ── Extended engine interface ──────────────────────────────────────────────────
-// MorseEngine может не иметь setSpeed() в текущей версии.
-// Используем опциональный метод для прямой совместимости.
-type EngineWithSpeed = MorseEngine & {
-  setSpeed?: (unitMs: number) => void;
-};
-
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -56,6 +52,11 @@ type Props = {
   currentIncomingSequence: number[] | null;
   /** ID текущей летящей ракеты — сбрасывает счётчик повторений при смене */
   currentMissileId: string | null;
+  /**
+   * FIX BUG 1: Callback вызывается при изменении WPM с новым unitMs.
+   * Родитель передаёт unitMs в MorseTelegraph → FuzzyDecoder.setDotDuration().
+   */
+  onSpeedChange?: (unitMs: number) => void;
 };
 
 // ── Вспомогательные компоненты ─────────────────────────────────────────────────
@@ -113,7 +114,7 @@ function CrtSlider({ id, label, unit, min, max, value, onChange, displayValue }:
 
 // ── Основной компонент ─────────────────────────────────────────────────────────
 
-export function GameControls({ engine, currentIncomingSequence, currentMissileId }: Props) {
+export function GameControls({ engine, currentIncomingSequence, currentMissileId, onSpeedChange }: Props) {
   const phase = useGameStore((s) => s.phase);
 
   // ── Состояние ползунков ───────────────────────────────────────────────────
@@ -125,11 +126,9 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
   const [repeatCount, setRepeatCount] = useState(0);
   const lastMissileIdRef = useRef<string | null>(null);
 
-  // Сброс счётчика при появлении новой ракеты
+  // Сброс счётчика при появлении новой ракеты (без setState в render)
   if (currentMissileId !== lastMissileIdRef.current) {
     lastMissileIdRef.current = currentMissileId;
-    // Не вызываем setState в render — используем отложенный сброс через useEffect
-    // здесь будет несоответствие только на один кадр, что приемлемо
     if (repeatCount !== 0) {
       setRepeatCount(0);
     }
@@ -154,15 +153,17 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
   function handleWpmChange(v: number): void {
     setWpm(v);
     const unitMs = wpmToUnitMs(v);
-    // Вызываем setSpeed() если движок его поддерживает (расширение интерфейса)
-    const ext = engine as EngineWithSpeed;
-    ext.setSpeed?.(unitMs);
+    // FIX BUG 1: обновляем скорость воспроизведения в движке (для повтора сигнала)
+    engine.setSpeed(unitMs);
+    // FIX BUG 1: сообщаем родителю для синхронизации FuzzyDecoder
+    onSpeedChange?.(unitMs);
   }
 
   function handleRepeat(): void {
     if (!canRepeat || !currentIncomingSequence) return;
     setRepeatCount((c) => c + 1);
-    void engine.playSequence(currentIncomingSequence, wpmToUnitMs(wpm));
+    // FIX BUG 1: playSequence теперь без unitMs — движок сам использует setSpeed-значение
+    void engine.playSequence(currentIncomingSequence);
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -174,7 +175,7 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
         rounded border border-[var(--color-ocean-800)]
         bg-[var(--color-ocean-900)] p-4
         font-mono
-        w-full max-w-xs
+        w-full
       "
     >
       {/* Заголовок в стиле терминала */}
@@ -218,7 +219,7 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
           max={WPM_MAX}
           value={wpm}
           onChange={handleWpmChange}
-          displayValue={`${wpm} WPM`}
+          displayValue={`${wpm} WPM · ${wpmToUnitMs(wpm)}мс`}
         />
 
         {/* ── Кнопка повтора сигнала ──────────────────────────────────────── */}

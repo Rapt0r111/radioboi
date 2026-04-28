@@ -50,6 +50,19 @@ function cellSymbol(state: CellState | undefined, isEnemy: boolean, isPlacement:
   }
 }
 
+/**
+ * FIX BUG 3: Упрощённая и корректная логика disabled.
+ * - На своём поле (isEnemy=false, isPlacement=false): кнопки НЕ кликабельны
+ * - На поле расстановки (isPlacement=true): все кнопки кликабельны
+ * - На вражеском поле (isEnemy=true): отключаем уже обстрелянные клетки
+ */
+function isCellDisabled(state: CellState | undefined, isEnemy: boolean, isPlacement: boolean): boolean {
+  if (isPlacement) return false;
+  if (!isEnemy) return true; // своё поле — нельзя кликать
+  // Вражеское поле: уже обстрелянные клетки недоступны
+  return state === "hit" || state === "miss" || state === "sunk";
+}
+
 type Props = {
   board: Board;
   isEnemy: boolean;
@@ -105,15 +118,7 @@ export function BoardGrid({ board, isEnemy, isPlacement = false, onCellClick }: 
                     aria-label={`${col}${rowIndex} — ${state ?? "пусто"}`}
                     className={cellClass(state, isEnemy, isPlacement)}
                     onClick={() => onCellClick?.(coord)}
-                    disabled={
-                      !isPlacement && !isEnemy
-                        ? false
-                        : !isPlacement && !isEnemy
-                          ? true
-                          : !isEnemy && !isPlacement
-                            ? false
-                            : isEnemy && (state === "hit" || state === "miss" || state === "sunk")
-                    }
+                    disabled={isCellDisabled(state, isEnemy, isPlacement)}
                   >
                     {cellSymbol(state, isEnemy, isPlacement)}
                   </button>

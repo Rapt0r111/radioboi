@@ -4,7 +4,11 @@
 //
 // Главный клиентский компонент игры.
 // Управляет всем жизненным циклом: lobby → placement → battle → gameOver.
-// Каждая фаза — отдельный компонент; никаких условных хуков.
+//
+// FIX BUG 1: добавлен unitMs state — синхронизирует WPM между GameControls и MorseTelegraph
+// FIX BUG 2: читает lastInterceptWrong из стора и передаёт в MorseTelegraph
+// NEW: добавлен таймер хода для атакующего (60 сек)
+// NEW: добавлена ShotHistory
 
 import {
   type Coordinate,
@@ -24,6 +28,7 @@ import { LobbyScreen } from "@/src/components/LobbyScreen";
 import { MorseTelegraph } from "@/src/components/MorseTelegraph";
 import { RadarCanvas, type RadarRef } from "@/src/components/RadarCanvas";
 import { ShipPlacementScreen } from "@/src/components/ShipPlacementScreen";
+import { ShotHistory } from "@/src/components/ShotHistory";
 import { WaitingScreen } from "@/src/components/WaitingScreen";
 import {
   patchGameLoopRuntimeState,
@@ -42,11 +47,10 @@ import {
 
 const PLAYER_ID_KEY = "radioboi:playerId";
 const INTERCEPT_ATTEMPT_LIMIT = 3;
-
-// ── Faza "waiting after placement" ────────────────────────────────────────────
-// Флаг, что этот игрок уже отправил SHIPS_PLACED — храним в localStorage
-// чтобы пережить HMR в dev-режиме.
 const PLACED_KEY_PREFIX = "radioboi:placed:";
+
+/** Таймер хода атакующего в секундах. По истечении показываем предупреждение. */
+const ATTACKER_TURN_TIMEOUT_S = 60;
 
 type Props = {
   roomId: string;
@@ -57,6 +61,7 @@ type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   incomingMissileDeadline?: number | null;
   incomingMissileId?: string | null;
   incomingMissileSequence?: number[] | null;
+  lastInterceptWrong?: boolean;
   winnerId?: string;
 };
 
@@ -88,7 +93,7 @@ function toRadarPoint(coord: Coordinate): { x: number; y: number } {
 function formatCoord(coord: Coordinate | null): string {
   if (coord === null) return "нет";
   const { digit, letter } = coordinateToMorseNotation(coord);
-  return `${letter}${digit} / ${coord}`;
+  return `${letter}${digit} / ${coord.slice(0, 3)}-${Number(coord.slice(3))}`;
 }
 
 // ── Компонент ──────────────────────────────────────────────────────────────────
@@ -113,6 +118,10 @@ export function GameClientWrapper({ roomId }: Props) {
   const incomingMissileSequence = useGameStore(
     (state) => (state as RuntimeCarrier).incomingMissileSequence ?? null,
   );
+  // FIX BUG 2: читаем флаг неверного перехвата для передачи в MorseTelegraph
+  const lastInterceptWrong = useGameStore(
+    (state) => (state as RuntimeCarrier).lastInterceptWrong ?? false,
+  );
 
   const [morseEngine, setMorseEngine] = useState<MorseEngine | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -122,7 +131,13 @@ export function GameClientWrapper({ roomId }: Props) {
   );
   const [transport, setTransport] = useState<GameClient | null>(null);
 
-  // Флаг: игрок уже отправил SHIPS_PLACED, ждём battle
+  // FIX BUG 1: unitMs для синхронизации WPM между GameControls и MorseTelegraph
+  // Дефолт 60мс = 20 WPM (1200 / 20)
+  const [unitMs, setUnitMs] = useState(60);
+
+  // Таймер хода атакующего
+  const [attackerTurnStart, setAttackerTurnStart] = useState<number | null>(null);
+
   const [hasPlaced, setHasPlaced] = useState(() => {
     try { return sessionStorage.getItem(`${PLACED_KEY_PREFIX}${roomId}`) === "1"; } catch { return false; }
   });
@@ -131,12 +146,20 @@ export function GameClientWrapper({ roomId }: Props) {
 
   useGameLoop(transport, radarRef, morseEngine);
 
-  // Слушаем GAME_STARTED чтобы снять флаг hasPlaced (он уже не нужен)
   useEffect(() => {
     if (phase === "battle") {
       try { sessionStorage.removeItem(`${PLACED_KEY_PREFIX}${roomId}`); } catch { /* ignore */ }
     }
   }, [phase, roomId]);
+
+  // Запускаем/сбрасываем таймер хода атакующего
+  useEffect(() => {
+    if (phase === "battle" && isMyTurn && incomingMissileId === null) {
+      setAttackerTurnStart(Date.now());
+    } else {
+      setAttackerTurnStart(null);
+    }
+  }, [phase, isMyTurn, incomingMissileId]);
 
   useEffect(() => {
     const nextPlayerId = getOrCreatePlayerId();
@@ -158,11 +181,16 @@ export function GameClientWrapper({ roomId }: Props) {
     };
   }, [roomId, setSession]);
 
+  // Тикаем таймер для countdown
   useEffect(() => {
-    if (incomingMissileDeadline === null) { setNow(Date.now()); return; }
+    const needsTick =
+      incomingMissileDeadline !== null ||
+      (attackerTurnStart !== null && isMyTurn);
+
+    if (!needsTick) { setNow(Date.now()); return; }
     const timerId = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timerId);
-  }, [incomingMissileDeadline]);
+  }, [incomingMissileDeadline, attackerTurnStart, isMyTurn]);
 
   useEffect(() => {
     if (!isMyTurn || incomingMissileId !== null || phase !== "battle") {
@@ -206,6 +234,7 @@ export function GameClientWrapper({ roomId }: Props) {
       type: GameEventType.MISSILE_LAUNCHED,
     });
     setSelectedTarget(null);
+    setAttackerTurnStart(null);
     setStatusLine(`Передача подтверждена: ${formatCoord(coord)}.`);
   });
 
@@ -250,69 +279,112 @@ export function GameClientWrapper({ roomId }: Props) {
 
   // ── Боевая фаза (battle) ──────────────────────────────────────────────────
 
-  const secondsLeft =
+  // Countdown для перехватчика
+  const interceptSecondsLeft =
     incomingMissileDeadline === null
       ? null
       : Math.max(0, Math.ceil((incomingMissileDeadline - now) / 1000));
+
+  // Countdown для атакующего (информационный)
+  const attackerSecondsLeft =
+    attackerTurnStart !== null && isMyTurn && incomingMissileId === null
+      ? Math.max(0, ATTACKER_TURN_TIMEOUT_S - Math.floor((now - attackerTurnStart) / 1000))
+      : null;
+
+  const isAttackerWarning = attackerSecondsLeft !== null && attackerSecondsLeft <= 15;
+
   const telegraphMode = incomingMissileId === null ? "attack" : "intercept";
-  const turnLabel = isMyTurn ? "Ваш ход" : "Ожидание противника";
+  const turnLabel = isMyTurn ? "▸ ВАШ ХОД" : "◃ Ожидание противника";
 
   return (
     <div className="relative min-h-dvh bg-ocean-950 text-miss-white">
       {morseEngine ? <AudioUnlocker engine={morseEngine} /> : null}
       <ConnectionMonitor />
 
-      <main className="crt-scanlines mx-auto flex min-h-dvh w-full max-w-360 flex-col gap-6 px-4 py-6 lg:px-8">
+      <main className="crt-scanlines mx-auto flex min-h-dvh w-full max-w-[1600px] flex-col gap-4 px-4 py-4 lg:px-6 lg:py-6">
+
         {/* ── Шапка ──────────────────────────────────────────────────────── */}
-        <header className="rounded border border-ocean-800 bg-ocean-900/80 p-4 shadow-[0_0_24px_rgba(0,255,136,0.06)]">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.34em] text-radar-green/60">
+        <header className="rounded border border-ocean-800 bg-ocean-900/80 p-3 shadow-[0_0_24px_rgba(0,255,136,0.06)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-baseline gap-4">
+              <p className="font-mono text-[9px] uppercase tracking-[0.34em] text-radar-green/60">
                 Морской радиобой
               </p>
-              <h1 className="font-mono text-2xl font-bold tracking-[0.28em] text-radar-green"
+              <h1 className="font-mono text-xl font-bold tracking-[0.28em] text-radar-green"
                 style={{ textShadow: "0 0 12px rgba(0,255,136,0.4)" }}>
                 ROOM {roomId}
               </h1>
             </div>
-            <div className="grid gap-2 font-mono text-[11px] text-miss-white/55 sm:grid-cols-3">
-              <div className="rounded border border-ocean-800 px-3 py-2">
-                <span className="block text-[9px] uppercase tracking-[0.22em] text-radar-green/50">Фаза</span>
-                <span>{phase}</span>
+
+            <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
+              {/* Статус хода */}
+              <div className={`rounded border px-3 py-1.5 ${
+                isMyTurn
+                  ? "border-radar-green/50 text-radar-green"
+                  : "border-ocean-800 text-miss-white/40"
+              }`}>
+                {turnLabel}
               </div>
-              <div className="rounded border border-ocean-800 px-3 py-2">
-                <span className="block text-[9px] uppercase tracking-[0.22em] text-radar-green/50">Статус</span>
-                <span>{turnLabel}</span>
+
+              {/* Таймер перехватчика */}
+              {interceptSecondsLeft !== null && (
+                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${
+                  interceptSecondsLeft <= 5
+                    ? "border-hit-red/70 text-hit-red animate-pulse"
+                    : "border-morse-amber/50 text-morse-amber"
+                }`}>
+                  ⏱ {interceptSecondsLeft}с перехват
+                </div>
+              )}
+
+              {/* Таймер атакующего */}
+              {attackerSecondsLeft !== null && (
+                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${
+                  isAttackerWarning
+                    ? "border-morse-amber/70 text-morse-amber"
+                    : "border-ocean-800 text-miss-white/30"
+                }`}>
+                  ⏱ {attackerSecondsLeft}с ход
+                </div>
+              )}
+
+              {/* Фаза */}
+              <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/30">
+                {phase}
               </div>
-              <div className="rounded border border-ocean-800 px-3 py-2">
-                <span className="block text-[9px] uppercase tracking-[0.22em] text-radar-green/50">Оператор</span>
-                <span>{playerId ? playerId.slice(0, 8) : "..."}</span>
+
+              {/* Оператор */}
+              <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/30">
+                {playerId ? playerId.slice(0, 8) : "..."}
               </div>
             </div>
           </div>
         </header>
 
-        {/* ── Игровое поле ────────────────────────────────────────────── */}
-        <section
-          className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.85fr)_minmax(0,1fr)]"
-          aria-label="Главный игровой экран"
-        >
-          {/* Поле противника */}
-          <section className="rounded border border-ocean-800 bg-ocean-900/80 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
+        {/* ── Игровое поле ────────────────────────────────────────────────── */}
+        <div className="grid flex-1 gap-4 xl:grid-cols-[1fr_320px_1fr]">
+
+          {/* ── Левая колонка: вражеское поле ─────────────────────────── */}
+          <section className="flex flex-col gap-3 rounded border border-ocean-800 bg-ocean-900/80 p-4">
+            <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="font-mono text-sm uppercase tracking-[0.28em] text-radar-green">
                   Вражеский сектор
                 </h2>
-                <p className="font-mono text-[10px] text-miss-white/40">
-                  Радарный канал совмещён с целевой сеткой.
+                <p className="font-mono text-[9px] text-miss-white/30">
+                  Клик — выбор цели · затем передача по Морзе
                 </p>
               </div>
-              <div className="rounded border border-ocean-800 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.2em] text-morse-amber">
-                Цель: {formatCoord(selectedTarget)}
+              <div className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                selectedTarget !== null
+                  ? "border-morse-amber/60 text-morse-amber"
+                  : "border-ocean-800 text-miss-white/25"
+              }`}>
+                ⊕ {formatCoord(selectedTarget)}
               </div>
             </div>
-            <div className="relative inline-block max-w-full">
+
+            <div className="relative inline-block max-w-full overflow-auto">
               <BoardGrid
                 board={enemyBoard}
                 isEnemy
@@ -326,61 +398,98 @@ export function GameClientWrapper({ roomId }: Props) {
               />
               <RadarCanvas radarRef={radarRef} />
             </div>
+
+            {/* История ходов под вражеским полем */}
+            <ShotHistory />
           </section>
 
-          {/* Радиоканал */}
-          <section className="flex flex-col gap-4">
-            <div className="rounded border border-ocean-800 bg-ocean-900/80 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-radar-green/60">
-                    Радиоканал
-                  </p>
-                  <p className="font-mono text-sm text-miss-white/70">{statusLine}</p>
-                </div>
-                <div className="grid gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-miss-white/60">
-                  <span>Режим: {telegraphMode === "attack" ? "атака" : "перехват"}</span>
-                  <span>Таймер: {secondsLeft === null ? "нет сигнала" : `${secondsLeft.toString()}с`}</span>
-                  <span>
-                    Попытки:{" "}
-                    {incomingMissileId === null
-                      ? "—"
-                      : `${incomingMissileAttempts}/${INTERCEPT_ATTEMPT_LIMIT}`}
+          {/* ── Центральная колонка: радиоканал ────────────────────────── */}
+          <section className="flex flex-col gap-3">
+
+            {/* Статус */}
+            <div className="rounded border border-ocean-800 bg-ocean-900/80 p-3">
+              <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-radar-green/50 mb-1">
+                Статус канала
+              </p>
+              <p className="font-mono text-xs leading-relaxed text-miss-white/70">
+                {statusLine}
+              </p>
+
+              {/* Индикатор попыток перехвата */}
+              {incomingMissileId !== null && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="font-mono text-[9px] uppercase tracking-widest text-miss-white/30">
+                    Попытки:
+                  </span>
+                  <div className="flex gap-1">
+                    {Array.from({ length: INTERCEPT_ATTEMPT_LIMIT }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={`h-2 w-2 rounded-full transition-colors ${
+                          i < incomingMissileAttempts
+                            ? "bg-hit-red"
+                            : "bg-ocean-800"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <span className="font-mono text-[9px] tabular-nums text-miss-white/30">
+                    {incomingMissileAttempts}/{INTERCEPT_ATTEMPT_LIMIT}
                   </span>
                 </div>
-              </div>
+              )}
             </div>
 
+            {/* Телеграфный ключ */}
             <MorseTelegraph
               mode={telegraphMode}
               morseEngine={morseEngine}
               onSequenceComplete={handleSequenceComplete}
+              unitMs={unitMs}
+              showWrongFeedback={lastInterceptWrong}
             />
 
+            {/* Управление звуком */}
             {morseEngine ? (
               <GameControls
                 currentIncomingSequence={incomingMissileSequence}
                 currentMissileId={incomingMissileId}
                 engine={morseEngine}
+                onSpeedChange={setUnitMs}
               />
             ) : null}
           </section>
 
-          {/* Своё поле */}
-          <section className="rounded border border-ocean-800 bg-ocean-900/80 p-4">
-            <div className="mb-3">
+          {/* ── Правая колонка: своё поле ───────────────────────────────── */}
+          <section className="flex flex-col gap-3 rounded border border-ocean-800 bg-ocean-900/80 p-4">
+            <div>
               <h2 className="font-mono text-sm uppercase tracking-[0.28em] text-radar-green">
                 Собственный сектор
               </h2>
-              <p className="font-mono text-[10px] text-miss-white/40">
-                Входящий удар обновляет вашу доску через общий игровой цикл.
+              <p className="font-mono text-[9px] text-miss-white/30">
+                Входящие удары отображаются автоматически
               </p>
             </div>
-            <div className="inline-block max-w-full">
+            <div className="inline-block max-w-full overflow-auto">
               <BoardGrid board={ownBoard} isEnemy={false} />
             </div>
+
+            {/* Легенда */}
+            <div className="mt-auto grid grid-cols-2 gap-1.5 rounded border border-ocean-800/50 p-2">
+              {[
+                { symbol: "▪", label: "Корабль", color: "text-radar-green/70" },
+                { symbol: "✕", label: "Ранен", color: "text-morse-amber" },
+                { symbol: "✕", label: "Потоплен", color: "text-hit-red" },
+                { symbol: "·", label: "Промах", color: "text-miss-white/30" },
+              ].map(({ symbol, label, color }) => (
+                <div key={label} className="flex items-center gap-1.5 font-mono text-[9px]">
+                  <span className={`w-3 text-center ${color}`}>{symbol}</span>
+                  <span className="text-miss-white/30 uppercase tracking-wider">{label}</span>
+                </div>
+              ))}
+            </div>
           </section>
-        </section>
+        </div>
       </main>
     </div>
   );

@@ -1,3 +1,4 @@
+// apps/web/src/hooks/useGameLoop.ts
 "use client";
 
 import {
@@ -11,7 +12,7 @@ import { MORSE_REVERSE } from "@radioboi/morse-engine";
 import { type RefObject, useEffect, useRef } from "react";
 import type { RadarRef } from "@/src/components/RadarCanvas";
 import type { GameClient } from "@/src/lib/network/gameClient";
-import { useGameStore } from "@/src/store/gameStore";
+import { formatCoordForLog, useGameStore } from "@/src/store/gameStore";
 
 const INTERCEPT_WINDOW_MS = 25_000;
 const DOT_UNIT = 1;
@@ -130,17 +131,26 @@ export function useGameLoop(
     const stopResolve = transport.on(GameEventType.RESOLVE_HIT, (event) => {
       const runtime = readRuntimeState();
       const store = useGameStore.getState();
-      const boardUpdater =
-        runtime.incomingMissileId === event.payload.missileId
-          ? store.applyOwnHit
-          : store.applyEnemyShot;
+
+      // Определяем кто стрелял: если входящий missile совпадает — мы были защитники
+      const isByThem = runtime.incomingMissileId === event.payload.missileId;
+      const boardUpdater = isByThem ? store.applyOwnHit : store.applyEnemyShot;
 
       void radarWorker.current?.removeMissile(event.payload.missileId);
       removeMissileFromStore(event.payload.missileId);
       boardUpdater(event.payload.target, event.payload.result);
 
-      // gameClient.ts #applyToStore already calls store.setPhase("gameOver") when
-      // isGameOver is true — no need to duplicate it here.
+      // Добавляем запись в историю ходов
+      store.addShotEntry({
+        by: isByThem ? "them" : "us",
+        coord: formatCoordForLog(event.payload.target),
+        result: event.payload.result,
+        ts: Date.now(),
+      });
+
+      if (event.payload.isGameOver) {
+        store.setPhase("gameOver");
+      }
 
       if (event.payload.result === "sunk") {
         void morseEngine?.playSequence(
@@ -175,13 +185,17 @@ export function useGameLoop(
       }
     });
 
-    // Track server-confirmed wrong intercept decodes so the UI can show feedback.
     const stopError = transport.on(GameEventType.ERROR, (event) => {
       if (event.payload.code === "MORSE_MISMATCH") {
         const runtime = readRuntimeState();
-        // Only flag as wrong if we're currently in an intercept (missile in flight).
         if (runtime.incomingMissileId !== null) {
+          // FIX BUG 2: устанавливаем флаг — MorseTelegraph получит showWrongFeedback=true
           patchGameLoopRuntimeState({ lastInterceptWrong: true });
+
+          // Автоматически сбрасываем через 700мс чтобы можно было снова попробовать
+          setTimeout(() => {
+            patchGameLoopRuntimeState({ lastInterceptWrong: false });
+          }, 700);
         }
       }
     });

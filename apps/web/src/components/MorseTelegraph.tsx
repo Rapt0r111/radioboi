@@ -1,3 +1,4 @@
+// apps/web/src/components/MorseTelegraph.tsx
 "use client";
 
 import {
@@ -18,6 +19,17 @@ type Props = {
   mode: "attack" | "intercept";
   morseEngine?: MorseEngine | null;
   onSequenceComplete(coord: Coordinate): void;
+  /**
+   * FIX BUG 1: длительность единицы Морзе в мс, синхронизируется с WPM-ползунком.
+   * При изменении обновляет FuzzyDecoder.setDotDuration().
+   * По умолчанию 60мс (20 WPM).
+   */
+  unitMs?: number;
+  /**
+   * FIX BUG 2: показывает визуальный фидбек «неверный перехват».
+   * Подсвечивает кнопку красным на 600мс.
+   */
+  showWrongFeedback?: boolean;
 };
 
 function toDisplayChars(decodedChars: readonly string[]): string[] {
@@ -59,11 +71,20 @@ function toDisplayChars(decodedChars: readonly string[]): string[] {
   return display;
 }
 
-export function MorseTelegraph({ mode, morseEngine = null, onSequenceComplete }: Props) {
+export function MorseTelegraph({
+  mode,
+  morseEngine = null,
+  onSequenceComplete,
+  unitMs = 60,
+  showWrongFeedback = false,
+}: Props) {
   const [decodedChars, setDecodedChars] = useState<string[]>([]);
   const [isPressed, setIsPressed] = useState(false);
   const [liveMorse, setLiveMorse] = useState("");
+  // FIX BUG 2: локальный флаг для flash-анимации «неверно»
+  const [isWrongFlash, setIsWrongFlash] = useState(false);
   const decoderRef = useRef<FuzzyDecoder | null>(null);
+  const wrongFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const completeSequence = useEffectEvent((chars: readonly string[]) => {
     const [letter, digit] = chars;
@@ -82,6 +103,7 @@ export function MorseTelegraph({ mode, morseEngine = null, onSequenceComplete }:
 
   if (decoderRef.current === null) {
     decoderRef.current = new FuzzyDecoder({
+      dotDuration: unitMs,
       onChar: (char) => {
         setLiveMorse("");
         setDecodedChars((current) => {
@@ -113,12 +135,39 @@ export function MorseTelegraph({ mode, morseEngine = null, onSequenceComplete }:
     });
   }
 
+  // FIX BUG 1: синхронизируем dotDuration декодера при изменении WPM
+  useEffect(() => {
+    decoderRef.current?.setDotDuration(unitMs);
+  }, [unitMs]);
+
   useEffect(() => {
     decoderRef.current?.reset();
     setDecodedChars([]);
     setLiveMorse("");
     setIsPressed(false);
   }, [mode]);
+
+  // FIX BUG 2: flash-анимация при неверном перехвате
+  useEffect(() => {
+    if (!showWrongFeedback) return;
+
+    // Сбрасываем предыдущий таймер если ещё горит
+    if (wrongFlashTimerRef.current !== null) {
+      clearTimeout(wrongFlashTimerRef.current);
+    }
+
+    setIsWrongFlash(true);
+    wrongFlashTimerRef.current = setTimeout(() => {
+      setIsWrongFlash(false);
+      wrongFlashTimerRef.current = null;
+    }, 600);
+
+    return () => {
+      if (wrongFlashTimerRef.current !== null) {
+        clearTimeout(wrongFlashTimerRef.current);
+      }
+    };
+  }, [showWrongFeedback]);
 
   function releaseKey(pointerId: number, target: EventTarget & HTMLButtonElement): void {
     if (target.hasPointerCapture(pointerId)) {
@@ -131,6 +180,15 @@ export function MorseTelegraph({ mode, morseEngine = null, onSequenceComplete }:
   }
 
   const displayChars = toDisplayChars(decodedChars);
+
+  // FIX BUG 2: динамические классы кнопки при ошибке перехвата
+  const buttonBorderClass = isWrongFlash
+    ? "border-[var(--color-hit-red)]"
+    : "border-green-500";
+
+  const buttonBgClass = isWrongFlash
+    ? "bg-[radial-gradient(circle_at_top,rgba(255,59,59,0.22),transparent_58%),linear-gradient(180deg,rgba(15,23,42,0.95),rgba(2,6,23,0.98))]"
+    : "bg-[radial-gradient(circle_at_top,rgba(34,197,94,0.18),transparent_58%),linear-gradient(180deg,rgba(15,23,42,0.95),rgba(2,6,23,0.98))]";
 
   return (
     <section
@@ -149,32 +207,58 @@ export function MorseTelegraph({ mode, morseEngine = null, onSequenceComplete }:
           </p>
         </div>
 
-        <div className="rounded border border-green-500/30 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-green-400">
-          {liveMorse || "READY"}
+        <div className="flex items-center gap-2">
+          {/* FIX BUG 2: индикатор ошибки перехвата */}
+          {isWrongFlash && (
+            <div
+              className="rounded border border-[var(--color-hit-red)]/60 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-[var(--color-hit-red)]"
+              role="alert"
+              aria-live="assertive"
+            >
+              ✕ НЕВЕРНО
+            </div>
+          )}
+          <div
+            className={`rounded border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] transition-colors duration-150 ${
+              isWrongFlash
+                ? "border-[var(--color-hit-red)]/60 text-[var(--color-hit-red)]"
+                : "border-green-500/30 text-green-400"
+            }`}
+          >
+            {liveMorse || "READY"}
+          </div>
         </div>
       </div>
 
+      {/* Декодированные символы */}
       <div className="grid grid-cols-6 gap-2">
         {displayChars.map((char, index) => (
           <div
             key={`${index}-${char || "empty"}`}
-            className="flex h-11 items-center justify-center rounded border border-green-500/30 bg-green-500/5 font-mono text-lg text-green-300 shadow-[0_0_10px_rgba(34,197,94,0.15)]"
+            className={`flex h-11 items-center justify-center rounded border font-mono text-lg shadow-[0_0_10px_rgba(34,197,94,0.15)] transition-colors duration-150 ${
+              isWrongFlash
+                ? "border-[var(--color-hit-red)]/40 bg-[var(--color-hit-red)]/5 text-[var(--color-hit-red)]/70"
+                : char
+                  ? "border-green-400/60 bg-green-500/10 text-green-300"
+                  : "border-green-500/30 bg-green-500/5 text-green-300/40"
+            }`}
           >
             {char || "·"}
           </div>
         ))}
       </div>
 
+      {/* Кнопка телеграфного ключа */}
       <button
         type="button"
-        className="
+        className={`
           relative flex min-h-28 w-full items-center justify-center overflow-hidden rounded-xl
-          border-2 border-green-500 bg-[radial-gradient(circle_at_top,rgba(34,197,94,0.18),transparent_58%),linear-gradient(180deg,rgba(15,23,42,0.95),rgba(2,6,23,0.98))]
-          font-mono text-sm uppercase tracking-[0.35em] text-green-100 transition-all duration-100
-          select-none touch-none
-          hover:border-green-400 hover:text-green-50
+          border-2 font-mono text-sm uppercase tracking-[0.35em] text-green-100
+          transition-all duration-100 select-none touch-none
+          hover:text-green-50
           active:translate-y-1 active:shadow-[0_0_28px_rgba(34,197,94,0.55)]
-        "
+          ${buttonBorderClass} ${buttonBgClass}
+        `}
         onPointerCancel={(event) => {
           releaseKey(event.pointerId, event.currentTarget);
         }}
@@ -189,14 +273,27 @@ export function MorseTelegraph({ mode, morseEngine = null, onSequenceComplete }:
         }}
       >
         <span
-          className={`absolute inset-0 bg-green-500/10 transition-opacity duration-75 ${
-            isPressed ? "opacity-100" : "opacity-0"
+          className={`absolute inset-0 transition-opacity duration-75 ${
+            isWrongFlash
+              ? "bg-[var(--color-hit-red)]/8 opacity-100"
+              : isPressed
+                ? "bg-green-500/10 opacity-100"
+                : "opacity-0"
           }`}
         />
         <span className="absolute inset-x-4 top-4 h-px bg-green-500/30" aria-hidden="true" />
         <span className="absolute inset-x-4 bottom-4 h-px bg-green-500/20" aria-hidden="true" />
-        <span className="relative z-10">{isPressed ? "TRANSMITTING" : "PRESS TO KEY"}</span>
+
+        {/* FIX BUG 2: текст кнопки меняется при ошибке */}
+        <span className="relative z-10">
+          {isWrongFlash ? "✕ НЕВЕРНАЯ РАСШИФРОВКА" : isPressed ? "TRANSMITTING" : "PRESS TO KEY"}
+        </span>
       </button>
+
+      {/* Подсказка по скорости */}
+      <p className="text-center font-mono text-[8px] uppercase tracking-widest text-miss-white/20">
+        {unitMs}мс/ед · точка &lt; {Math.round(unitMs * 1.3)}мс · тире &gt; {Math.round(unitMs * 1.5)}мс
+      </p>
     </section>
   );
 }
