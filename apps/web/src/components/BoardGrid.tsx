@@ -1,14 +1,28 @@
 // apps/web/src/components/BoardGrid.tsx
+// FIXED: added selectedCoord prop — highlights the chosen enemy target cell in amber.
 "use client";
 
 import { type Board, type CellState, COLUMNS, type Coordinate, ROWS } from "@radioboi/game-core";
 
-function cellClass(state: CellState | undefined, isEnemy: boolean, isPlacement: boolean): string {
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function cellClass(
+  state: CellState | undefined,
+  isEnemy: boolean,
+  isPlacement: boolean,
+  isSelected: boolean,
+): string {
   const base =
     "relative flex items-center justify-center text-[10px] font-mono " +
     "border border-[var(--color-ocean-800)] transition-colors duration-150 " +
     "cursor-pointer select-none aspect-square";
 
+  // ── Selected enemy target ─────────────────────────────────────────────────
+  if (isSelected && isEnemy) {
+    return `${base} bg-[var(--color-morse-amber)]/20 border-[var(--color-morse-amber)] text-[var(--color-morse-amber)] ring-1 ring-[var(--color-morse-amber)]/60`;
+  }
+
+  // ── Placement mode ────────────────────────────────────────────────────────
   if (isPlacement) {
     switch (state) {
       case "ship":
@@ -18,6 +32,7 @@ function cellClass(state: CellState | undefined, isEnemy: boolean, isPlacement: 
     }
   }
 
+  // ── Battle / own board ────────────────────────────────────────────────────
   switch (state) {
     case "ship":
       return isEnemy
@@ -38,7 +53,6 @@ function cellSymbol(state: CellState | undefined, isEnemy: boolean, isPlacement:
   if (isPlacement && state === "ship") return "▪";
   switch (state) {
     case "hit":
-      return "✕";
     case "sunk":
       return "✕";
     case "miss":
@@ -51,26 +65,45 @@ function cellSymbol(state: CellState | undefined, isEnemy: boolean, isPlacement:
 }
 
 /**
- * FIX BUG 3: Упрощённая и корректная логика disabled.
- * - На своём поле (isEnemy=false, isPlacement=false): кнопки НЕ кликабельны
- * - На поле расстановки (isPlacement=true): все кнопки кликабельны
- * - На вражеском поле (isEnemy=true): отключаем уже обстрелянные клетки
+ * Disabled logic:
+ * - Placement mode  → always enabled (let the placement handler decide)
+ * - Own board       → always disabled (can't click own cells during battle)
+ * - Enemy board     → disabled only for already-shot cells
  */
-function isCellDisabled(state: CellState | undefined, isEnemy: boolean, isPlacement: boolean): boolean {
+function isCellDisabled(
+  state: CellState | undefined,
+  isEnemy: boolean,
+  isPlacement: boolean,
+): boolean {
   if (isPlacement) return false;
-  if (!isEnemy) return true; // своё поле — нельзя кликать
-  // Вражеское поле: уже обстрелянные клетки недоступны
+  if (!isEnemy) return true;
   return state === "hit" || state === "miss" || state === "sunk";
 }
+
+// ── Props ──────────────────────────────────────────────────────────────────────
 
 type Props = {
   board: Board;
   isEnemy: boolean;
   isPlacement?: boolean;
   onCellClick?: (coord: Coordinate) => void;
+  /**
+   * FIX: Highlights the selected enemy target in amber.
+   * Pass selectedTarget from GameClientWrapper to give the player
+   * clear visual feedback of which cell they're about to fire at.
+   */
+  selectedCoord?: Coordinate | null;
 };
 
-export function BoardGrid({ board, isEnemy, isPlacement = false, onCellClick }: Props) {
+// ── Component ──────────────────────────────────────────────────────────────────
+
+export function BoardGrid({
+  board,
+  isEnemy,
+  isPlacement = false,
+  onCellClick,
+  selectedCoord = null,
+}: Props) {
   return (
     <table
       className="border-separate border-spacing-0.5"
@@ -79,7 +112,6 @@ export function BoardGrid({ board, isEnemy, isPlacement = false, onCellClick }: 
       {/* Заголовок столбцов */}
       <thead>
         <tr>
-          {/* Corner spacer */}
           <th className="w-5" />
           {COLUMNS.map((col) => (
             <th
@@ -97,7 +129,6 @@ export function BoardGrid({ board, isEnemy, isPlacement = false, onCellClick }: 
       <tbody>
         {ROWS.map((row, rowIndex) => (
           <tr key={row}>
-            {/* Метка строки */}
             <th
               scope="row"
               className="w-5 shrink-0 text-center text-[9px] font-mono text-radar-dim"
@@ -105,22 +136,23 @@ export function BoardGrid({ board, isEnemy, isPlacement = false, onCellClick }: 
               {rowIndex}
             </th>
 
-            {/* Ячейки */}
             {COLUMNS.map((col) => {
               const coord = (col + row) as Coordinate;
               const state = board[coord];
+              const isSelected = selectedCoord === coord;
 
               return (
                 <td key={coord} className="p-0" data-coord={coord}>
                   <button
                     type="button"
                     data-coord={coord}
-                    aria-label={`${col}${rowIndex} — ${state ?? "пусто"}`}
-                    className={cellClass(state, isEnemy, isPlacement)}
+                    aria-label={`${col}${rowIndex}${isSelected ? " (цель)" : ""} — ${state ?? "пусто"}`}
+                    aria-pressed={isSelected}
+                    className={cellClass(state, isEnemy, isPlacement, isSelected)}
                     onClick={() => onCellClick?.(coord)}
                     disabled={isCellDisabled(state, isEnemy, isPlacement)}
                   >
-                    {cellSymbol(state, isEnemy, isPlacement)}
+                    {isSelected ? "⊕" : cellSymbol(state, isEnemy, isPlacement)}
                   </button>
                 </td>
               );

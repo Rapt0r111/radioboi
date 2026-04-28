@@ -143,7 +143,7 @@ export function GameClientWrapper({ roomId }: Props) {
   });
 
   const radarRef = useRef<RadarRef>(null);
-
+  const [missileInFlight, setMissileInFlight] = useState(false);
   useGameLoop(transport, radarRef, morseEngine);
 
   useEffect(() => {
@@ -195,6 +195,7 @@ export function GameClientWrapper({ roomId }: Props) {
   useEffect(() => {
     if (!isMyTurn || incomingMissileId !== null || phase !== "battle") {
       setSelectedTarget(null);
+      setMissileInFlight(false);
     }
   }, [incomingMissileId, isMyTurn, phase]);
 
@@ -233,6 +234,7 @@ export function GameClientWrapper({ roomId }: Props) {
       payload: { missileId, morseSequence, target: coord, timestamp },
       type: GameEventType.MISSILE_LAUNCHED,
     });
+    setMissileInFlight(true);
     setSelectedTarget(null);
     setAttackerTurnStart(null);
     setStatusLine(`Передача подтверждена: ${formatCoord(coord)}.`);
@@ -318,32 +320,29 @@ export function GameClientWrapper({ roomId }: Props) {
 
             <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
               {/* Статус хода */}
-              <div className={`rounded border px-3 py-1.5 ${
-                isMyTurn
+              <div className={`rounded border px-3 py-1.5 ${isMyTurn
                   ? "border-radar-green/50 text-radar-green"
                   : "border-ocean-800 text-miss-white/40"
-              }`}>
+                }`}>
                 {turnLabel}
               </div>
 
               {/* Таймер перехватчика */}
               {interceptSecondsLeft !== null && (
-                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${
-                  interceptSecondsLeft <= 5
+                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${interceptSecondsLeft <= 5
                     ? "border-hit-red/70 text-hit-red animate-pulse"
                     : "border-morse-amber/50 text-morse-amber"
-                }`}>
+                  }`}>
                   ⏱ {interceptSecondsLeft}с перехват
                 </div>
               )}
 
               {/* Таймер атакующего */}
               {attackerSecondsLeft !== null && (
-                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${
-                  isAttackerWarning
+                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${isAttackerWarning
                     ? "border-morse-amber/70 text-morse-amber"
                     : "border-ocean-800 text-miss-white/30"
-                }`}>
+                  }`}>
                   ⏱ {attackerSecondsLeft}с ход
                 </div>
               )}
@@ -375,11 +374,10 @@ export function GameClientWrapper({ roomId }: Props) {
                   Клик — выбор цели · затем передача по Морзе
                 </p>
               </div>
-              <div className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                selectedTarget !== null
+              <div className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${selectedTarget !== null
                   ? "border-morse-amber/60 text-morse-amber"
                   : "border-ocean-800 text-miss-white/25"
-              }`}>
+                }`}>
                 ⊕ {formatCoord(selectedTarget)}
               </div>
             </div>
@@ -388,10 +386,12 @@ export function GameClientWrapper({ roomId }: Props) {
               <BoardGrid
                 board={enemyBoard}
                 isEnemy
+                selectedCoord={selectedTarget}
                 onCellClick={(coord) => {
                   if (phase !== "battle") { setStatusLine("Боевая сетка активируется только в фазе battle."); return; }
                   if (incomingMissileId !== null) { setStatusLine("Сначала завершите перехват входящей ракеты."); return; }
                   if (!isMyTurn) { setStatusLine("Сейчас не ваш ход."); return; }
+                  if (missileInFlight) { setStatusLine("Ракета в полёте. Ожидайте результата."); return; }
                   setSelectedTarget(coord);
                   setStatusLine(`Цель захвачена: ${formatCoord(coord)}. Передайте её по Морзе.`);
                 }}
@@ -425,11 +425,10 @@ export function GameClientWrapper({ roomId }: Props) {
                     {Array.from({ length: INTERCEPT_ATTEMPT_LIMIT }).map((_, i) => (
                       <div
                         key={i}
-                        className={`h-2 w-2 rounded-full transition-colors ${
-                          i < incomingMissileAttempts
+                        className={`h-2 w-2 rounded-full transition-colors ${i < incomingMissileAttempts
                             ? "bg-hit-red"
                             : "bg-ocean-800"
-                        }`}
+                          }`}
                       />
                     ))}
                   </div>

@@ -1,4 +1,8 @@
 // apps/web/src/hooks/useGameLoop.ts
+// FIXED: stopSync handler now includes winnerId in snapshot.
+// Without this fix, #applyToStore sets winnerId from SYNC_STATE payload,
+// then #dispatch fires this handler which calls syncFromServer WITHOUT winnerId,
+// immediately overwriting winnerId to null. GameOverScreen always showed "НИЧЬЯ".
 "use client";
 
 import {
@@ -132,7 +136,6 @@ export function useGameLoop(
       const runtime = readRuntimeState();
       const store = useGameStore.getState();
 
-      // Определяем кто стрелял: если входящий missile совпадает — мы были защитники
       const isByThem = runtime.incomingMissileId === event.payload.missileId;
       const boardUpdater = isByThem ? store.applyOwnHit : store.applyEnemyShot;
 
@@ -140,7 +143,6 @@ export function useGameLoop(
       removeMissileFromStore(event.payload.missileId);
       boardUpdater(event.payload.target, event.payload.result);
 
-      // Добавляем запись в историю ходов
       store.addShotEntry({
         by: isByThem ? "them" : "us",
         coord: formatCoordForLog(event.payload.target),
@@ -163,16 +165,25 @@ export function useGameLoop(
     });
 
     const stopSync = transport.on(GameEventType.SYNC_STATE, (event) => {
+      // ── CRITICAL FIX ─────────────────────────────────────────────────────────
+      // winnerId MUST be forwarded here. The sequence inside gameClient.ts is:
+      //   1. #applyToStore → syncFromServer(event.payload)  ← sets winnerId ✓
+      //   2. #dispatch     → this handler fires
+      // Previously this handler called syncFromServer WITHOUT winnerId, which
+      // passed `undefined` to the destructured param → `winnerId ?? null = null`,
+      // instantly overwriting the correct value. GameOverScreen always showed "НИЧЬЯ".
       const snapshot: {
         enemyBoard: GameStoreState["enemyBoard"];
         isMyTurn: boolean;
         ownBoard: GameStoreState["ownBoard"];
         phase: GamePhase;
+        winnerId?: string | undefined;
       } = {
         enemyBoard: event.payload.enemyBoard,
         isMyTurn: event.payload.isMyTurn,
         ownBoard: event.payload.ownBoard,
         phase: event.payload.phase,
+        winnerId: event.payload.winnerId, // ← THE FIX
       };
 
       useGameStore.getState().syncFromServer(snapshot);
@@ -189,10 +200,8 @@ export function useGameLoop(
       if (event.payload.code === "MORSE_MISMATCH") {
         const runtime = readRuntimeState();
         if (runtime.incomingMissileId !== null) {
-          // FIX BUG 2: устанавливаем флаг — MorseTelegraph получит showWrongFeedback=true
           patchGameLoopRuntimeState({ lastInterceptWrong: true });
 
-          // Автоматически сбрасываем через 700мс чтобы можно было снова попробовать
           setTimeout(() => {
             patchGameLoopRuntimeState({ lastInterceptWrong: false });
           }, 700);
