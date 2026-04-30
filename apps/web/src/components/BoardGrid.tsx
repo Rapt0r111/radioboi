@@ -1,5 +1,4 @@
 // apps/web/src/components/BoardGrid.tsx
-// FIXED: added selectedCoord prop — highlights the chosen enemy target cell in amber.
 "use client";
 
 import { type Board, type CellState, COLUMNS, type Coordinate, ROWS } from "@radioboi/game-core";
@@ -14,29 +13,31 @@ function cellClass(
 ): string {
   const base =
     "relative flex items-center justify-center text-[10px] font-mono " +
-    "border border-[var(--color-ocean-800)] transition-colors duration-150 " +
+    "border transition-colors duration-150 " +
     "cursor-pointer select-none aspect-square";
 
-  // ── Selected enemy target ─────────────────────────────────────────────────
+  // ── Selected enemy target ─────────────────────────────────────────────
   if (isSelected && isEnemy) {
     return `${base} bg-[var(--color-morse-amber)]/20 border-[var(--color-morse-amber)] text-[var(--color-morse-amber)] ring-1 ring-[var(--color-morse-amber)]/60`;
   }
 
-  // ── Placement mode ────────────────────────────────────────────────────────
+  // ── Placement mode ────────────────────────────────────────────────────
   if (isPlacement) {
     switch (state) {
       case "ship":
         return `${base} bg-[var(--color-radar-green)]/20 border-[var(--color-radar-green)]/60`;
       default:
-        return `${base} bg-[var(--color-ocean-900)] hover:bg-[var(--color-ocean-800)]`;
+        return `${base} bg-[var(--color-ocean-900)] hover:bg-[var(--color-ocean-800)] border-[var(--color-ocean-700)]/40`;
     }
   }
 
-  // ── Battle / own board ────────────────────────────────────────────────────
+  // ── Battle / own board ────────────────────────────────────────────────
   switch (state) {
     case "ship":
       return isEnemy
-        ? `${base} bg-[var(--color-ocean-900)] hover:bg-[var(--color-ocean-800)]`
+        // Вражеский корабль: не виден игроку, но ячейка должна быть кликабельной
+        // Видимая граница + зелёный hover чётко показывают зону прицела
+        ? `${base} bg-transparent hover:bg-[var(--color-radar-green)]/10 border-[var(--color-ocean-700)]/50 cursor-crosshair`
         : `${base} bg-[var(--color-ocean-800)] border-[var(--color-radar-dim)]`;
     case "hit":
       return `${base} bg-[var(--color-hit-red)]/20 border-[var(--color-hit-red)] text-[var(--color-hit-red)]`;
@@ -45,7 +46,12 @@ function cellClass(
     case "miss":
       return `${base} bg-transparent border-[var(--color-miss-white)]/20 text-[var(--color-miss-white)]/40`;
     default:
-      return `${base} bg-[var(--color-ocean-900)] hover:bg-[var(--color-ocean-800)]`;
+      // Пустые ячейки врага: прозрачный фон, видимая граница, зелёный hover
+      // ИСПРАВЛЕНИЕ: было bg-ocean-900 с ocean-800 бордером — почти невидимо.
+      // Теперь прозрачный фон + контрастная граница + cursor-crosshair.
+      return isEnemy
+        ? `${base} bg-transparent hover:bg-[var(--color-radar-green)]/10 border-[var(--color-ocean-700)]/50 cursor-crosshair`
+        : `${base} bg-[var(--color-ocean-900)] hover:bg-[var(--color-ocean-800)] border-[var(--color-ocean-800)]`;
   }
 }
 
@@ -88,9 +94,7 @@ type Props = {
   isPlacement?: boolean;
   onCellClick?: (coord: Coordinate) => void;
   /**
-   * FIX: Highlights the selected enemy target in amber.
-   * Pass selectedTarget from GameClientWrapper to give the player
-   * clear visual feedback of which cell they're about to fire at.
+   * Highlights the selected enemy target in amber.
    */
   selectedCoord?: Coordinate | null;
 };

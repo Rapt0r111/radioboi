@@ -2,13 +2,11 @@
 
 // apps/web/src/components/GameClientWrapper.tsx
 //
-// Главный клиентский компонент игры.
-// Управляет всем жизненным циклом: lobby → placement → battle → gameOver.
-//
-// FIX BUG 1: добавлен unitMs state — синхронизирует WPM между GameControls и MorseTelegraph
-// FIX BUG 2: читает lastInterceptWrong из стора и передаёт в MorseTelegraph
-// NEW: добавлен таймер хода для атакующего (60 сек)
-// NEW: добавлена ShotHistory
+// FIX: missileInFlight переведён с React state на useRef.
+// Причина: setMissileInFlight(true) в useEffectEvent не обновляет state
+// синхронно — повторный вызов handleSequenceComplete до следующего рендера
+// видит stale false и шлёт второй ATTACK_PREP, вызывая ATTACK_ALREADY_PENDING
+// на сервере, а следующий MISSILE_LAUNCHED получает NO_PENDING_ATTACK.
 
 import {
   type Coordinate,
@@ -49,8 +47,6 @@ import {
 const PLAYER_ID_KEY = "radioboi:playerId";
 const INTERCEPT_ATTEMPT_LIMIT = 3;
 const PLACED_KEY_PREFIX = "radioboi:placed:";
-
-/** Таймер хода атакующего в секундах. По истечении показываем предупреждение. */
 const ATTACKER_TURN_TIMEOUT_S = 60;
 
 type Props = {
@@ -119,7 +115,6 @@ export function GameClientWrapper({ roomId }: Props) {
   const incomingMissileSequence = useGameStore(
     (state) => (state as RuntimeCarrier).incomingMissileSequence ?? null,
   );
-  // FIX BUG 2: читаем флаг неверного перехвата для передачи в MorseTelegraph
   const lastInterceptWrong = useGameStore(
     (state) => (state as RuntimeCarrier).lastInterceptWrong ?? false,
   );
@@ -131,13 +126,17 @@ export function GameClientWrapper({ roomId }: Props) {
     "Выберите цель на вражеской сетке и передайте её по Морзе.",
   );
   const [transport, setTransport] = useState<GameClient | null>(null);
-
-  // FIX BUG 1: unitMs для синхронизации WPM между GameControls и MorseTelegraph
-  // Дефолт 60мс = 20 WPM (1200 / 20)
   const [unitMs, setUnitMs] = useState(60);
-
-  // Таймер хода атакующего
   const [attackerTurnStart, setAttackerTurnStart] = useState<number | null>(null);
+
+  // FIX: useRef вместо useState для missileInFlight.
+  // useState обновляется асинхронно (батчинг рендеров), поэтому повторный
+  // вызов handleSequenceComplete до следующего рендера видит stale false
+  // и шлёт дублирующий ATTACK_PREP → ATTACK_ALREADY_PENDING на сервере.
+  // useRef обновляется синхронно — гонка устранена.
+  const missileInFlightRef = useRef(false);
+  // Оставляем derived state для UI (индикатор в заголовке), но как зеркало рефа
+  const [missileInFlightUI, setMissileInFlightUI] = useState(false);
 
   const [hasPlaced, setHasPlaced] = useState(() => {
     try { return sessionStorage.getItem(`${PLACED_KEY_PREFIX}${roomId}`) === "1"; } catch { return false; }
@@ -145,7 +144,6 @@ export function GameClientWrapper({ roomId }: Props) {
 
   const radarRef = useRef<RadarRef>(null);
   const autoResolveMissileIdRef = useRef<string | null>(null);
-  const [missileInFlight, setMissileInFlight] = useState(false);
   useGameLoop(transport, radarRef, morseEngine);
 
   useEffect(() => {
@@ -154,7 +152,6 @@ export function GameClientWrapper({ roomId }: Props) {
     }
   }, [phase, roomId]);
 
-  // Запускаем/сбрасываем таймер хода атакующего
   useEffect(() => {
     if (phase === "battle" && isMyTurn && incomingMissileId === null) {
       setAttackerTurnStart(Date.now());
@@ -176,6 +173,8 @@ export function GameClientWrapper({ roomId }: Props) {
     return () => {
       resetGameLoopRuntimeState();
       setSelectedTarget(null);
+      missileInFlightRef.current = false;
+      setMissileInFlightUI(false);
       setTransport(null);
       destroyGameClient();
       void engine.close();
@@ -183,12 +182,10 @@ export function GameClientWrapper({ roomId }: Props) {
     };
   }, [roomId, setSession]);
 
-  // Тикаем таймер для countdown
   useEffect(() => {
     const needsTick =
       incomingMissileDeadline !== null ||
       (attackerTurnStart !== null && isMyTurn);
-
     if (!needsTick) { setNow(Date.now()); return; }
     const timerId = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timerId);
@@ -203,18 +200,14 @@ export function GameClientWrapper({ roomId }: Props) {
       autoResolveMissileIdRef.current = null;
       return;
     }
-
     if (
       now < incomingMissileDeadline ||
       autoResolveMissileIdRef.current === incomingMissileId
     ) {
       return;
     }
-
     autoResolveMissileIdRef.current = incomingMissileId;
-    patchGameLoopRuntimeState({
-      incomingMissileAttempts: INTERCEPT_ATTEMPT_LIMIT,
-    });
+    patchGameLoopRuntimeState({ incomingMissileAttempts: INTERCEPT_ATTEMPT_LIMIT });
     transport.send({
       payload: {
         attemptNumber: INTERCEPT_ATTEMPT_LIMIT,
@@ -228,15 +221,18 @@ export function GameClientWrapper({ roomId }: Props) {
 
   const activeMissilesCount = useGameStore((s) => s.activeMissiles.length);
 
-  // Сбрасываем missileInFlight как только активных ракет не осталось
+  // Синхронно сбрасываем реф когда ракеты больше нет
   useEffect(() => {
     if (activeMissilesCount === 0) {
-      setMissileInFlight(false);
+      missileInFlightRef.current = false;
+      setMissileInFlightUI(false);
     }
   }, [activeMissilesCount]);
 
   useEffect(() => {
     if (!isMyTurn || incomingMissileId !== null || phase !== "battle") {
+      // Сброс при смене хода — реф тоже очищаем
+      missileInFlightRef.current = false;
       setSelectedTarget(null);
     }
   }, [incomingMissileId, isMyTurn, phase]);
@@ -264,10 +260,21 @@ export function GameClientWrapper({ roomId }: Props) {
       return;
     }
 
+    // FIX: проверяем реф синхронно — стale state здесь не проблема
+    if (missileInFlightRef.current) {
+      setStatusLine("Ракета в полёте. Ожидайте результата.");
+      return;
+    }
+
     const missileId = crypto.randomUUID();
     const timestamp = Date.now();
     const morseSequence = toMorseSequence(coord);
     const radarPoint = toRadarPoint(coord);
+
+    // Атомарно выставляем реф ДО отправки — любой повторный вызов в той же
+    // очереди микрозадач увидит true и не пошлёт второй ATTACK_PREP
+    missileInFlightRef.current = true;
+    setMissileInFlightUI(true);
 
     useGameStore.getState().addMissile({ id: missileId, launchedAt: timestamp, target: coord });
     void radarRef.current?.updateMissile(missileId, radarPoint.x, radarPoint.y, 0);
@@ -276,7 +283,6 @@ export function GameClientWrapper({ roomId }: Props) {
       payload: { missileId, morseSequence, target: coord, timestamp },
       type: GameEventType.MISSILE_LAUNCHED,
     });
-    setMissileInFlight(true);
     setSelectedTarget(null);
     setAttackerTurnStart(null);
     setStatusLine(`Передача подтверждена: ${formatCoord(coord)}.`);
@@ -323,20 +329,17 @@ export function GameClientWrapper({ roomId }: Props) {
 
   // ── Боевая фаза (battle) ──────────────────────────────────────────────────
 
-  // Countdown для перехватчика
   const interceptSecondsLeft =
     incomingMissileDeadline === null
       ? null
       : Math.max(0, Math.ceil((incomingMissileDeadline - now) / 1000));
 
-  // Countdown для атакующего (информационный)
   const attackerSecondsLeft =
     attackerTurnStart !== null && isMyTurn && incomingMissileId === null
       ? Math.max(0, ATTACKER_TURN_TIMEOUT_S - Math.floor((now - attackerTurnStart) / 1000))
       : null;
 
   const isAttackerWarning = attackerSecondsLeft !== null && attackerSecondsLeft <= 15;
-
   const telegraphMode = incomingMissileId === null ? "attack" : "intercept";
   const turnLabel = isMyTurn ? "▸ ВАШ ХОД" : "◃ Ожидание противника";
 
@@ -361,7 +364,6 @@ export function GameClientWrapper({ roomId }: Props) {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
-              {/* Статус хода */}
               <div className={`rounded border px-3 py-1.5 ${isMyTurn
                 ? "border-radar-green/50 text-radar-green"
                 : "border-ocean-800 text-miss-white/40"
@@ -369,7 +371,6 @@ export function GameClientWrapper({ roomId }: Props) {
                 {turnLabel}
               </div>
 
-              {/* Таймер перехватчика */}
               {interceptSecondsLeft !== null && (
                 <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${interceptSecondsLeft <= 5
                   ? "border-hit-red/70 text-hit-red animate-pulse"
@@ -379,7 +380,6 @@ export function GameClientWrapper({ roomId }: Props) {
                 </div>
               )}
 
-              {/* Таймер атакующего */}
               {attackerSecondsLeft !== null && (
                 <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${isAttackerWarning
                   ? "border-morse-amber/70 text-morse-amber"
@@ -389,12 +389,18 @@ export function GameClientWrapper({ roomId }: Props) {
                 </div>
               )}
 
-              {/* Фаза */}
+              {/* Индикатор ракеты в полёте */}
+              {missileInFlightUI && (
+                <div className="rounded border border-hit-red/50 px-3 py-1.5 text-hit-red"
+                  style={{ animation: "morse-blink 0.6s step-end infinite" }}>
+                  ⬆ РАКЕТА
+                </div>
+              )}
+
               <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/30">
                 {phase}
               </div>
 
-              {/* Оператор */}
               <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/30">
                 {playerId ? playerId.slice(0, 8) : "..."}
               </div>
@@ -433,7 +439,7 @@ export function GameClientWrapper({ roomId }: Props) {
                   if (phase !== "battle") { setStatusLine("Боевая сетка активируется только в фазе battle."); return; }
                   if (incomingMissileId !== null) { setStatusLine("Сначала завершите перехват входящей ракеты."); return; }
                   if (!isMyTurn) { setStatusLine("Сейчас не ваш ход."); return; }
-                  if (missileInFlight) { setStatusLine("Ракета в полёте. Ожидайте результата."); return; }
+                  if (missileInFlightRef.current) { setStatusLine("Ракета в полёте. Ожидайте результата."); return; }
                   setSelectedTarget(coord);
                   setStatusLine(`Цель захвачена: ${formatCoord(coord)}. Передайте её по Морзе.`);
                 }}
@@ -443,14 +449,12 @@ export function GameClientWrapper({ roomId }: Props) {
               </div>
             </div>
 
-            {/* История ходов под вражеским полем */}
             <ShotHistory />
           </section>
 
           {/* ── Центральная колонка: радиоканал ────────────────────────── */}
           <section className="flex flex-col gap-3">
 
-            {/* Статус */}
             <div className="rounded border border-ocean-800 bg-ocean-900/80 p-3">
               <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-radar-green/50 mb-1">
                 Статус канала
@@ -459,7 +463,6 @@ export function GameClientWrapper({ roomId }: Props) {
                 {statusLine}
               </p>
 
-              {/* Индикатор попыток перехвата */}
               {incomingMissileId !== null && (
                 <div className="mt-2 flex items-center gap-2">
                   <span className="font-mono text-[9px] uppercase tracking-widest text-miss-white/30">
@@ -483,7 +486,6 @@ export function GameClientWrapper({ roomId }: Props) {
               )}
             </div>
 
-            {/* Телеграфный ключ */}
             <MorseTelegraph
               mode={telegraphMode}
               morseEngine={morseEngine}
@@ -492,7 +494,6 @@ export function GameClientWrapper({ roomId }: Props) {
               showWrongFeedback={lastInterceptWrong}
             />
 
-            {/* Управление звуком */}
             {morseEngine ? (
               <GameControls
                 currentIncomingSequence={incomingMissileSequence}
@@ -517,7 +518,6 @@ export function GameClientWrapper({ roomId }: Props) {
               <BoardGrid board={ownBoard} isEnemy={false} />
             </div>
 
-            {/* Легенда */}
             <div className="mt-auto grid grid-cols-2 gap-1.5 rounded border border-ocean-800/50 p-2">
               {[
                 { symbol: "▪", label: "Корабль", color: "text-radar-green/70" },

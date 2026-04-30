@@ -59,15 +59,30 @@ class RadarRenderer {
     const cy = height / 2;
     const radius = Math.min(cx, cy) - 4;
 
-    // ── 1. Затухающий след (persistence effect) ───────────────────────────
-    // Полупрозрачный чёрный поверх предыдущего кадра создаёт «хвост» радара.
-    ctx.fillStyle = "rgba(0, 0, 0, 0.10)";
-    ctx.fillRect(0, 0, width, height);
+    // ── 1. Полная очистка → прозрачный фон ────────────────────────────────
+    // ИСПРАВЛЕНИЕ: предыдущая реализация использовала fillRect с
+    // rgba(0,0,0,0.10) каждый кадр. За ~30 кадров (0.5 сек) фон становился
+    // непрозрачно-чёрным и полностью скрывал сетку вражеского поля под
+    // canvas-оверлеем. Теперь clearRect → канвас прозрачен, сетка видна.
+    ctx.clearRect(0, 0, width, height);
 
-    // ── 2. Сканирующая линия радара ───────────────────────────────────────
+    // ── 2. Угол сканирующей линии ─────────────────────────────────────────
     this.#radarAngle = (this.#radarAngle + 0.025) % (Math.PI * 2);
 
-    // Градиент: яркий у центра, затухает к концу луча
+    // ── 3. Послесвечение (веер за лучом) — без чёрного фона ──────────────
+    // Рисуем полупрозрачный сегмент-веер сзади луча вместо накопительного
+    // fillRect. Визуальный «хвост» сохраняется, фон остаётся прозрачным.
+    const fanSpan = 0.55; // радиан (~31°)
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, this.#radarAngle - fanSpan, this.#radarAngle);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(0, 255, 136, 0.07)";
+    ctx.fill();
+    ctx.restore();
+
+    // ── 4. Сканирующая линия радара ───────────────────────────────────────
     const lineGrad = ctx.createLinearGradient(
       cx,
       cy,
@@ -86,7 +101,7 @@ class RadarRenderer {
     ctx.stroke();
     ctx.restore();
 
-    // ── 3. Обводка радара ─────────────────────────────────────────────────
+    // ── 5. Обводка радара ─────────────────────────────────────────────────
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -95,13 +110,12 @@ class RadarRenderer {
     ctx.stroke();
     ctx.restore();
 
-    // ── 4. Ракеты (красные точки) ─────────────────────────────────────────
+    // ── 6. Ракеты (красные точки) ─────────────────────────────────────────
     for (const [, missile] of this.#missiles) {
       const px = cx + (missile.x - 0.5) * radius * 2;
       const py = cy + (missile.y - 0.5) * radius * 2;
 
       ctx.save();
-      // Внешнее свечение
       ctx.shadowColor = "#ff3b3b";
       ctx.shadowBlur = 8;
       ctx.fillStyle = "#ff3b3b";
