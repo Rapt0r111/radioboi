@@ -258,13 +258,24 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
+    if (attack.target !== target) {
+      state.pendingAttack = null;
+      await this.#saveState(state);
+      ws.send(makeError("INVALID_COORDINATE", "MISSILE_LAUNCHED target differs from ATTACK_PREP"));
+      return;
+    }
+
     const indices = coordToIndices(target);
     if (!indices) {
+      state.pendingAttack = null;
+      await this.#saveState(state);
       ws.send(makeError("INVALID_COORDINATE", `Invalid target coordinate: ${target}`));
       return;
     }
 
     if (!validateMorseForCoord(morseSequence as string[], indices.colIndex, indices.rowIndex)) {
+      state.pendingAttack = null;
+      await this.#saveState(state);
       ws.send(makeError("MORSE_MISMATCH", "Morse sequence does not match target coordinate"));
       return;
     }

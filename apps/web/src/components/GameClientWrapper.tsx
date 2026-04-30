@@ -14,6 +14,7 @@ import {
   type Coordinate,
   coordinateToMorseNotation,
   GameEventType,
+  makeCoordinate,
   type MorseSymbol,
   parseCoordinate,
 } from "@radioboi/game-core";
@@ -143,6 +144,7 @@ export function GameClientWrapper({ roomId }: Props) {
   });
 
   const radarRef = useRef<RadarRef>(null);
+  const autoResolveMissileIdRef = useRef<string | null>(null);
   const [missileInFlight, setMissileInFlight] = useState(false);
   useGameLoop(transport, radarRef, morseEngine);
 
@@ -191,6 +193,38 @@ export function GameClientWrapper({ roomId }: Props) {
     const timerId = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timerId);
   }, [incomingMissileDeadline, attackerTurnStart, isMyTurn]);
+
+  useEffect(() => {
+    if (
+      !transport ||
+      incomingMissileId === null ||
+      incomingMissileDeadline === null
+    ) {
+      autoResolveMissileIdRef.current = null;
+      return;
+    }
+
+    if (
+      now < incomingMissileDeadline ||
+      autoResolveMissileIdRef.current === incomingMissileId
+    ) {
+      return;
+    }
+
+    autoResolveMissileIdRef.current = incomingMissileId;
+    patchGameLoopRuntimeState({
+      incomingMissileAttempts: INTERCEPT_ATTEMPT_LIMIT,
+    });
+    transport.send({
+      payload: {
+        attemptNumber: INTERCEPT_ATTEMPT_LIMIT,
+        decodedCoord: makeCoordinate(9, 9),
+        missileId: incomingMissileId,
+      },
+      type: GameEventType.INTERCEPT_ATTEMPT,
+    });
+    setStatusLine("Время перехвата истекло. Ракета ушла на расчет результата.");
+  }, [incomingMissileDeadline, incomingMissileId, now, transport]);
 
   const activeMissilesCount = useGameStore((s) => s.activeMissiles.length);
 
