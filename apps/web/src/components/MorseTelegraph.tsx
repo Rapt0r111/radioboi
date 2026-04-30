@@ -84,6 +84,7 @@ export function MorseTelegraph({
   // FIX BUG 2: локальный флаг для flash-анимации «неверно»
   const [isWrongFlash, setIsWrongFlash] = useState(false);
   const decoderRef = useRef<FuzzyDecoder | null>(null);
+  const isPressedRef = useRef(false);
   const wrongFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const completeSequence = useEffectEvent((chars: readonly string[]) => {
@@ -144,6 +145,7 @@ export function MorseTelegraph({
     decoderRef.current?.reset();
     setDecodedChars([]);
     setLiveMorse("");
+    isPressedRef.current = false;
     setIsPressed(false);
   }, [mode]);
 
@@ -169,14 +171,28 @@ export function MorseTelegraph({
     };
   }, [showWrongFeedback]);
 
+  function startSignal(): void {
+    if (isPressedRef.current) return;
+    isPressedRef.current = true;
+    decoderRef.current?.pointerDown(performance.now());
+    void morseEngine?.playSequence(LIVE_TONE_SEQUENCE, LIVE_TONE_UNIT_MS);
+    setIsPressed(true);
+  }
+
+  function stopSignal(): void {
+    if (!isPressedRef.current) return;
+    isPressedRef.current = false;
+    decoderRef.current?.pointerUp(performance.now());
+    morseEngine?.stop();
+    setIsPressed(false);
+  }
+
   function releaseKey(pointerId: number, target: EventTarget & HTMLButtonElement): void {
     if (target.hasPointerCapture(pointerId)) {
       target.releasePointerCapture(pointerId);
     }
 
-    decoderRef.current?.pointerUp(performance.now());
-    morseEngine?.stop();
-    setIsPressed(false);
+    stopSignal();
   }
 
   const displayChars = toDisplayChars(decodedChars);
@@ -251,9 +267,10 @@ export function MorseTelegraph({
       {/* Кнопка телеграфного ключа */}
       <button
         type="button"
+        aria-label={mode === "attack" ? "Передать выбранную координату Морзе" : "Ввести координату перехвата Морзе"}
         className={`
-          relative flex min-h-28 w-full items-center justify-center overflow-hidden rounded-xl
-          border-2 font-mono text-sm uppercase tracking-[0.35em] text-green-100
+          relative flex min-h-28 w-full items-center justify-center overflow-hidden rounded-lg
+          border-2 font-mono text-sm uppercase tracking-normal text-green-100
           transition-all duration-100 select-none touch-none
           hover:text-green-50
           active:translate-y-1 active:shadow-[0_0_28px_rgba(34,197,94,0.55)]
@@ -264,13 +281,23 @@ export function MorseTelegraph({
         }}
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId);
-          decoderRef.current?.pointerDown(performance.now());
-          void morseEngine?.playSequence(LIVE_TONE_SEQUENCE, LIVE_TONE_UNIT_MS);
-          setIsPressed(true);
+          startSignal();
         }}
         onPointerUp={(event) => {
           releaseKey(event.pointerId, event.currentTarget);
         }}
+        onKeyDown={(event) => {
+          if (event.key !== " " && event.key !== "Enter") return;
+          event.preventDefault();
+          if (event.repeat) return;
+          startSignal();
+        }}
+        onKeyUp={(event) => {
+          if (event.key !== " " && event.key !== "Enter") return;
+          event.preventDefault();
+          stopSignal();
+        }}
+        onBlur={stopSignal}
       >
         <span
           className={`absolute inset-0 transition-opacity duration-75 ${

@@ -93,6 +93,14 @@ function formatCoord(coord: Coordinate | null): string {
   return `${letter}${digit} / ${coord.slice(0, 3)}-${Number(coord.slice(3))}`;
 }
 
+function formatMorseForCoord(coord: Coordinate | null): string {
+  if (coord === null) return "—";
+  const { digit, letter } = coordinateToMorseNotation(coord);
+  const letterToken = MORSE_ALPHABET[letter] ?? "?";
+  const digitToken = MORSE_ALPHABET[digit] ?? "?";
+  return `${letter} ${letterToken} · ${digit} ${digitToken}`;
+}
+
 // ── Компонент ──────────────────────────────────────────────────────────────────
 
 export function GameClientWrapper({ roomId }: Props) {
@@ -342,6 +350,37 @@ export function GameClientWrapper({ roomId }: Props) {
   const isAttackerWarning = attackerSecondsLeft !== null && attackerSecondsLeft <= 15;
   const telegraphMode = incomingMissileId === null ? "attack" : "intercept";
   const turnLabel = isMyTurn ? "▸ ВАШ ХОД" : "◃ Ожидание противника";
+  const canSelectEnemyTarget =
+    phase === "battle" &&
+    incomingMissileId === null &&
+    isMyTurn &&
+    !missileInFlightUI;
+  const targetLabel = formatCoord(selectedTarget);
+  const targetMorseLabel = formatMorseForCoord(selectedTarget);
+  const actionTitle =
+    incomingMissileId !== null
+      ? "Перехват входящей ракеты"
+      : isMyTurn
+        ? selectedTarget === null
+          ? "Выберите цель на поле противника"
+          : "Передайте выбранную цель"
+        : "Ожидайте ход противника";
+  const actionDetail =
+    incomingMissileId !== null
+      ? `Введите координату принятого сигнала. Попытка ${Math.min(incomingMissileAttempts + 1, INTERCEPT_ATTEMPT_LIMIT)}/${INTERCEPT_ATTEMPT_LIMIT}.`
+      : isMyTurn
+        ? selectedTarget === null
+          ? "Кликните по свободной клетке слева. После выбора появится код Морзе."
+          : `Зажмите телеграфный ключ и передайте: ${targetMorseLabel}.`
+        : "Пока соперник атакует, ваше поле справа остаётся главным ориентиром.";
+  const enemyBoardDisabledMessage =
+    incomingMissileId !== null
+      ? "Сначала завершите перехват входящей ракеты."
+      : !isMyTurn
+        ? "Сейчас ход противника."
+        : missileInFlightUI
+          ? "Ракета уже в полёте."
+          : undefined;
 
   return (
     <div className="relative min-h-dvh bg-ocean-950 text-miss-white">
@@ -415,18 +454,20 @@ export function GameClientWrapper({ roomId }: Props) {
           <section className="flex flex-col gap-3 rounded border border-ocean-800 bg-ocean-900/80 p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="font-mono text-sm uppercase tracking-[0.28em] text-radar-green">
+                <h2 className="font-mono text-sm uppercase tracking-normal text-radar-green">
                   Вражеский сектор
                 </h2>
-                <p className="font-mono text-[9px] text-miss-white/30">
-                  Клик — выбор цели · затем передача по Морзе
+                <p className="font-mono text-[10px] leading-relaxed text-miss-white/45">
+                  {canSelectEnemyTarget
+                    ? "Выберите клетку для атаки."
+                    : enemyBoardDisabledMessage ?? "Клик — выбор цели, затем передача по Морзе."}
                 </p>
               </div>
-              <div className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${selectedTarget !== null
+              <div className={`min-w-32 rounded border px-2 py-1 text-right font-mono text-[10px] uppercase tracking-normal transition-colors ${selectedTarget !== null
                 ? "border-morse-amber/60 text-morse-amber"
                 : "border-ocean-800 text-miss-white/25"
                 }`}>
-                ⊕ {formatCoord(selectedTarget)}
+                ⊕ {targetLabel}
               </div>
             </div>
 
@@ -435,6 +476,8 @@ export function GameClientWrapper({ roomId }: Props) {
                 board={enemyBoard}
                 isEnemy
                 selectedCoord={selectedTarget}
+                isInteractive={canSelectEnemyTarget}
+                disabledMessage={enemyBoardDisabledMessage}
                 onCellClick={(coord) => {
                   if (phase !== "battle") { setStatusLine("Боевая сетка активируется только в фазе battle."); return; }
                   if (incomingMissileId !== null) { setStatusLine("Сначала завершите перехват входящей ракеты."); return; }
@@ -454,6 +497,51 @@ export function GameClientWrapper({ roomId }: Props) {
 
           {/* ── Центральная колонка: радиоканал ────────────────────────── */}
           <section className="flex flex-col gap-3">
+
+            <div className="rounded border border-radar-green/35 bg-radar-green/5 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-normal text-radar-green/60">
+                    Текущее действие
+                  </p>
+                  <h2 className="mt-1 font-mono text-sm font-bold text-radar-green">
+                    {actionTitle}
+                  </h2>
+                </div>
+                {(interceptSecondsLeft !== null || attackerSecondsLeft !== null) && (
+                  <div
+                    className={`rounded border px-2 py-1 font-mono text-sm tabular-nums ${
+                      interceptSecondsLeft !== null && interceptSecondsLeft <= 5
+                        ? "border-hit-red/70 text-hit-red"
+                        : "border-morse-amber/60 text-morse-amber"
+                    }`}
+                  >
+                    {interceptSecondsLeft ?? attackerSecondsLeft}с
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 font-mono text-xs leading-relaxed text-miss-white/70">
+                {actionDetail}
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded border border-ocean-800/70 bg-ocean-950/50 px-3 py-2">
+                  <p className="font-mono text-[9px] uppercase tracking-normal text-miss-white/35">
+                    Цель
+                  </p>
+                  <p className="mt-1 font-mono text-lg text-morse-amber">
+                    {targetLabel}
+                  </p>
+                </div>
+                <div className="rounded border border-ocean-800/70 bg-ocean-950/50 px-3 py-2">
+                  <p className="font-mono text-[9px] uppercase tracking-normal text-miss-white/35">
+                    Морзе
+                  </p>
+                  <p className="mt-1 break-words font-mono text-lg text-radar-green">
+                    {targetMorseLabel}
+                  </p>
+                </div>
+              </div>
+            </div>
 
             <div className="rounded border border-ocean-800 bg-ocean-900/80 p-3">
               <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-radar-green/50 mb-1">

@@ -12,7 +12,7 @@
 // И onSpeedChange(unitMs) — чтобы родитель передал unitMs в MorseTelegraph → FuzzyDecoder.
 
 import type { MorseEngine } from "@radioboi/morse-engine";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useGameStore } from "@/src/store/gameStore";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -87,13 +87,7 @@ function CrtSlider({ id, label, unit, min, max, value, onChange, displayValue }:
         </span>
       </div>
 
-      <div className="relative h-1.5 rounded-full bg-[var(--color-ocean-800)]">
-        {/* Заполненная часть */}
-        <div
-          className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-radar-green)]"
-          style={{ width: `${((value - min) / (max - min)) * 100}%` }}
-          aria-hidden="true"
-        />
+      <div className="flex h-6 items-center">
         <input
           id={id}
           type="range"
@@ -102,8 +96,7 @@ function CrtSlider({ id, label, unit, min, max, value, onChange, displayValue }:
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
           className="
-            absolute inset-0 h-full w-full cursor-pointer opacity-0
-            focus-visible:opacity-100
+            h-2 w-full cursor-pointer accent-[var(--color-radar-green)]
           "
           aria-label={`${label}: ${displayValue ?? value}${unit}`}
         />
@@ -126,13 +119,11 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
   const [repeatCount, setRepeatCount] = useState(0);
   const lastMissileIdRef = useRef<string | null>(null);
 
-  // Сброс счётчика при появлении новой ракеты (без setState в render)
-  if (currentMissileId !== lastMissileIdRef.current) {
+  useEffect(() => {
+    if (currentMissileId === lastMissileIdRef.current) return;
     lastMissileIdRef.current = currentMissileId;
-    if (repeatCount !== 0) {
-      setRepeatCount(0);
-    }
-  }
+    setRepeatCount(0);
+  }, [currentMissileId]);
 
   // ── Доступность кнопки повтора ────────────────────────────────────────────
   const isDefensePhase = phase === "battle" && currentIncomingSequence !== null;

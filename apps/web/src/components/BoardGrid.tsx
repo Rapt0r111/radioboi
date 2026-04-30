@@ -12,9 +12,9 @@ function cellClass(
   isSelected: boolean,
 ): string {
   const base =
-    "relative flex items-center justify-center text-[10px] font-mono " +
+    "relative flex h-8 w-8 items-center justify-center text-[11px] font-mono sm:h-9 sm:w-9 lg:h-10 lg:w-10 " +
     "border transition-colors duration-150 " +
-    "cursor-pointer select-none aspect-square";
+    "select-none disabled:cursor-not-allowed disabled:opacity-55";
 
   // ── Selected enemy target ─────────────────────────────────────────────
   if (isSelected && isEnemy) {
@@ -25,19 +25,19 @@ function cellClass(
   if (isPlacement) {
     switch (state) {
       case "ship":
-        return `${base} bg-[var(--color-radar-green)]/20 border-[var(--color-radar-green)]/60`;
+        return `${base} bg-[var(--color-radar-green)]/20 border-[var(--color-radar-green)]/60 enabled:cursor-pointer`;
       default:
-        return `${base} bg-[var(--color-ocean-900)] hover:bg-[var(--color-ocean-800)] border-[var(--color-ocean-700)]/40`;
+        return `${base} bg-[var(--color-ocean-900)] border-[var(--color-ocean-700)]/40 enabled:cursor-pointer enabled:hover:bg-[var(--color-ocean-800)]`;
     }
   }
 
   // ── Battle / own board ────────────────────────────────────────────────
   switch (state) {
     case "ship":
-      return isEnemy
+    return isEnemy
         // Вражеский корабль: не виден игроку, но ячейка должна быть кликабельной
         // Видимая граница + зелёный hover чётко показывают зону прицела
-        ? `${base} bg-transparent hover:bg-[var(--color-radar-green)]/10 border-[var(--color-ocean-700)]/50 cursor-crosshair`
+        ? `${base} bg-transparent border-[var(--color-ocean-700)]/50 enabled:cursor-crosshair enabled:hover:bg-[var(--color-radar-green)]/10`
         : `${base} bg-[var(--color-ocean-800)] border-[var(--color-radar-dim)]`;
     case "hit":
       return `${base} bg-[var(--color-hit-red)]/20 border-[var(--color-hit-red)] text-[var(--color-hit-red)]`;
@@ -50,8 +50,8 @@ function cellClass(
       // ИСПРАВЛЕНИЕ: было bg-ocean-900 с ocean-800 бордером — почти невидимо.
       // Теперь прозрачный фон + контрастная граница + cursor-crosshair.
       return isEnemy
-        ? `${base} bg-transparent hover:bg-[var(--color-radar-green)]/10 border-[var(--color-ocean-700)]/50 cursor-crosshair`
-        : `${base} bg-[var(--color-ocean-900)] hover:bg-[var(--color-ocean-800)] border-[var(--color-ocean-800)]`;
+        ? `${base} bg-transparent border-[var(--color-ocean-700)]/50 enabled:cursor-crosshair enabled:hover:bg-[var(--color-radar-green)]/10`
+        : `${base} bg-[var(--color-ocean-900)] border-[var(--color-ocean-800)] enabled:cursor-pointer enabled:hover:bg-[var(--color-ocean-800)]`;
   }
 }
 
@@ -97,6 +97,11 @@ type Props = {
    * Highlights the selected enemy target in amber.
    */
   selectedCoord?: Coordinate | null;
+  /**
+   * Disables the whole board without changing already-known cell states.
+   */
+  isInteractive?: boolean;
+  disabledMessage?: string | undefined;
 };
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -107,6 +112,8 @@ export function BoardGrid({
   isPlacement = false,
   onCellClick,
   selectedCoord = null,
+  isInteractive = true,
+  disabledMessage,
 }: Props) {
   return (
     <table
@@ -144,17 +151,20 @@ export function BoardGrid({
               const coord = (col + row) as Coordinate;
               const state = board[coord];
               const isSelected = selectedCoord === coord;
+              const isDisabled =
+                !isInteractive || isCellDisabled(state, isEnemy, isPlacement);
 
               return (
                 <td key={coord} className="p-0" data-coord={coord}>
                   <button
                     type="button"
                     data-coord={coord}
-                    aria-label={`${col}${rowIndex}${isSelected ? " (цель)" : ""} — ${state ?? "пусто"}`}
+                    aria-label={`${col}${rowIndex}${isSelected ? " (цель)" : ""} — ${state ?? "пусто"}${!isInteractive && disabledMessage ? `. ${disabledMessage}` : ""}`}
                     aria-pressed={isSelected}
                     className={cellClass(state, isEnemy, isPlacement, isSelected)}
                     onClick={() => onCellClick?.(coord)}
-                    disabled={isCellDisabled(state, isEnemy, isPlacement)}
+                    disabled={isDisabled}
+                    title={!isInteractive ? disabledMessage : undefined}
                   >
                     {isSelected ? "⊕" : cellSymbol(state, isEnemy, isPlacement)}
                   </button>

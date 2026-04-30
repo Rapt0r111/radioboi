@@ -1,0 +1,10 @@
+▲ Next.js 16.2.4 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://172.18.0.1:3000
+- Environments: .env.local
+✓ Ready in 977ms
+
+ GET / 200 in 781ms (next.js: 431ms, application-code: 350ms)
+ GET /game/KZ0WRC 200 in 937ms (next.js: 851ms, application-code: 86ms)
+ POST / 303 in 1192ms (next.js: 9ms, application-code: 1183ms)
+  └─ ƒ <inline action>() in 196ms app/page.tsx
