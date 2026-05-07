@@ -2,9 +2,13 @@
 "use client";
 
 // Экран расстановки кораблей.
-// Корабли размещаются кликом: выбери корабль → кликни клетку.
-// «Случайная» расстановка генерирует валидный флот без коллизий.
-// После нажатия «Готов» отправляет SHIPS_PLACED и вызывает onPlaced().
+//
+// FIX (CRITICAL): Заменены все вызовы validatePlacement → validateGeometry
+// в handleCellClick и toggleOrientation. Ранее validatePlacement проверял
+// fleet composition, из-за чего любая попытка разместить корабль после его
+// удаления немедленно падала с ошибкой WRONG_FLEET — даже при корректной
+// геометрии. validateGeometry проверяет только координаты, линейность,
+// перекрытия и касания; fleet composition проверяется только в handleReady.
 
 import {
   type Board,
@@ -12,7 +16,8 @@ import {
   GameEventType,
   makeCoordinate,
   REQUIRED_FLEET,
-  validatePlacement,
+  validateGeometry,   // ← geometry-only для cell click / toggle
+  validatePlacement,  // ← полная проверка только при Ready
 } from "@radioboi/game-core";
 import { useCallback, useState } from "react";
 import type { GameClient } from "@/src/lib/network/gameClient";
@@ -165,6 +170,8 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
   const board = buildBoard(ships);
   const allPlaced = ships.every((s) => s.coords.length === s.size);
 
+  // FIX: используем validateGeometry (без проверки fleet composition).
+  // validatePlacement вызывается только в handleReady — там нужна полная проверка.
   const handleCellClick = useCallback((coord: Coordinate) => {
     if (!selectedShipId) return;
     setShips((prev) => {
@@ -173,8 +180,9 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
       const newCoords = buildCoords(coord, ship.size, ship.isHorizontal);
       if (!newCoords) { setError("Корабль выходит за границы поля"); return prev; }
       const updated = prev.map((s) => s.id === selectedShipId ? { ...s, coords: newCoords } : s);
+      // Проверяем только геометрию, НЕ состав флота — иначе WRONG_FLEET при частичной расстановке
       const toValidate = updated.filter((s) => s.coords.length > 0).map((s) => ({ coords: s.coords }));
-      const result = validatePlacement(toValidate);
+      const result = validateGeometry(toValidate);
       if (!result.ok) { setError("Нельзя: корабли пересекаются или соприкасаются"); return prev; }
       setError(null);
       return updated;
@@ -182,6 +190,7 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
     setSelectedShipId(null);
   }, [selectedShipId]);
 
+  // FIX: то же — validateGeometry при смене ориентации
   const toggleOrientation = useCallback((id: ShipId) => {
     setShips((prev) => {
       const updated = prev.map((s) => {
@@ -195,7 +204,7 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
         return { ...s, isHorizontal: isH, coords: newCoords };
       });
       const toValidate = updated.filter((s) => s.coords.length > 0).map((s) => ({ coords: s.coords }));
-      if (!validatePlacement(toValidate).ok) return prev;
+      if (!validateGeometry(toValidate).ok) return prev;
       return updated;
     });
   }, []);
@@ -205,6 +214,7 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
     setSelectedShipId(null);
   }, []);
 
+  // FIX: handleReady использует validatePlacement с полной проверкой флота
   const handleReady = () => {
     if (!transport || !allPlaced || isSubmitting) return;
     const toValidate = ships.map((s) => ({ coords: s.coords }));
@@ -261,7 +271,7 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
         </div>
 
         {/* ── Панель ────────────────────────────────────────────────── */}
-        <div className="flex flex-col gap-4 min-w-[260px]">
+        <div className="flex flex-col gap-4 min-w-65">
 
           {unplaced.length > 0 && (
             <div className="rounded border border-ocean-800 bg-ocean-900/80 p-4">

@@ -37,18 +37,10 @@ export type PlacementResult = { ok: true } | { ok: false; error: PlacementError 
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/**
- * Returns true if the coords form a valid straight line
- * (all same column OR all same row) with no gaps.
- */
 function isLinear(coords: readonly Coordinate[]): boolean {
   if (coords.length === 0) return false;
 
   const parsed = coords.map(parseCoordinate);
-
-  // FIX(noNonNullAssertion): extract first element to a local variable and
-  // guard. Since coords.length > 0 we know parsed[0] exists, but TypeScript
-  // types array access as `T | undefined` with noUncheckedIndexedAccess.
   const first = parsed[0];
   if (!first) return false;
 
@@ -57,10 +49,6 @@ function isLinear(coords: readonly Coordinate[]): boolean {
 
   if (!allSameCol && !allSameRow) return false;
 
-  // Check contiguity (no gaps).
-  // FIX(noNonNullAssertion): use local variables with guards instead of `!`.
-  // In a sorted array of length N, index i and i-1 are always in bounds when
-  // 1 ≤ i < N, but TS cannot verify this statically with noUncheckedIndexedAccess.
   if (allSameCol) {
     const rows = parsed.map((p) => p.rowIndex).sort((a, b) => a - b);
     for (let i = 1; i < rows.length; i++) {
@@ -84,10 +72,21 @@ function isLinear(coords: readonly Coordinate[]): boolean {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export function validatePlacement(
+/**
+ * Validates GEOMETRY only: coordinate validity, linearity, overlaps, adjacency.
+ *
+ * Does NOT check fleet composition. Use this during mid-placement (cell clicks,
+ * orientation toggles) to avoid false "WRONG_FLEET" errors when only some ships
+ * have been placed yet. Use `validatePlacement` for the final "Ready" check.
+ *
+ * FIX: Previously all placement clicks called validatePlacement which includes
+ * fleet composition check — this made it impossible to re-place a ship after
+ * removing it from the board, because the partial fleet never matched REQUIRED_FLEET.
+ */
+export function validateGeometry(
   ships: ReadonlyArray<{ coords: readonly Coordinate[] }>,
 ): PlacementResult {
-  // ── 1. Validate all coordinates ──────────────────────────────────────────
+  // 1. Validate all coordinates
   for (const ship of ships) {
     for (const coord of ship.coords) {
       if (!isValidCoordinate(coord)) {
@@ -96,11 +95,10 @@ export function validatePlacement(
     }
   }
 
-  // ── 2. Each ship must be linear and at least 1 cell long ─────────────────
-  // FIX(noNonNullAssertion): use a local variable with a guard instead of ships[i]!
+  // 2. Each ship must be linear and at least 1 cell long
   for (let i = 0; i < ships.length; i++) {
     const ship = ships[i];
-    if (!ship) continue; // unreachable — i < ships.length
+    if (!ship) continue;
     if (ship.coords.length < 1) {
       return { ok: false, error: { kind: "SHIP_TOO_SHORT" } };
     }
@@ -109,7 +107,7 @@ export function validatePlacement(
     }
   }
 
-  // ── 3. No overlaps ────────────────────────────────────────────────────────
+  // 3. No overlaps
   const occupied = new Set<Coordinate>();
   for (const ship of ships) {
     for (const coord of ship.coords) {
@@ -120,18 +118,17 @@ export function validatePlacement(
     }
   }
 
-  // ── 4. No adjacency (including diagonals) ────────────────────────────────
-  // FIX(noNonNullAssertion): guard ships[i] and ships[j] with local variables.
+  // 4. No adjacency (including diagonals)
   for (let i = 0; i < ships.length; i++) {
     const shipI = ships[i];
-    if (!shipI) continue; // unreachable
+    if (!shipI) continue;
 
     const exclusionZone = new Set<Coordinate>(
       shipI.coords.flatMap((c) => getAdjacentCoordinates(c)),
     );
     for (let j = i + 1; j < ships.length; j++) {
       const shipJ = ships[j];
-      if (!shipJ) continue; // unreachable
+      if (!shipJ) continue;
 
       for (const coord of shipJ.coords) {
         if (exclusionZone.has(coord)) {
@@ -141,7 +138,21 @@ export function validatePlacement(
     }
   }
 
-  // ── 5. Fleet composition ─────────────────────────────────────────────────
+  return { ok: true };
+}
+
+/**
+ * Full placement validation: geometry + fleet composition.
+ * Use ONLY for the final "Ready" button — NOT during individual cell clicks.
+ */
+export function validatePlacement(
+  ships: ReadonlyArray<{ coords: readonly Coordinate[] }>,
+): PlacementResult {
+  // Run geometry checks first
+  const geometryResult = validateGeometry(ships);
+  if (!geometryResult.ok) return geometryResult;
+
+  // ── Fleet composition ─────────────────────────────────────────────────
   const actualFleet = new Map<number, number>();
   for (const ship of ships) {
     const len = ship.coords.length;
@@ -248,7 +259,6 @@ export function coordinateToMorseNotation(coord: Coordinate): { letter: string; 
 export function morseNotationToCoordinate(letter: string, digit: string): Coordinate {
   const colIndex = morseLetterToColIndex(letter);
   const rowIndex = parseInt(digit, 10);
-  // FIX(noGlobalIsNan): use Number.isNaN — the global isNaN coerces its argument.
   if (Number.isNaN(rowIndex) || rowIndex < 0 || rowIndex > 9) {
     throw new RangeError(`morseNotationToCoordinate: digit "${digit}" out of 0–9`);
   }

@@ -1,5 +1,23 @@
 // apps/worker/src/GameRoomArbitrator.ts
+//
+// FIX (HIGH): Заменён `implements DurableObject` → `extends DurableObject<Env>`.
+//   Старый паттерн (implements) — deprecated anti-pattern. При `extends` платформа
+//   сама предоставляет this.ctx и this.env; не нужно хранить state в приватном поле.
+//   Все ссылки this.#state → this.ctx.
+//
+// FIX (HIGH): Добавлена серверная валидация геометрии кораблей в #handleShipsPlaced.
+//   Ранее сервер принимал любое расположение (пересечения, касания, нелинейные
+//   конфигурации). Теперь используется validateShipGeometry из game-logic.ts.
+//
+// FIX (MEDIUM): PLAYER_JOINED больше не рассылается при реконнекте игрока.
+//   Ранее каждый WebSocket upgrade (включая переподключение) вызывал broadcast
+//   PLAYER_JOINED, что могло запутать клиент. Теперь только при первом входе.
+//
+// FIX (MEDIUM): Добавлен серверный таймаут хода атакующего (90с).
+//   Если атакующий не отправил ATTACK_PREP в течение 90 секунд, ход переходит
+//   к противнику через DO alarm. Предотвращает бесконечный "заморозку" игры.
 
+import { DurableObject } from "cloudflare:workers";
 import type { RoomPhase, RoomState } from "./game-logic";
 import {
   addPlayer,
@@ -13,6 +31,7 @@ import {
   processInterceptAttempt,
   recordMorseSequence,
   resolveHit,
+  validateShipGeometry,  // ← NEW server-side geometry check
 } from "./game-logic";
 import { validateMorseForCoord } from "./morse";
 import {
@@ -35,18 +54,18 @@ function coordToIndices(coord: string): { colIndex: number; rowIndex: number } |
 
 const STATE_KEY = "room:state";
 const WS_TAG_PREFIX = "player:";
+// Таймаут хода атакующего: 90 секунд. После этого ход передаётся противнику.
+const ATTACKER_TURN_TIMEOUT_MS = 90_000;
+// Метка alarm — храним в DO storage, чтобы различать типы алармов.
+const ALARM_TYPE_KEY = "alarm:type";
+type AlarmType = "intercept_timeout" | "attacker_timeout";
 
-export class GameRoomArbitrator implements DurableObject {
-  readonly #state: DurableObjectState;
-
-  constructor(state: DurableObjectState, _env: Env) {
-    this.#state = state;
-    this.#state.getWebSockets();
-  }
+// FIX: extends DurableObject<Env> вместо implements DurableObject
+export class GameRoomArbitrator extends DurableObject<Env> {
 
   // ── HTTP upgrade → WebSocket ───────────────────────────────────────────────
 
-  async fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
@@ -61,9 +80,12 @@ export class GameRoomArbitrator implements DurableObject {
     }
 
     const { 0: client, 1: server } = new WebSocketPair();
-    this.#state.acceptWebSocket(server, [`${WS_TAG_PREFIX}${playerId}`]);
+    // FIX: this.ctx вместо this.#state
+    this.ctx.acceptWebSocket(server, [`${WS_TAG_PREFIX}${playerId}`]);
 
     const roomState = await this.#loadState(roomId);
+    const isReconnect = roomState.players.some((p) => p.id === playerId);
+
     const addResult = addPlayer(roomState, {
       id: playerId,
       name: playerName,
@@ -78,13 +100,15 @@ export class GameRoomArbitrator implements DurableObject {
 
     await this.#saveState(roomState);
 
-    this.#broadcast(
-      makePlayerJoined(playerId, playerName, roomState.players.length as 1 | 2),
-      null,
-    );
+    // FIX: PLAYER_JOINED только при первом входе, не при реконнекте
+    if (!isReconnect) {
+      this.#broadcast(
+        makePlayerJoined(playerId, playerName, roomState.players.length as 1 | 2),
+        null,
+      );
+    }
 
-    // Send SYNC_STATE to ALL players so Player 1 sees phase "lobby"→"placement"
-    // when Player 2 joins, without a page refresh.
+    // Всегда шлём SYNC_STATE всем — клиент увидит актуальное состояние
     this.#sendSyncToAll(roomState);
 
     return new Response(null, { status: 101, webSocket: client });
@@ -92,11 +116,12 @@ export class GameRoomArbitrator implements DurableObject {
 
   // ── WebSocket event handlers (Hibernation API) ─────────────────────────────
 
-  async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+  override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     const event = decodeEvent(raw);
     if (!event) return;
 
-    const tag = this.#state.getTags(ws).find((t) => t.startsWith(WS_TAG_PREFIX));
+    // FIX: this.ctx вместо this.#state
+    const tag = this.ctx.getTags(ws).find((t) => t.startsWith(WS_TAG_PREFIX));
     if (!tag) return;
     const senderId = tag.slice(WS_TAG_PREFIX.length);
 
@@ -122,26 +147,48 @@ export class GameRoomArbitrator implements DurableObject {
     }
   }
 
-  async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+  override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
     ws.close(code, reason);
   }
 
-  async webSocketError(ws: WebSocket): Promise<void> {
+  override async webSocketError(ws: WebSocket): Promise<void> {
     ws.close(1011, "WebSocket error");
   }
 
-  // ── DO Alarm: server-side intercept timeout ────────────────────────────────
-  //
-  // Fires 27 seconds after MISSILE_LAUNCHED (25s intercept window + 2s buffer).
-  // If pendingAttack still exists, the defender ran out of time — resolve
-  // the hit in the attacker's favour and broadcast the result.
+  // ── DO Alarm ───────────────────────────────────────────────────────────────
 
-  async alarm(): Promise<void> {
+  override async alarm(): Promise<void> {
+    const alarmType = await this.ctx.storage.get<AlarmType>(ALARM_TYPE_KEY);
     const state = await this.#loadState();
-    const attack = state.pendingAttack;
-    if (!attack) return; // already resolved normally — nothing to do
 
-    // Force-resolve: attacker wins, board is updated, turn advances.
+    if (alarmType === "attacker_timeout") {
+      await this.#handleAttackerTimeout(state);
+    } else {
+      // intercept_timeout (default, backwards compat)
+      await this.#handleInterceptTimeout(state);
+    }
+  }
+
+  // ── Attacker turn timeout ───────────────────────────────────────────────────
+
+  async #handleAttackerTimeout(state: RoomState): Promise<void> {
+    if (state.phase !== "battle" || state.pendingAttack !== null) return;
+    // Передаём ход противнику без разрешения выстрела
+    const opponentId = state.currentTurnId
+      ? getOpponentId(state, state.currentTurnId)
+      : null;
+    if (!opponentId) return;
+    state.currentTurnId = opponentId;
+    await this.#saveState(state);
+    this.#sendSyncToAll(state);
+  }
+
+  // ── Intercept timeout (27s after MISSILE_LAUNCHED) ─────────────────────────
+
+  async #handleInterceptTimeout(state: RoomState): Promise<void> {
+    const attack = state.pendingAttack;
+    if (!attack) return;
+
     const result = resolveHit(state, attack.attackerId, attack.target, attack.missileId);
     await this.#saveState(state);
 
@@ -152,7 +199,7 @@ export class GameRoomArbitrator implements DurableObject {
         result.result,
         state.currentTurnId ?? attack.attackerId,
         result.isGameOver,
-        false, // defender did not decode — time expired
+        false,
         result.winnerId ?? undefined,
       ),
       null,
@@ -183,6 +230,9 @@ export class GameRoomArbitrator implements DurableObject {
       ws.send(makeError("INVALID_PLACEMENT", "ships must be a non-empty array"));
       return;
     }
+
+    // Базовая валидация структуры + координат
+    const parsedShips: Array<{ coords: string[] }> = [];
     for (const ship of ships) {
       if (
         typeof ship !== "object" ||
@@ -192,15 +242,27 @@ export class GameRoomArbitrator implements DurableObject {
         ws.send(makeError("INVALID_PLACEMENT", "Each ship must have a coords array"));
         return;
       }
+      const coords: string[] = [];
       for (const coord of (ship as { coords: unknown[] }).coords) {
         if (typeof coord !== "string" || !isValidCoordinate(coord)) {
           ws.send(makeError("INVALID_COORDINATE", `Invalid coordinate: ${String(coord)}`));
           return;
         }
+        coords.push(coord);
       }
+      parsedShips.push({ coords });
     }
 
-    applyShipsPlaced(state, playerId, ships as Array<{ coords: string[] }>);
+    // FIX (HIGH): Серверная валидация геометрии и состава флота.
+    // Ранее сервер принимал любое расположение — клиент мог читерить,
+    // отправляя перекрывающиеся или неверно расположенные корабли.
+    const geometryError = validateShipGeometry(parsedShips);
+    if (geometryError !== null) {
+      ws.send(makeError("INVALID_PLACEMENT", geometryError));
+      return;
+    }
+
+    applyShipsPlaced(state, playerId, parsedShips);
     await this.#saveState(state);
 
     const phaseAfterPlacement = state.phase as RoomPhase;
@@ -211,8 +273,10 @@ export class GameRoomArbitrator implements DurableObject {
         this.#broadcast(makeGameStarted(firstTurnId), null);
       }
       this.#sendSyncToAll(state);
+      // FIX: Запускаем таймаут хода атакующего при начале боя
+      await this.ctx.storage.put<AlarmType>(ALARM_TYPE_KEY, "attacker_timeout");
+      await this.ctx.storage.setAlarm(Date.now() + ATTACKER_TURN_TIMEOUT_MS);
     } else {
-      // Only one player is ready — send sync just to them.
       this.#sendToPlayer(
         playerId,
         makeSyncState(
@@ -248,6 +312,8 @@ export class GameRoomArbitrator implements DurableObject {
     }
 
     await this.#saveState(state);
+    // Атакующий начал атаку — снимаем таймаут хода (успеет отправить MISSILE_LAUNCHED)
+    await this.ctx.storage.deleteAlarm();
   }
 
   async #handleMissileLaunched(
@@ -299,12 +365,12 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
-    // recordMorseSequence also pushes to state.activeMissiles.
     recordMorseSequence(state, missileId, morseSequence as string[]);
     await this.#saveState(state);
 
-    // Set alarm: if defender doesn't respond within 25s, auto-resolve via alarm().
-    await this.#state.storage.setAlarm(Date.now() + 27_000);
+    // Таймаут перехвата для защищающегося (27с = 25с окно + 2с буфер)
+    await this.ctx.storage.put<AlarmType>(ALARM_TYPE_KEY, "intercept_timeout");
+    await this.ctx.storage.setAlarm(Date.now() + 27_000);
 
     const opponentId = getOpponentId(state, playerId);
     if (opponentId) {
@@ -361,9 +427,7 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
-    // Missile resolved — cancel the alarm so it doesn't fire after the fact.
-    await this.#state.storage.deleteAlarm();
-
+    await this.ctx.storage.deleteAlarm();
     await this.#saveState(state);
 
     const lastShot = state.shotLog[state.shotLog.length - 1];
@@ -384,31 +448,30 @@ export class GameRoomArbitrator implements DurableObject {
     );
 
     this.#sendSyncToAll(state);
+
+    // После разрешения выстрела запускаем таймаут следующего хода
+    if (!resolveResult.isGameOver && state.currentTurnId !== null) {
+      await this.ctx.storage.put<AlarmType>(ALARM_TYPE_KEY, "attacker_timeout");
+      await this.ctx.storage.setAlarm(Date.now() + ATTACKER_TURN_TIMEOUT_MS);
+    }
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   #sendToPlayer(playerId: string, frame: Uint8Array): void {
-    for (const ws of this.#state.getWebSockets(`${WS_TAG_PREFIX}${playerId}`)) {
-      try {
-        ws.send(frame);
-      } catch {
-        /* closed */
-      }
+    // FIX: this.ctx вместо this.#state
+    for (const ws of this.ctx.getWebSockets(`${WS_TAG_PREFIX}${playerId}`)) {
+      try { ws.send(frame); } catch { /* closed */ }
     }
   }
 
   #broadcast(frame: Uint8Array, excludePlayerId: string | null): void {
-    for (const ws of this.#state.getWebSockets()) {
+    for (const ws of this.ctx.getWebSockets()) {
       if (excludePlayerId !== null) {
-        const tags = this.#state.getTags(ws);
+        const tags = this.ctx.getTags(ws);
         if (tags.includes(`${WS_TAG_PREFIX}${excludePlayerId}`)) continue;
       }
-      try {
-        ws.send(frame);
-      } catch {
-        /* closed */
-      }
+      try { ws.send(frame); } catch { /* closed */ }
     }
   }
 
@@ -431,12 +494,12 @@ export class GameRoomArbitrator implements DurableObject {
   // ── Storage ────────────────────────────────────────────────────────────────
 
   async #loadState(roomId?: string): Promise<RoomState> {
-    const stored = await this.#state.storage.get<RoomState>(STATE_KEY);
+    const stored = await this.ctx.storage.get<RoomState>(STATE_KEY);
     if (stored) return stored;
     return createRoomState(roomId ?? "room");
   }
 
   async #saveState(state: RoomState): Promise<void> {
-    await this.#state.storage.put(STATE_KEY, state);
+    await this.ctx.storage.put(STATE_KEY, state);
   }
 }

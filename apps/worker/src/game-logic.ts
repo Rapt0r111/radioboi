@@ -1,33 +1,28 @@
 // apps/worker/src/game-logic.ts
 // Pure, side-effect-free game logic for use inside GameRoomArbitrator.
-// All functions are synchronous and operate on plain serialisable objects
-// so that room state can be stored in Durable Object storage with no
-// special serialisation code.
 //
-// Coordinate format used throughout: the full 6-char Cyrillic string,
-// e.g. "АБВ000".  No branded type here — the Worker doesn't import
-// @radioboi/game-core so it stays dependency-free.
+// FIX: Добавлена функция validateShipGeometry — серверная проверка геометрии
+// флота. Ранее сервер принимал любые координаты без валидации перекрытий,
+// касаний, нелинейности и состава флота. Это позволяло читерить через
+// модифицированный клиент. Теперь #handleShipsPlaced вызывает validateShipGeometry
+// перед applyShipsPlaced.
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
 export type CellState = "ship" | "hit" | "miss" | "sunk";
-export type Coord = string; // 6-char Cyrillic coordinate string
+export type Coord = string;
 export type BoardMap = Record<Coord, CellState>;
 
-/** Serialisable representation of one ship on the board. */
 export type ShipRecord = {
-  /** All occupied coordinates (ordered). */
   coords: Coord[];
-  /** True when every coord has been hit. */
   isSunk: boolean;
 };
 
 export type PlayerRecord = {
   id: string;
   name: string;
-  /** WS hibernation tag stored as `player:<id>`. */
   wsTag: string;
-  isReady: boolean; // ships placed?
+  isReady: boolean;
 };
 
 export type PendingAttack = {
@@ -40,22 +35,16 @@ export type PendingAttack = {
 
 export type RoomPhase = "lobby" | "placement" | "battle" | "gameOver";
 
-/**
- * Full game state persisted in Durable Object storage under key "state".
- * Stored as a plain JSON object — no class instances.
- */
 export type RoomState = {
   roomId: string;
   phase: RoomPhase;
-  players: PlayerRecord[]; // max 2
-  boards: Record<string, BoardMap>; // playerId → board
-  ships: Record<string, ShipRecord[]>; // playerId → ships
+  players: PlayerRecord[];
+  boards: Record<string, BoardMap>;
+  ships: Record<string, ShipRecord[]>;
   currentTurnId: string | null;
   pendingAttack: PendingAttack | null;
   winnerId: string | null;
-  /** Sequential shot log for history panel. */
   shotLog: ShotLogEntry[];
-  /** Missiles currently in flight (populated on MISSILE_LAUNCHED, cleared on resolveHit). */
   activeMissiles: Array<{ id: string; target: Coord; launchedAt: number }>;
 };
 
@@ -65,6 +54,160 @@ export type ShotLogEntry = {
   result: "hit" | "miss" | "sunk";
   ts: number;
 };
+
+// ── Fleet definition (mirrors @radioboi/game-core REQUIRED_FLEET) ─────────────
+
+const REQUIRED_FLEET = new Map<number, number>([
+  [4, 1],
+  [3, 2],
+  [2, 3],
+  [1, 4],
+]);
+
+// ── Column/row triplet definitions (mirrors game-core COLUMNS/ROWS) ───────────
+
+const COLUMNS = ["АБВ","ГДЕ","ЖЗИ","ЙКЛ","МНО","ПРС","ТУФ","ХЦЧ","ШЩЪ","ЫЭЮ"];
+const ROWS = ["000","001","002","003","004","005","006","007","008","009"];
+const COLUMN_SET = new Set<string>(COLUMNS);
+const ROW_SET = new Set<string>(ROWS);
+
+function parseCoord(coord: string): { colIndex: number; rowIndex: number } | null {
+  if (coord.length !== 6) return null;
+  const colStr = coord.slice(0, 3);
+  const rowStr = coord.slice(3, 6);
+  if (!COLUMN_SET.has(colStr) || !ROW_SET.has(rowStr)) return null;
+  const colIndex = COLUMNS.indexOf(colStr);
+  const rowIndex = ROWS.indexOf(rowStr);
+  if (colIndex === -1 || rowIndex === -1) return null;
+  return { colIndex, rowIndex };
+}
+
+// ── Server-side ship geometry validation ──────────────────────────────────────
+
+/**
+ * Validates ship geometry on the server:
+ *  1. All coordinates are valid
+ *  2. Each ship is linear (single row or column, contiguous)
+ *  3. No overlapping cells between ships
+ *  4. No adjacent cells (including diagonals) between ships
+ *  5. Fleet composition matches REQUIRED_FLEET
+ *
+ * Returns null if valid, or an error message string if invalid.
+ *
+ * This mirrors the client-side validatePlacement from game-core,
+ * but is self-contained so the worker doesn't depend on game-core.
+ */
+export function validateShipGeometry(
+  ships: ReadonlyArray<{ coords: readonly string[] }>,
+): string | null {
+  // 1. Validate coordinates
+  for (const ship of ships) {
+    for (const coord of ship.coords) {
+      if (!parseCoord(coord)) {
+        return `Invalid coordinate: ${coord}`;
+      }
+    }
+  }
+
+  // 2. Linearity and length >= 1
+  for (let i = 0; i < ships.length; i++) {
+    const ship = ships[i];
+    if (!ship || ship.coords.length < 1) return "Ship has no coordinates";
+
+    if (ship.coords.length > 1) {
+      const parsed = ship.coords.map(parseCoord).filter(Boolean) as Array<{colIndex: number; rowIndex: number}>;
+      const first = parsed[0];
+      if (!first) return "Ship parse failed";
+
+      const allSameCol = parsed.every(p => p.colIndex === first.colIndex);
+      const allSameRow = parsed.every(p => p.rowIndex === first.rowIndex);
+
+      if (!allSameCol && !allSameRow) {
+        return `Ship ${i} is not linear (not all same column or row)`;
+      }
+
+      // Check contiguity
+      if (allSameCol) {
+        const rows = parsed.map(p => p.rowIndex).sort((a, b) => a - b);
+        for (let j = 1; j < rows.length; j++) {
+          if ((rows[j] ?? 0) - (rows[j-1] ?? 0) !== 1) {
+            return `Ship ${i} has gaps between cells`;
+          }
+        }
+      } else {
+        const cols = parsed.map(p => p.colIndex).sort((a, b) => a - b);
+        for (let j = 1; j < cols.length; j++) {
+          if ((cols[j] ?? 0) - (cols[j-1] ?? 0) !== 1) {
+            return `Ship ${i} has gaps between cells`;
+          }
+        }
+      }
+    }
+  }
+
+  // 3. No overlaps
+  const occupied = new Set<string>();
+  for (const ship of ships) {
+    for (const coord of ship.coords) {
+      if (occupied.has(coord)) return `Ships overlap at ${coord}`;
+      occupied.add(coord);
+    }
+  }
+
+  // 4. No adjacency (including diagonals)
+  for (let i = 0; i < ships.length; i++) {
+    const shipI = ships[i];
+    if (!shipI) continue;
+
+    // Build exclusion zone for this ship
+    const exclusion = new Set<string>();
+    for (const coord of shipI.coords) {
+      const p = parseCoord(coord);
+      if (!p) continue;
+      for (let dc = -1; dc <= 1; dc++) {
+        for (let dr = -1; dr <= 1; dr++) {
+          const nc = p.colIndex + dc;
+          const nr = p.rowIndex + dr;
+          if (nc >= 0 && nc <= 9 && nr >= 0 && nr <= 9) {
+            const col = COLUMNS[nc];
+            const row = ROWS[nr];
+            if (col && row) exclusion.add(col + row);
+          }
+        }
+      }
+    }
+
+    for (let j = i + 1; j < ships.length; j++) {
+      const shipJ = ships[j];
+      if (!shipJ) continue;
+      for (const coord of shipJ.coords) {
+        if (exclusion.has(coord)) {
+          return `Ships ${i} and ${j} are adjacent or overlapping`;
+        }
+      }
+    }
+  }
+
+  // 5. Fleet composition
+  const actualFleet = new Map<number, number>();
+  for (const ship of ships) {
+    const len = ship.coords.length;
+    actualFleet.set(len, (actualFleet.get(len) ?? 0) + 1);
+  }
+
+  for (const [len, count] of REQUIRED_FLEET) {
+    if ((actualFleet.get(len) ?? 0) !== count) {
+      return `Invalid fleet: expected ${count}×${len}-cell ship(s), got ${actualFleet.get(len) ?? 0}`;
+    }
+  }
+  for (const len of actualFleet.keys()) {
+    if (!REQUIRED_FLEET.has(len)) {
+      return `Invalid fleet: unexpected ship of size ${len}`;
+    }
+  }
+
+  return null; // valid
+}
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
@@ -90,7 +233,6 @@ export function addPlayer(
   player: PlayerRecord,
 ): { ok: true } | { ok: false; reason: "ROOM_FULL" | "ALREADY_JOINED" } {
   if (state.players.some((p) => p.id === player.id)) {
-    // Reconnect — update wsTag but don't duplicate.
     const idx = state.players.findIndex((p) => p.id === player.id);
     const existing = state.players[idx];
     if (existing) {
@@ -114,14 +256,10 @@ export function getOpponentId(state: RoomState, playerId: string): string | null
 
 // ── Ship placement ────────────────────────────────────────────────────────────
 
-/**
- * Stores validated ship data for a player and marks them ready.
- * Caller is responsible for running validatePlacement before calling this.
- */
 export function applyShipsPlaced(
   state: RoomState,
   playerId: string,
-  ships: Array<{ coords: Coord[] }>,
+  ships: Array<{ coords: string[] }>,
 ): void {
   const board: BoardMap = {};
   const shipRecords: ShipRecord[] = [];
@@ -139,7 +277,6 @@ export function applyShipsPlaced(
   const player = state.players.find((p) => p.id === playerId);
   if (player) player.isReady = true;
 
-  // Both ready → move to battle.
   if (state.players.length === 2 && state.players.every((p) => p.isReady)) {
     state.phase = "battle";
     const randomIdx = Math.random() < 0.5 ? 0 : 1;
@@ -149,7 +286,6 @@ export function applyShipsPlaced(
 
 // ── Attack lifecycle ──────────────────────────────────────────────────────────
 
-/** Locks a target coordinate for the current attacker. */
 export function prepareAttack(
   state: RoomState,
   attackerId: string,
@@ -180,10 +316,6 @@ export function prepareAttack(
   return { ok: true };
 }
 
-/**
- * Stores the Morse sequence and registers the missile as active.
- * Called after the attacker's Morse input is validated.
- */
 export function recordMorseSequence(
   state: RoomState,
   missileId: string,
@@ -194,7 +326,6 @@ export function recordMorseSequence(
   }
   state.pendingAttack.morseSequence = morseSequence;
 
-  // Register missile as in-flight so SYNC_STATE can restore it on reconnect.
   state.activeMissiles.push({
     id: missileId,
     target: state.pendingAttack.target,
@@ -210,16 +341,8 @@ export type ResolveResult = {
   winnerId: string | null;
 };
 
-/** Max decode attempts before the server auto-resolves in the attacker's favour. */
 export const MAX_INTERCEPT_ATTEMPTS = 3;
 
-/**
- * Processes a defender's intercept attempt.
- *
- * @param decodedCoord  What the defender decoded.
- * @param forceResolve  True when max attempts exhausted — skip decode check.
- * @returns null if the attempt is wrong AND attempts remain; ResolveResult otherwise.
- */
 export function processInterceptAttempt(
   state: RoomState,
   _defenderId: string,
@@ -239,18 +362,9 @@ export function processInterceptAttempt(
     return null;
   }
 
-  // Required param order: (state, attackerId, target, missileId)
   return resolveHit(state, attack.attackerId, attack.target, attack.missileId);
 }
 
-/**
- * Core hit-resolution logic.
- * Mutates the opponent's board in-place, clears pendingAttack,
- * and removes the missile from activeMissiles.
- *
- * Parameter order: target before optional missileId, so TypeScript
- * does not complain about "required after optional".
- */
 export function resolveHit(
   state: RoomState,
   attackerId: string,
@@ -319,7 +433,6 @@ export function resolveHit(
 
   state.pendingAttack = null;
 
-  // Remove from activeMissiles when known.
   if (missileId !== undefined) {
     state.activeMissiles = state.activeMissiles.filter((m) => m.id !== missileId);
   }
@@ -329,16 +442,10 @@ export function resolveHit(
 
 // ── Board projection helpers ──────────────────────────────────────────────────
 
-/**
- * Returns the board as seen by the OWNER (full info including ship positions).
- */
 export function getOwnBoard(state: RoomState, playerId: string): BoardMap {
   return state.boards[playerId] ?? {};
 }
 
-/**
- * Returns the board as seen by the OPPONENT (hit/miss/sunk only — no ships).
- */
 export function getEnemyBoard(state: RoomState, viewerId: string): BoardMap {
   const opponentId = getOpponentId(state, viewerId);
   if (!opponentId) return {};

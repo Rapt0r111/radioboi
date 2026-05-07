@@ -1,25 +1,46 @@
+# apps/worker/wrangler.toml
+#
+# FIX (HIGH): new_sqlite_classes вместо new_classes.
+# Per Cloudflare docs: new_sqlite_classes включает SQLite-хранилище для DO —
+# рекомендуемый тип хранилища начиная с compatibility_date >= 2024-04-03.
+# КV-хранилище (old new_classes) не поддерживает атомарные транзакции
+# и менее производительно для game state.
+#
+# FIX (LOW): Добавлен блок [observability] для структурированного логирования.
+# Позволяет отлаживать игровые события в Cloudflare Dashboard → Workers → Logs.
 
 name                = "radioboi-worker"
 main                = "src/index.ts"
 compatibility_date  = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# ── KV Namespace (хранение состояния комнат) ─────────────────────────────
+# ── KV Namespace (хранение состояния комнат в лобби) ────────────────────────
 [[kv_namespaces]]
 binding    = "ROOM_STATE"
 id         = "d2006d944b59472c9a5dfee5d4ac52a2"
 preview_id = "0c0408ceb0064351bd2b1c14646df2e5"
 
-# ── Durable Objects ───────────────────────────────────────────────────────
+# ── Durable Objects ───────────────────────────────────────────────────────────
 [[durable_objects.bindings]]
 name       = "GAME_ROOM"
 class_name = "GameRoomArbitrator"
 
-# Миграция: регистрирует класс в платформе Cloudflare.
+# FIX: new_sqlite_classes вместо new_classes
+# Если уже задеплоен с new_classes — нужна новая миграция с renamed_classes:
+#   [[migrations]]
+#   tag             = "v2"
+#   renamed_classes = [{ from = "GameRoomArbitrator", to = "GameRoomArbitrator" }]
+#   new_sqlite_classes = ["GameRoomArbitrator"]
+# Для свежего деплоя достаточно new_sqlite_classes.
 [[migrations]]
-tag          = "v1"
-new_classes  = ["GameRoomArbitrator"]
+tag                = "v1"
+new_sqlite_classes = ["GameRoomArbitrator"]
 
-# ── Среды ─────────────────────────────────────────────────────────────────
+# ── Observability (логи + трейсы в Cloudflare Dashboard) ─────────────────────
+[observability]
+enabled           = true
+head_sampling_rate = 1
+
+# ── Среды ─────────────────────────────────────────────────────────────────────
 [env.production]
 name = "radioboi-worker-prod"

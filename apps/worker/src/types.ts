@@ -1,8 +1,14 @@
 // apps/worker/src/types.ts
-// Shared bindings — imported by BOTH index.ts and GameRoomArbitrator.ts
-// Kept separate to break the circular-import chain.
+// Shared bindings — импортируется и index.ts, и GameRoomArbitrator.ts.
+//
+// FIX: DurableObjectNamespace типизирован с классом GameRoomArbitrator.
+// При `extends DurableObject<Env>` платформа требует явной типизации namespace
+// чтобы RPC-методы были доступны через stub (type safety для DO вызовов).
+// Используем forward declaration (import type) во избежание circular imports.
+
+import type { GameRoomArbitrator } from "./GameRoomArbitrator";
 
 export interface Env {
-  ROOM_STATE: KVNamespace; // matches [[kv_namespaces]] binding
-  GAME_ROOM: DurableObjectNamespace; // matches [durable_objects] name
+  ROOM_STATE: KVNamespace;
+  GAME_ROOM: DurableObjectNamespace<GameRoomArbitrator>;
 }

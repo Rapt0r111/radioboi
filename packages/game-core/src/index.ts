@@ -48,7 +48,8 @@ export {
   morseLetterToColIndex,
   morseNotationToCoordinate,
   REQUIRED_FLEET,
-  validatePlacement,
+  validateGeometry,   // ← NEW: geometry-only for mid-placement checks
+  validatePlacement,  // ← full check for final Ready button
 } from "./ship-placement";
 // ── Core types ────────────────────────────────────────────────────────────────
 export type { Board, CellState, Coordinate, GamePhase, Missile } from "./types";
