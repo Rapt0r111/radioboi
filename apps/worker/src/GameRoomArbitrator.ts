@@ -12,6 +12,7 @@ import {
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
+  resolveHit,
 } from "./game-logic";
 import { validateMorseForCoord } from "./morse";
 import {
@@ -25,8 +26,6 @@ import {
 } from "./protocol";
 import type { Env } from "./types";
 
-// ── Coordinate helpers (imported from game-core) ──────────────────────────────
-
 import { isValidCoordinate, parseCoordinate as parseCoordCore } from "@radioboi/game-core";
 
 function coordToIndices(coord: string): { colIndex: number; rowIndex: number } | null {
@@ -34,12 +33,8 @@ function coordToIndices(coord: string): { colIndex: number; rowIndex: number } |
   return parseCoordCore(coord);
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
 const STATE_KEY = "room:state";
 const WS_TAG_PREFIX = "player:";
-
-// ── Durable Object ────────────────────────────────────────────────────────────
 
 export class GameRoomArbitrator implements DurableObject {
   readonly #state: DurableObjectState;
@@ -83,18 +78,13 @@ export class GameRoomArbitrator implements DurableObject {
 
     await this.#saveState(roomState);
 
-    // Broadcast PLAYER_JOINED so clients can show "opponent connected" indicators.
     this.#broadcast(
       makePlayerJoined(playerId, playerName, roomState.players.length as 1 | 2),
       null,
     );
 
-    // FIX (CRITICAL): Send SYNC_STATE to ALL connected players, not just the
-    // joining one. Without this, Player 1 never receives the phase change from
-    // "lobby" → "placement" when Player 2 joins, and stays stuck on the
-    // waiting screen forever. #sendSyncToAll iterates state.players, so when
-    // Player 1 is alone it only sends to Player 1; when Player 2 joins it
-    // sends the updated "placement" phase to both.
+    // Send SYNC_STATE to ALL players so Player 1 sees phase "lobby"→"placement"
+    // when Player 2 joins, without a page refresh.
     this.#sendSyncToAll(roomState);
 
     return new Response(null, { status: 101, webSocket: client });
@@ -114,7 +104,6 @@ export class GameRoomArbitrator implements DurableObject {
 
     switch (event.type) {
       case "JOIN_ROOM":
-        // Already handled in fetch(); a re-send after reconnect is a no-op.
         break;
       case "SHIPS_PLACED":
         await this.#handleShipsPlaced(ws, senderId, event.payload, roomState);
@@ -139,6 +128,37 @@ export class GameRoomArbitrator implements DurableObject {
 
   async webSocketError(ws: WebSocket): Promise<void> {
     ws.close(1011, "WebSocket error");
+  }
+
+  // ── DO Alarm: server-side intercept timeout ────────────────────────────────
+  //
+  // Fires 27 seconds after MISSILE_LAUNCHED (25s intercept window + 2s buffer).
+  // If pendingAttack still exists, the defender ran out of time — resolve
+  // the hit in the attacker's favour and broadcast the result.
+
+  async alarm(): Promise<void> {
+    const state = await this.#loadState();
+    const attack = state.pendingAttack;
+    if (!attack) return; // already resolved normally — nothing to do
+
+    // Force-resolve: attacker wins, board is updated, turn advances.
+    const result = resolveHit(state, attack.attackerId, attack.target, attack.missileId);
+    await this.#saveState(state);
+
+    this.#broadcast(
+      makeResolveHit(
+        attack.missileId,
+        attack.target,
+        result.result,
+        state.currentTurnId ?? attack.attackerId,
+        result.isGameOver,
+        false, // defender did not decode — time expired
+        result.winnerId ?? undefined,
+      ),
+      null,
+    );
+
+    this.#sendSyncToAll(state);
   }
 
   // ── Game event handlers ────────────────────────────────────────────────────
@@ -192,15 +212,14 @@ export class GameRoomArbitrator implements DurableObject {
       }
       this.#sendSyncToAll(state);
     } else {
-      // One player placed ships — acknowledge only to them so they see the
-      // "waiting" state, but keep opponent's view unchanged.
+      // Only one player is ready — send sync just to them.
       this.#sendToPlayer(
         playerId,
         makeSyncState(
           state.phase,
           getOwnBoard(state, playerId),
           getEnemyBoard(state, playerId),
-          [],
+          state.activeMissiles,
           state.currentTurnId === playerId,
           state.winnerId ?? undefined,
         ),
@@ -280,8 +299,12 @@ export class GameRoomArbitrator implements DurableObject {
       return;
     }
 
+    // recordMorseSequence also pushes to state.activeMissiles.
     recordMorseSequence(state, missileId, morseSequence as string[]);
     await this.#saveState(state);
+
+    // Set alarm: if defender doesn't respond within 25s, auto-resolve via alarm().
+    await this.#state.storage.setAlarm(Date.now() + 27_000);
 
     const opponentId = getOpponentId(state, playerId);
     if (opponentId) {
@@ -333,12 +356,13 @@ export class GameRoomArbitrator implements DurableObject {
     );
 
     if (resolveResult === null) {
-      // Wrong decode, attempts remain — save and let client retry.
-      // Send a lightweight error so the defender gets immediate "wrong" feedback.
       ws.send(makeError("MORSE_MISMATCH", "Incorrect decode — try again"));
       await this.#saveState(state);
       return;
     }
+
+    // Missile resolved — cancel the alarm so it doesn't fire after the fact.
+    await this.#state.storage.deleteAlarm();
 
     await this.#saveState(state);
 
@@ -396,7 +420,7 @@ export class GameRoomArbitrator implements DurableObject {
           state.phase,
           getOwnBoard(state, player.id),
           getEnemyBoard(state, player.id),
-          [],
+          state.activeMissiles,
           state.currentTurnId === player.id,
           state.winnerId ?? undefined,
         ),

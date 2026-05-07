@@ -169,6 +169,7 @@ export function GameClientWrapper({ roomId }: Props) {
   }, [phase, isMyTurn, incomingMissileId]);
 
   useEffect(() => {
+    useGameStore.getState().reset();
     const nextPlayerId = getOrCreatePlayerId();
     const client = getGameClient();
     const engine = new MorseEngine();

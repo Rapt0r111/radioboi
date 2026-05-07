@@ -11,3 +11,5 @@ dist/
 bun.lock
 Thumbs.db
 desktop.ini
+
+.agents

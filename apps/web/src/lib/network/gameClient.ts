@@ -210,6 +210,7 @@ export class GameClient {
         store.interceptMissile(event.payload.missileId);
         if (event.payload.isGameOver) {
           store.setPhase("gameOver");
+          useGameStore.setState({ winnerId: event.payload.winnerId ?? null }); // ← добавить
         }
         break;
 
@@ -251,7 +252,7 @@ export function getGameClient(): GameClient {
   if (typeof window === "undefined") {
     throw new Error(
       "getGameClient() must only be called in browser environments. " +
-        "Use dynamic import or wrap in useEffect.",
+      "Use dynamic import or wrap in useEffect.",
     );
   }
   _instance ??= new GameClient();

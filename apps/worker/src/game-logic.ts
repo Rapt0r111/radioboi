@@ -55,6 +55,8 @@ export type RoomState = {
   winnerId: string | null;
   /** Sequential shot log for history panel. */
   shotLog: ShotLogEntry[];
+  /** Missiles currently in flight (populated on MISSILE_LAUNCHED, cleared on resolveHit). */
+  activeMissiles: Array<{ id: string; target: Coord; launchedAt: number }>;
 };
 
 export type ShotLogEntry = {
@@ -77,6 +79,7 @@ export function createRoomState(roomId: string): RoomState {
     pendingAttack: null,
     winnerId: null,
     shotLog: [],
+    activeMissiles: [],
   };
 }
 
@@ -88,7 +91,6 @@ export function addPlayer(
 ): { ok: true } | { ok: false; reason: "ROOM_FULL" | "ALREADY_JOINED" } {
   if (state.players.some((p) => p.id === player.id)) {
     // Reconnect — update wsTag but don't duplicate.
-    // FIX(noNonNullAssertion): extract element to a local variable and guard.
     const idx = state.players.findIndex((p) => p.id === player.id);
     const existing = state.players[idx];
     if (existing) {
@@ -140,9 +142,6 @@ export function applyShipsPlaced(
   // Both ready → move to battle.
   if (state.players.length === 2 && state.players.every((p) => p.isReady)) {
     state.phase = "battle";
-    // FIX(noNonNullAssertion): use optional chaining; result is `string | undefined`.
-    // At this point state.players.length === 2 so the player exists, but TS
-    // cannot verify that through a dynamic index, so we fall back to null.
     const randomIdx = Math.random() < 0.5 ? 0 : 1;
     state.currentTurnId = state.players[randomIdx]?.id ?? null;
   }
@@ -181,7 +180,10 @@ export function prepareAttack(
   return { ok: true };
 }
 
-/** Stores the Morse sequence; called after client-side Morse input. */
+/**
+ * Stores the Morse sequence and registers the missile as active.
+ * Called after the attacker's Morse input is validated.
+ */
 export function recordMorseSequence(
   state: RoomState,
   missileId: string,
@@ -191,6 +193,14 @@ export function recordMorseSequence(
     return { ok: false, reason: "NO_PENDING_ATTACK" };
   }
   state.pendingAttack.morseSequence = morseSequence;
+
+  // Register missile as in-flight so SYNC_STATE can restore it on reconnect.
+  state.activeMissiles.push({
+    id: missileId,
+    target: state.pendingAttack.target,
+    launchedAt: Date.now(),
+  });
+
   return { ok: true };
 }
 
@@ -209,10 +219,6 @@ export const MAX_INTERCEPT_ATTEMPTS = 3;
  * @param decodedCoord  What the defender decoded.
  * @param forceResolve  True when max attempts exhausted — skip decode check.
  * @returns null if the attempt is wrong AND attempts remain; ResolveResult otherwise.
- *
- * FIX(noUnusedFunctionParameters): defenderId is intentionally unused — the
- * server validates the missile ID against the pending attack instead of the
- * player ID. Prefixed with _ to signal this is deliberate.
  */
 export function processInterceptAttempt(
   state: RoomState,
@@ -230,32 +236,32 @@ export function processInterceptAttempt(
   const decodedCorrectly = forceResolve || decodedCoord === attack.target;
 
   if (!decodedCorrectly && attemptNumber < MAX_INTERCEPT_ATTEMPTS) {
-    // Wrong decode, attempts remain — return null to let client retry
     return null;
   }
 
-  // Resolve the hit regardless of decode accuracy
-  return resolveHit(state, attack.attackerId, attack.target);
+  // Required param order: (state, attackerId, target, missileId)
+  return resolveHit(state, attack.attackerId, attack.target, attack.missileId);
 }
 
 /**
  * Core hit-resolution logic.
- * Mutates the opponent's board in-place and clears pendingAttack.
+ * Mutates the opponent's board in-place, clears pendingAttack,
+ * and removes the missile from activeMissiles.
+ *
+ * Parameter order: target before optional missileId, so TypeScript
+ * does not complain about "required after optional".
  */
-export function resolveHit(state: RoomState, attackerId: string, target: Coord): ResolveResult {
-  // FIX(noNonNullAssertion): guard against null instead of using !
-  // resolveHit is only called during battle phase (2 players present), so
-  // opponentId is never null in practice. The guard satisfies TypeScript and
-  // protects against future misuse.
+export function resolveHit(
+  state: RoomState,
+  attackerId: string,
+  target: Coord,
+  missileId?: string,
+): ResolveResult {
   const opponentId = getOpponentId(state, attackerId);
   if (!opponentId) {
-    // Unreachable in normal play — return a safe no-op result.
     return { result: "miss", isGameOver: false, winnerId: null };
   }
 
-  // FIX(noAssignInExpressions): separate board initialisation from the read.
-  // `state.boards[opponentId] ?? (state.boards[opponentId] = {})` is an
-  // assignment inside an expression, which biome forbids as confusing.
   const existingBoard = state.boards[opponentId];
   const opponentBoard: BoardMap = existingBoard ?? {};
   if (!existingBoard) {
@@ -277,14 +283,12 @@ export function resolveHit(state: RoomState, attackerId: string, target: Coord):
   } else {
     opponentBoard[target] = "hit";
 
-    // Check if the ship is now sunk
     const ship = opponentShips.find((s) => s.coords.includes(target));
     if (ship) {
       const allHit = ship.coords.every(
         (c) => opponentBoard[c] === "hit" || opponentBoard[c] === "sunk",
       );
       if (allHit) {
-        // Mark all cells of this ship as sunk
         for (const c of ship.coords) {
           opponentBoard[c] = "sunk";
         }
@@ -298,10 +302,8 @@ export function resolveHit(state: RoomState, attackerId: string, target: Coord):
     }
   }
 
-  // Log the shot
   state.shotLog.push({ attackerId, target, result, ts: Date.now() });
 
-  // Check game over
   const allSunk = opponentShips.length > 0 && opponentShips.every((s) => s.isSunk);
   const isGameOver = allSunk;
   const winnerId = isGameOver ? attackerId : null;
@@ -311,13 +313,16 @@ export function resolveHit(state: RoomState, attackerId: string, target: Coord):
     state.winnerId = winnerId;
   }
 
-  // Advance turn (hit/sunk = attacker gets another turn; miss = opponent's turn)
   if (!isGameOver) {
     state.currentTurnId = result === "miss" ? opponentId : attackerId;
   }
 
-  // Clear pending attack
   state.pendingAttack = null;
+
+  // Remove from activeMissiles when known.
+  if (missileId !== undefined) {
+    state.activeMissiles = state.activeMissiles.filter((m) => m.id !== missileId);
+  }
 
   return { result, isGameOver, winnerId };
 }
@@ -345,7 +350,6 @@ export function getEnemyBoard(state: RoomState, viewerId: string): BoardMap {
     if (cell === "hit" || cell === "miss" || cell === "sunk") {
       masked[coord] = cell;
     }
-    // 'ship' cells are NOT included — opponent cannot see unshot ships
   }
 
   return masked;
