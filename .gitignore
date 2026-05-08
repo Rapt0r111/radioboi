@@ -4,6 +4,8 @@ dist/
 .open-next/
 .turbo/
 .wrangler/
+playwright-report/
+test-results/
 .env
 .env.local
 .env.*.local

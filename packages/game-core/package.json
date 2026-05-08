@@ -11,6 +11,9 @@
       "default": "./src/index.ts"
     }
   },
+  "scripts": {
+    "test": "bun test tests"
+  },
   "devDependencies": {
     "typescript": "latest"
   }
