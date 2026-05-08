@@ -1,5 +1,8 @@
 // packages/game-core/src/network-types.ts
-// PATCHED: see comment [FIX #2] on AttackPrepEvent
+//
+// FIX (HIGH): Добавлен тип ClientShotLogEntry и поле shotLog в SyncStateEvent.
+// До этого SYNC_STATE не содержал историю выстрелов, и при реконнекте
+// пользователь видел пустую панель истории независимо от прогресса игры.
 
 import type { Board, Coordinate, GamePhase, Missile } from "./types";
 
@@ -44,13 +47,6 @@ export type ShipsPlacedEvent = {
   };
 };
 
-// [FIX #2] — added `missileId` to AttackPrepEvent payload.
-//
-// The server's #handleAttackPrep handler reads BOTH `target` and `missileId`
-// from the payload and passes them to prepareAttack(). Without `missileId`
-// in the type, any client following the type contract would omit it, causing
-// the server to return INVALID_COORDINATE on every ATTACK_PREP — making the
-// battle phase permanently broken.
 export type AttackPrepEvent = {
   type: typeof GameEventType.ATTACK_PREP;
   payload: {
@@ -125,6 +121,18 @@ export type ResolveHitEvent = {
   };
 };
 
+/**
+ * Запись об одном выстреле в истории ходов (перспектива получателя SYNC_STATE).
+ * Формируется сервером — `by` уже содержит правильную сторону для конкретного игрока.
+ */
+export type ClientShotLogEntry = {
+  by: "us" | "them";
+  /** Читаемая координата, например "АБВ-5" */
+  coord: string;
+  result: HitResult;
+  ts: number;
+};
+
 export type SyncStateEvent = {
   type: typeof GameEventType.SYNC_STATE;
   payload: {
@@ -134,6 +142,12 @@ export type SyncStateEvent = {
     activeMissiles: Missile[];
     isMyTurn: boolean;
     winnerId?: string | undefined;
+    /**
+     * История выстрелов с точки зрения получателя.
+     * Всегда присутствует (пустой массив [] если ходов ещё не было).
+     * Используется для восстановления панели истории при реконнекте.
+     */
+    shotLog: ClientShotLogEntry[];
   };
 };
 

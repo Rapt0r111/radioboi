@@ -1,23 +1,28 @@
 // apps/web/src/components/ShipPlacementScreen.tsx
 "use client";
-
-// Экран расстановки кораблей.
 //
-// FIX (CRITICAL): Заменены все вызовы validatePlacement → validateGeometry
-// в handleCellClick и toggleOrientation. Ранее validatePlacement проверял
-// fleet composition, из-за чего любая попытка разместить корабль после его
-// удаления немедленно падала с ошибкой WRONG_FLEET — даже при корректной
-// геометрии. validateGeometry проверяет только координаты, линейность,
-// перекрытия и касания; fleet composition проверяется только в handleReady.
+// FIX (HIGH): Устранено дублирование COLUMNS/ROWS — теперь импортируем из @radioboi/game-core.
+// Раньше компонент определял COLS локально — при изменении координатной системы в
+// game-core расстановка бы сломалась без ошибок компилятора (тихое расхождение).
+//
+// FIX (MEDIUM): randomPlacement теперь предупреждает если не удалось разместить корабль
+// за 500 попыток — вместо тихого возврата частичного флота.
+//
+// FIX (MEDIUM): toggleOrientation показывает ошибку если поворот невозможен
+// (корабль упирается в границу или в другой корабль).
+//
+// FIX (EXISTING, kept): validateGeometry для cell click / validatePlacement для Ready.
 
 import {
   type Board,
+  COLUMNS,
   type Coordinate,
   GameEventType,
   makeCoordinate,
   REQUIRED_FLEET,
-  validateGeometry,   // ← geometry-only для cell click / toggle
-  validatePlacement,  // ← полная проверка только при Ready
+  ROWS,
+  validateGeometry,
+  validatePlacement,
 } from "@radioboi/game-core";
 import { useCallback, useState } from "react";
 import type { GameClient } from "@/src/lib/network/gameClient";
@@ -34,16 +39,14 @@ type PlacedShip = {
   isHorizontal: boolean;
 };
 
-// ── Column helpers ─────────────────────────────────────────────────────────────
-
-const COLS = ["АБВ","ГДЕ","ЖЗИ","ЙКЛ","МНО","ПРС","ТУФ","ХЦЧ","ШЩЪ","ЫЭЮ"] as const;
-type ColTriplet = typeof COLS[number];
+// ── Column/row index helpers (теперь используют COLUMNS/ROWS из game-core) ─────
 
 function getColIndex(coord: Coordinate): number {
-  return COLS.indexOf(coord.slice(0, 3) as ColTriplet);
+  return COLUMNS.indexOf(coord.slice(0, 3) as typeof COLUMNS[number]);
 }
+
 function getRowIndex(coord: Coordinate): number {
-  return Number(coord.slice(3, 6));
+  return ROWS.indexOf(coord.slice(3, 6) as typeof ROWS[number]);
 }
 
 // ── Fleet builder ──────────────────────────────────────────────────────────────
@@ -82,6 +85,11 @@ function getAdjacentSet(coords: Coordinate[]): Set<Coordinate> {
 
 // ── Random placement ───────────────────────────────────────────────────────────
 
+/**
+ * Случайно расставляет флот.
+ * FIX: если корабль не удалось разместить за 500 попыток,
+ * выбрасывает ошибку вместо тихого возврата частичного флота.
+ */
 function randomPlacement(): PlacedShip[] {
   const fleet = buildFleet();
   const occupied = new Set<Coordinate>();
@@ -117,6 +125,13 @@ function randomPlacement(): PlacedShip[] {
         for (const adj of getAdjacentSet(coords)) forbidden.add(adj);
         placed = true;
       }
+    }
+
+    // FIX: явная ошибка вместо тихого частичного флота
+    if (!placed) {
+      throw new Error(
+        `randomPlacement: не удалось разместить ${ship.size}-палубный за 500 попыток. Попробуйте ещё раз.`
+      );
     }
   }
   return fleet;
@@ -162,7 +177,9 @@ type Props = {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }: Props) {
-  const [ships, setShips] = useState<PlacedShip[]>(() => randomPlacement());
+  const [ships, setShips] = useState<PlacedShip[]>(() => {
+    try { return randomPlacement(); } catch { return buildFleet(); }
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedShipId, setSelectedShipId] = useState<ShipId | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -170,8 +187,6 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
   const board = buildBoard(ships);
   const allPlaced = ships.every((s) => s.coords.length === s.size);
 
-  // FIX: используем validateGeometry (без проверки fleet composition).
-  // validatePlacement вызывается только в handleReady — там нужна полная проверка.
   const handleCellClick = useCallback((coord: Coordinate) => {
     if (!selectedShipId) return;
     setShips((prev) => {
@@ -180,7 +195,6 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
       const newCoords = buildCoords(coord, ship.size, ship.isHorizontal);
       if (!newCoords) { setError("Корабль выходит за границы поля"); return prev; }
       const updated = prev.map((s) => s.id === selectedShipId ? { ...s, coords: newCoords } : s);
-      // Проверяем только геометрию, НЕ состав флота — иначе WRONG_FLEET при частичной расстановке
       const toValidate = updated.filter((s) => s.coords.length > 0).map((s) => ({ coords: s.coords }));
       const result = validateGeometry(toValidate);
       if (!result.ok) { setError("Нельзя: корабли пересекаются или соприкасаются"); return prev; }
@@ -190,7 +204,6 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
     setSelectedShipId(null);
   }, [selectedShipId]);
 
-  // FIX: то же — validateGeometry при смене ориентации
   const toggleOrientation = useCallback((id: ShipId) => {
     setShips((prev) => {
       const updated = prev.map((s) => {
@@ -200,11 +213,19 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
         const first = s.coords[0];
         if (!first) return s;
         const newCoords = buildCoords(first, s.size, isH);
-        if (!newCoords) return s;
+        if (!newCoords) {
+          // FIX: устанавливаем ошибку — поворот невозможен (выходит за границу)
+          setError("Поворот невозможен: корабль выходит за границу");
+          return s;
+        }
         return { ...s, isHorizontal: isH, coords: newCoords };
       });
       const toValidate = updated.filter((s) => s.coords.length > 0).map((s) => ({ coords: s.coords }));
-      if (!validateGeometry(toValidate).ok) return prev;
+      if (!validateGeometry(toValidate).ok) {
+        setError("Поворот невозможен: корабли соприкасаются");
+        return prev;
+      }
+      setError(null);
       return updated;
     });
   }, []);
@@ -212,9 +233,9 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
   const removeShip = useCallback((id: ShipId) => {
     setShips((prev) => prev.map((s) => s.id === id ? { ...s, coords: [] } : s));
     setSelectedShipId(null);
+    setError(null);
   }, []);
 
-  // FIX: handleReady использует validatePlacement с полной проверкой флота
   const handleReady = () => {
     if (!transport || !allPlaced || isSubmitting) return;
     const toValidate = ships.map((s) => ({ coords: s.coords }));
@@ -225,6 +246,16 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
       payload: { ships: ships.map((s) => ({ coords: s.coords })) },
     });
     onPlaced();
+  };
+
+  const handleRandomize = () => {
+    try {
+      setShips(randomPlacement());
+      setSelectedShipId(null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка случайной расстановки");
+    }
   };
 
   const unplaced = ships.filter((s) => s.coords.length === 0);
@@ -354,7 +385,7 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
           <div className="flex flex-col gap-2">
             <button
               type="button"
-              onClick={() => { setShips(randomPlacement()); setSelectedShipId(null); setError(null); }}
+              onClick={handleRandomize}
               className="
                 rounded border border-ocean-800 px-4 py-2
                 font-mono text-[10px] uppercase tracking-widest

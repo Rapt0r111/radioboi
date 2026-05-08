@@ -1,5 +1,10 @@
 // apps/web/src/store/gameStore.ts
 "use client";
+//
+// FIX (HIGH): SyncSnapshot теперь включает shotLog из SYNC_STATE.
+// syncFromServer восстанавливает историю при реконнекте: если сервер прислал
+// более длинный лог — берём его; если живой лог длиннее (нормальная игра) —
+// оставляем текущий. Это предотвращает затирание лога при каждом SYNC_STATE.
 
 import type { Board, Coordinate, GamePhase, Missile } from "@radioboi/game-core";
 import { create } from "zustand";
@@ -12,7 +17,7 @@ import { create } from "zustand";
  */
 export type ShotLogEntry = {
   by: "us" | "them";
-  coord: string;   // читаемая координата для отображения (например "B5")
+  coord: string;
   result: "hit" | "miss" | "sunk";
   ts: number;
 };
@@ -29,12 +34,17 @@ type GameState = {
   shotLog: ShotLogEntry[];
 };
 
+/**
+ * FIX: Добавлено поле shotLog — история выстрелов из SYNC_STATE.
+ * Опционально для обратной совместимости (старые SYNC_STATE без shotLog).
+ */
 type SyncSnapshot = {
   phase: GamePhase;
   ownBoard: Board;
   enemyBoard: Board;
   isMyTurn: boolean;
   winnerId?: string | undefined;
+  shotLog?: ShotLogEntry[] | undefined;
 };
 
 type GameActions = {
@@ -66,15 +76,6 @@ function makeInitialState(): GameState {
     winnerId: null,
     shotLog: [],
   };
-}
-
-// ── Хелпер: читаемая координата из branded Coordinate ──────────────────────────
-// Coordinate = "АБВ005" → отображаем как "АБВ-5" для компактности
-function formatCoordForLog(coord: Coordinate): string {
-  // Слог (3 символа) + разряд (3 символа "005") → "АБВ-5"
-  const col = coord.slice(0, 3);
-  const rowNum = Number(coord.slice(3, 6));
-  return `${col}-${rowNum}`;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -113,8 +114,31 @@ export const useGameStore = create<GameStore>((set) => ({
 
   toggleTurn() { set((state) => ({ isMyTurn: !state.isMyTurn })); },
 
-  syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn, winnerId }) {
-    set({ phase, ownBoard, enemyBoard, isMyTurn, winnerId: winnerId ?? null });
+  /**
+   * FIX (HIGH): Восстанавливает историю выстрелов из серверного снапшота.
+   *
+   * Логика мержа shotLog:
+   * - Если сервер прислал более длинный лог (реконнект после нескольких ходов)
+   *   → берём серверный (восстановление истории).
+   * - Если живой лог не короче серверного (нормальная игра, SYNC_STATE после
+   *   каждого RESOLVE_HIT) → оставляем текущий.
+   *
+   * Это предотвращает двойную запись при нормальной игре:
+   * addShotEntry уже добавил запись → SYNC_STATE приходит с тем же количеством
+   * → мерж не перезаписывает (lengths equal → keep current).
+   */
+  syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn, winnerId, shotLog }) {
+    set((state) => ({
+      phase,
+      ownBoard,
+      enemyBoard,
+      isMyTurn,
+      winnerId: winnerId ?? null,
+      shotLog:
+        shotLog !== undefined && shotLog.length > state.shotLog.length
+          ? shotLog
+          : state.shotLog,
+    }));
   },
 
   addShotEntry(entry) {
@@ -134,4 +158,11 @@ export const selectIsMyTurn = (s: GameStore) => s.isMyTurn;
 export const selectWinnerId = (s: GameStore) => s.winnerId;
 export const selectShotLog = (s: GameStore) => s.shotLog;
 
-export { formatCoordForLog };
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** "АБВ005" → "АБВ-5" для отображения в истории ходов */
+export function formatCoordForLog(coord: Coordinate): string {
+  const col = coord.slice(0, 3);
+  const rowNum = Number(coord.slice(3, 6));
+  return `${col}-${rowNum}`;
+}

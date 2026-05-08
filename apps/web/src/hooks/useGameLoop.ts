@@ -1,8 +1,13 @@
 // apps/web/src/hooks/useGameLoop.ts
-// FIXED: stopSync handler now includes winnerId in snapshot.
-// Without this fix, #applyToStore sets winnerId from SYNC_STATE payload,
-// then #dispatch fires this handler which calls syncFromServer WITHOUT winnerId,
-// immediately overwriting winnerId to null. GameOverScreen always showed "НИЧЬЯ".
+//
+// FIX (HIGH): Устранён двойной вызов syncFromServer при каждом SYNC_STATE.
+//   Ранее: #applyToStore в gameClient.ts вызывал syncFromServer(payload),
+//   затем этот handler вызывал syncFromServer ещё раз. Второй вызов был
+//   безвредным (идемпотентным), но избыточным и запутывал flow.
+//   Теперь handler обрабатывает только activeMissiles и runtime state reset —
+//   то, что syncFromServer не затрагивает.
+//
+// FIX (EXISTING, kept): stopSync handler forwards winnerId in snapshot.
 "use client";
 
 import {
@@ -29,7 +34,6 @@ export type GameLoopRuntimeState = {
   incomingMissileDeadline: number | null;
   incomingMissileId: string | null;
   incomingMissileSequence: number[] | null;
-  /** Set to true when the server confirmed the last intercept decode was wrong. */
   lastInterceptWrong: boolean;
 };
 
@@ -46,7 +50,6 @@ const DEFAULT_RUNTIME_STATE: GameLoopRuntimeState = {
 
 function readRuntimeState(): GameLoopRuntimeState {
   const state = useGameStore.getState() as RuntimeCarrier;
-
   return {
     incomingMissileAttempts: state.incomingMissileAttempts ?? 0,
     incomingMissileDeadline: state.incomingMissileDeadline ?? null,
@@ -58,32 +61,25 @@ function readRuntimeState(): GameLoopRuntimeState {
 
 function encodeToken(token: string): number[] {
   const sequence: number[] = [];
-
   for (const [index, symbol] of [...token].entries()) {
     if (index > 0) {
       sequence.push(ELEMENT_GAP);
     }
-
     sequence.push(symbol === "." ? DOT_UNIT : DASH_UNIT);
   }
-
   return sequence;
 }
 
 function toPlaybackSequence(sequence: readonly MorseSymbol[]): number[] {
   const flat = sequence.join("");
-
   for (let splitAt = 1; splitAt < flat.length; splitAt++) {
     const left = flat.slice(0, splitAt);
     const right = flat.slice(splitAt);
-
     if (MORSE_REVERSE[left] === undefined || MORSE_REVERSE[right] === undefined) {
       continue;
     }
-
     return [...encodeToken(left), CHARACTER_GAP, ...encodeToken(right)];
   }
-
   return encodeToken(flat);
 }
 
@@ -164,29 +160,16 @@ export function useGameLoop(
       resetGameLoopRuntimeState();
     });
 
+    // FIX (HIGH): Убран двойной вызов syncFromServer.
+    // gameClient.ts → #applyToStore уже вызвал store.syncFromServer(event.payload)
+    // до того как этот handler запустился. Повторный вызов здесь был избыточным.
+    //
+    // Остаётся только то, что syncFromServer НЕ делает:
+    //   1. Обновление activeMissiles (не входит в SyncSnapshot)
+    //   2. Сброс runtime state при отсутствии ракет
     const stopSync = transport.on(GameEventType.SYNC_STATE, (event) => {
-      // ── CRITICAL FIX ─────────────────────────────────────────────────────────
-      // winnerId MUST be forwarded here. The sequence inside gameClient.ts is:
-      //   1. #applyToStore → syncFromServer(event.payload)  ← sets winnerId ✓
-      //   2. #dispatch     → this handler fires
-      // Previously this handler called syncFromServer WITHOUT winnerId, which
-      // passed `undefined` to the destructured param → `winnerId ?? null = null`,
-      // instantly overwriting the correct value. GameOverScreen always showed "НИЧЬЯ".
-      const snapshot: {
-        enemyBoard: GameStoreState["enemyBoard"];
-        isMyTurn: boolean;
-        ownBoard: GameStoreState["ownBoard"];
-        phase: GamePhase;
-        winnerId?: string | undefined;
-      } = {
-        enemyBoard: event.payload.enemyBoard,
-        isMyTurn: event.payload.isMyTurn,
-        ownBoard: event.payload.ownBoard,
-        phase: event.payload.phase,
-        winnerId: event.payload.winnerId, // ← THE FIX
-      };
-
-      useGameStore.getState().syncFromServer(snapshot);
+      // syncFromServer вызван в #applyToStore — не повторяем.
+      // Устанавливаем activeMissiles — syncFromServer его не трогает.
       useGameStore.setState({
         activeMissiles: event.payload.activeMissiles as Missile[],
       });
@@ -201,7 +184,6 @@ export function useGameLoop(
         const runtime = readRuntimeState();
         if (runtime.incomingMissileId !== null) {
           patchGameLoopRuntimeState({ lastInterceptWrong: true });
-
           setTimeout(() => {
             patchGameLoopRuntimeState({ lastInterceptWrong: false });
           }, 700);
@@ -218,7 +200,6 @@ export function useGameLoop(
     };
 
     cleanupRef.current = cleanup;
-
     return cleanup;
   }, [morseEngine, radarWorker, transport]);
 
