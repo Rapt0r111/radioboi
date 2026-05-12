@@ -1,6 +1,5 @@
 // packages/game-core/src/index.ts
 
-// ── Coordinates ───────────────────────────────────────────────────────────────
 export {
   COLUMNS,
   getAdjacentCoordinates,
@@ -9,9 +8,12 @@ export {
   parseCoordinate,
   ROWS,
 } from "./coordinates";
+
 export type {
+  AttackCooldownUpdateEvent,
   AttackPrepEvent,
   ClientGameEvent,
+  ClientShotLogEntry,
   ErrorEvent,
   GameEvent,
   GameStartedEvent,
@@ -24,18 +26,15 @@ export type {
   MorseSymbol,
   PlayerJoinedEvent,
   ResolveHitEvent,
+  RoomSettings,
   ServerGameEvent,
   ShipsPlacedEvent,
   SyncStateEvent,
 } from "./network-types";
-// ── Network types ─────────────────────────────────────────────────────────────
-export {
-  ErrorCode,
-  GameEventType,
-} from "./network-types";
+
+export { ErrorCode, GameEventType } from "./network-types";
 
 export type { PlacementError, PlacementResult } from "./ship-placement";
-// ── Ship placement ────────────────────────────────────────────────────────────
 export {
   buildBoardFromShips,
   buildShipSets,
@@ -48,8 +47,9 @@ export {
   morseLetterToColIndex,
   morseNotationToCoordinate,
   REQUIRED_FLEET,
-  validateGeometry,   // ← NEW: geometry-only for mid-placement checks
-  validatePlacement,  // ← full check for final Ready button
+  validateGeometry,
+  validatePlacement,
 } from "./ship-placement";
-// ── Core types ────────────────────────────────────────────────────────────────
-export type { Board, CellState, Coordinate, GamePhase, Missile } from "./types";
+
+export type { BattleMode, Board, CellState, Coordinate, GamePhase, Missile, RoomSettings } from "./types";
+export { DEFAULT_ROOM_SETTINGS } from "./types";

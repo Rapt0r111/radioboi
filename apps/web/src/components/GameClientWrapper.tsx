@@ -1,12 +1,12 @@
 "use client";
-
 // apps/web/src/components/GameClientWrapper.tsx
 //
-// FIX: missileInFlight переведён с React state на useRef.
-// Причина: setMissileInFlight(true) в useEffectEvent не обновляет state
-// синхронно — повторный вызов handleSequenceComplete до следующего рендера
-// видит stale false и шлёт второй ATTACK_PREP, вызывая ATTACK_ALREADY_PENDING
-// на сервере, а следующий MISSILE_LAUNCHED получает NO_PENDING_ATTACK.
+// ASYNC MODE additions:
+//   - Reads settings.battleMode from store
+//   - canSelectEnemyTarget logic differs: async uses !isOnCooldown instead of isMyTurn
+//   - Cooldown countdown shown in header badge
+//   - "Reload" indicator replaces "Your turn" in async mode
+//   - Both incoming intercept AND own attack can be active simultaneously in async
 
 import {
   type Coordinate,
@@ -37,21 +37,21 @@ import {
 import type { GameClient } from "@/src/lib/network/gameClient";
 import { destroyGameClient, getGameClient } from "@/src/lib/network/gameClient";
 import {
+  selectCooldownExpiresAt,
   selectEnemyBoard,
   selectIsMyTurn,
   selectOwnBoard,
   selectPhase,
+  selectSettings,
   useGameStore,
 } from "@/src/store/gameStore";
 
-const PLAYER_ID_KEY = "radioboi:playerId";
+const PLAYER_ID_KEY         = "radioboi:playerId";
 const INTERCEPT_ATTEMPT_LIMIT = 3;
-const PLACED_KEY_PREFIX = "radioboi:placed:";
+const PLACED_KEY_PREFIX     = "radioboi:placed:";
 const ATTACKER_TURN_TIMEOUT_S = 60;
 
-type Props = {
-  roomId: string;
-};
+type Props = { roomId: string };
 
 type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   incomingMissileAttempts?: number;
@@ -59,26 +59,25 @@ type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   incomingMissileId?: string | null;
   incomingMissileSequence?: number[] | null;
   lastInterceptWrong?: boolean;
-  winnerId?: string;
 };
 
 function getOrCreatePlayerId(): string {
-  const storedPlayerId = sessionStorage.getItem(PLAYER_ID_KEY);
-  if (storedPlayerId !== null) return storedPlayerId;
-  const nextPlayerId = crypto.randomUUID();
-  sessionStorage.setItem(PLAYER_ID_KEY, nextPlayerId);
-  return nextPlayerId;
+  const stored = sessionStorage.getItem(PLAYER_ID_KEY);
+  if (stored !== null) return stored;
+  const next = crypto.randomUUID();
+  sessionStorage.setItem(PLAYER_ID_KEY, next);
+  return next;
 }
 
 function toMorseSequence(coord: Coordinate): MorseSymbol[] {
   const { digit, letter } = coordinateToMorseNotation(coord);
   const letterToken = MORSE_ALPHABET[letter];
-  const digitToken = MORSE_ALPHABET[digit];
+  const digitToken  = MORSE_ALPHABET[digit];
   if (letterToken === undefined || digitToken === undefined) {
     throw new Error(`Cannot encode coordinate ${coord} to Morse`);
   }
   return [...`${letterToken}${digitToken}`].filter(
-    (symbol): symbol is MorseSymbol => symbol === "." || symbol === "-",
+    (s): s is MorseSymbol => s === "." || s === "-",
   );
 }
 
@@ -97,82 +96,91 @@ function formatMorseForCoord(coord: Coordinate | null): string {
   if (coord === null) return "—";
   const { digit, letter } = coordinateToMorseNotation(coord);
   const letterToken = MORSE_ALPHABET[letter] ?? "?";
-  const digitToken = MORSE_ALPHABET[digit] ?? "?";
+  const digitToken  = MORSE_ALPHABET[digit]  ?? "?";
   return `${letter} ${letterToken} · ${digit} ${digitToken}`;
 }
 
-// ── Компонент ──────────────────────────────────────────────────────────────────
+// ── Component ──────────────────────────────────────────────────────────────────
 
 export function GameClientWrapper({ roomId }: Props) {
-  const phase = useGameStore(selectPhase);
-  const enemyBoard = useGameStore(selectEnemyBoard);
-  const isMyTurn = useGameStore(selectIsMyTurn);
-  const ownBoard = useGameStore(selectOwnBoard);
-  const playerId = useGameStore((state) => state.playerId);
-  const setSession = useGameStore((state) => state.setSession);
+  const phase         = useGameStore(selectPhase);
+  const enemyBoard    = useGameStore(selectEnemyBoard);
+  const isMyTurn      = useGameStore(selectIsMyTurn);
+  const ownBoard      = useGameStore(selectOwnBoard);
+  const playerId      = useGameStore((s) => s.playerId);
+  const setSession    = useGameStore((s) => s.setSession);
+  const settings      = useGameStore(selectSettings);
+  const cooldownExpiresAt = useGameStore(selectCooldownExpiresAt);
+
+  const isAsync = settings.battleMode === "async";
 
   const incomingMissileAttempts = useGameStore(
-    (state) => (state as RuntimeCarrier).incomingMissileAttempts ?? 0,
+    (s) => (s as RuntimeCarrier).incomingMissileAttempts ?? 0,
   );
   const incomingMissileDeadline = useGameStore(
-    (state) => (state as RuntimeCarrier).incomingMissileDeadline ?? null,
+    (s) => (s as RuntimeCarrier).incomingMissileDeadline ?? null,
   );
   const incomingMissileId = useGameStore(
-    (state) => (state as RuntimeCarrier).incomingMissileId ?? null,
+    (s) => (s as RuntimeCarrier).incomingMissileId ?? null,
   );
   const incomingMissileSequence = useGameStore(
-    (state) => (state as RuntimeCarrier).incomingMissileSequence ?? null,
+    (s) => (s as RuntimeCarrier).incomingMissileSequence ?? null,
   );
   const lastInterceptWrong = useGameStore(
-    (state) => (state as RuntimeCarrier).lastInterceptWrong ?? false,
+    (s) => (s as RuntimeCarrier).lastInterceptWrong ?? false,
   );
 
-  const [morseEngine, setMorseEngine] = useState<MorseEngine | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [selectedTarget, setSelectedTarget] = useState<Coordinate | null>(null);
-  const [statusLine, setStatusLine] = useState(
-    "Выберите цель на вражеской сетке и передайте её по Морзе.",
+  const [morseEngine,       setMorseEngine]       = useState<MorseEngine | null>(null);
+  const [now,               setNow]               = useState(() => Date.now());
+  const [selectedTarget,    setSelectedTarget]    = useState<Coordinate | null>(null);
+  const [statusLine,        setStatusLine]        = useState(
+    isAsync
+      ? "Выберите цель и передайте по Морзе. В асинхронном режиме оба игрока атакуют одновременно."
+      : "Выберите цель на вражеской сетке и передайте её по Морзе.",
   );
-  const [transport, setTransport] = useState<GameClient | null>(null);
-  const [unitMs, setUnitMs] = useState(60);
+  const [transport,         setTransport]         = useState<GameClient | null>(null);
+  const [unitMs,            setUnitMs]            = useState(60);
   const [attackerTurnStart, setAttackerTurnStart] = useState<number | null>(null);
-
-  // FIX: useRef вместо useState для missileInFlight.
-  // useState обновляется асинхронно (батчинг рендеров), поэтому повторный
-  // вызов handleSequenceComplete до следующего рендера видит stale false
-  // и шлёт дублирующий ATTACK_PREP → ATTACK_ALREADY_PENDING на сервере.
-  // useRef обновляется синхронно — гонка устранена.
-  const missileInFlightRef = useRef(false);
-  // Оставляем derived state для UI (индикатор в заголовке), но как зеркало рефа
-  const [missileInFlightUI, setMissileInFlightUI] = useState(false);
-
-  const [hasPlaced, setHasPlaced] = useState(() => {
-    try { return sessionStorage.getItem(`${PLACED_KEY_PREFIX}${roomId}`) === "1"; } catch { return false; }
+  const [hasPlaced,         setHasPlaced]         = useState(() => {
+    try { return sessionStorage.getItem(`${PLACED_KEY_PREFIX}${roomId}`) === "1"; }
+    catch { return false; }
   });
 
-  const radarRef = useRef<RadarRef>(null);
+  const missileInFlightRef = useRef(false);
+  const [missileInFlightUI, setMissileInFlightUI] = useState(false);
+  const radarRef           = useRef<RadarRef>(null);
   const autoResolveMissileIdRef = useRef<string | null>(null);
+
   useGameLoop(transport, radarRef, morseEngine);
+
+  // ── Derived: cooldown ───────────────────────────────────────────────────────
+  const isOnCooldown = isAsync && cooldownExpiresAt !== null && now < cooldownExpiresAt;
+  const cooldownSecondsLeft = isOnCooldown && cooldownExpiresAt !== null
+    ? Math.ceil((cooldownExpiresAt - now) / 1000)
+    : null;
+
+  // ── Effects ─────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (phase === "battle") {
-      try { sessionStorage.removeItem(`${PLACED_KEY_PREFIX}${roomId}`); } catch { /* ignore */ }
+      try { sessionStorage.removeItem(`${PLACED_KEY_PREFIX}${roomId}`); } catch { /* noop */ }
     }
   }, [phase, roomId]);
 
   useEffect(() => {
-    if (phase === "battle" && isMyTurn && incomingMissileId === null) {
+    // Turn-based attacker timer
+    if (!isAsync && phase === "battle" && isMyTurn && incomingMissileId === null) {
       setAttackerTurnStart(Date.now());
     } else {
       setAttackerTurnStart(null);
     }
-  }, [phase, isMyTurn, incomingMissileId]);
+  }, [isAsync, phase, isMyTurn, incomingMissileId]);
 
   useEffect(() => {
     useGameStore.getState().reset();
     const nextPlayerId = getOrCreatePlayerId();
-    const client = getGameClient();
-    const engine = new MorseEngine();
+    const client       = getGameClient();
+    const engine       = new MorseEngine();
 
     setSession(nextPlayerId, roomId);
     setTransport(client);
@@ -191,46 +199,41 @@ export function GameClientWrapper({ roomId }: Props) {
     };
   }, [roomId, setSession]);
 
+  // Tick timer — runs when any countdown is active
   useEffect(() => {
     const needsTick =
       incomingMissileDeadline !== null ||
-      (attackerTurnStart !== null && isMyTurn);
+      (attackerTurnStart !== null && isMyTurn) ||
+      isOnCooldown;
     if (!needsTick) { setNow(Date.now()); return; }
-    const timerId = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(timerId);
-  }, [incomingMissileDeadline, attackerTurnStart, isMyTurn]);
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [incomingMissileDeadline, attackerTurnStart, isMyTurn, isOnCooldown]);
 
+  // Auto-resolve intercept on deadline
   useEffect(() => {
-    if (
-      !transport ||
-      incomingMissileId === null ||
-      incomingMissileDeadline === null
-    ) {
+    if (!transport || incomingMissileId === null || incomingMissileDeadline === null) {
       autoResolveMissileIdRef.current = null;
       return;
     }
-    if (
-      now < incomingMissileDeadline ||
-      autoResolveMissileIdRef.current === incomingMissileId
-    ) {
+    if (now < incomingMissileDeadline || autoResolveMissileIdRef.current === incomingMissileId) {
       return;
     }
     autoResolveMissileIdRef.current = incomingMissileId;
     patchGameLoopRuntimeState({ incomingMissileAttempts: INTERCEPT_ATTEMPT_LIMIT });
     transport.send({
+      type: GameEventType.INTERCEPT_ATTEMPT,
       payload: {
         attemptNumber: INTERCEPT_ATTEMPT_LIMIT,
         decodedCoord: makeCoordinate(9, 9),
         missileId: incomingMissileId,
       },
-      type: GameEventType.INTERCEPT_ATTEMPT,
     });
     setStatusLine("Время перехвата истекло. Ракета ушла на расчет результата.");
   }, [incomingMissileDeadline, incomingMissileId, now, transport]);
 
   const activeMissilesCount = useGameStore((s) => s.activeMissiles.length);
 
-  // Синхронно сбрасываем реф когда ракеты больше нет
   useEffect(() => {
     if (activeMissilesCount === 0) {
       missileInFlightRef.current = false;
@@ -239,69 +242,75 @@ export function GameClientWrapper({ roomId }: Props) {
   }, [activeMissilesCount]);
 
   useEffect(() => {
-    if (!isMyTurn || incomingMissileId !== null || phase !== "battle") {
-      // Сброс при смене хода — реф тоже очищаем
+    if (!isAsync && (!isMyTurn || incomingMissileId !== null || phase !== "battle")) {
       missileInFlightRef.current = false;
       setSelectedTarget(null);
     }
-  }, [incomingMissileId, isMyTurn, phase]);
+  }, [incomingMissileId, isAsync, isMyTurn, phase]);
+
+  // After cooldown expires, clear selected target so player can pick again
+  useEffect(() => {
+    if (isAsync && !isOnCooldown && phase === "battle") {
+      // Don't clear — let the player keep their selection through a cooldown
+    }
+  }, [isAsync, isOnCooldown, phase]);
+
+  // ── Morse sequence complete callback ─────────────────────────────────────────
 
   const handleSequenceComplete = useEffectEvent((coord: Coordinate) => {
     if (!transport) { setStatusLine("Транспорт ещё не поднят."); return; }
 
+    // Intercept takes priority regardless of mode
     if (incomingMissileId !== null) {
       const attemptNumber = incomingMissileAttempts + 1;
       patchGameLoopRuntimeState({
         incomingMissileAttempts: Math.min(attemptNumber, INTERCEPT_ATTEMPT_LIMIT),
       });
       transport.send({
-        payload: { attemptNumber, decodedCoord: coord, missileId: incomingMissileId },
         type: GameEventType.INTERCEPT_ATTEMPT,
+        payload: { attemptNumber, decodedCoord: coord, missileId: incomingMissileId },
       });
       setStatusLine(`Перехват ${attemptNumber}/${INTERCEPT_ATTEMPT_LIMIT}: ${formatCoord(coord)}.`);
       return;
     }
 
-    if (!isMyTurn) { setStatusLine("Сейчас не ваш ход."); return; }
+    // Turn-based checks
+    if (!isAsync && !isMyTurn) { setStatusLine("Сейчас не ваш ход."); return; }
+
+    // Async cooldown check
+    if (isAsync && isOnCooldown) {
+      setStatusLine(`Перезарядка — осталось ${cooldownSecondsLeft ?? "?"}с.`);
+      return;
+    }
+
     if (selectedTarget === null) { setStatusLine("Сначала отметьте цель на вражеской сетке."); return; }
     if (coord !== selectedTarget) {
       setStatusLine(`Передача не совпала. Ожидали ${formatCoord(selectedTarget)}.`);
       return;
     }
 
-    // FIX: проверяем реф синхронно — стale state здесь не проблема
-    if (missileInFlightRef.current) {
-      setStatusLine("Ракета в полёте. Ожидайте результата.");
-      return;
-    }
+    if (missileInFlightRef.current) { setStatusLine("Ракета в полёте. Ожидайте результата."); return; }
 
-    const missileId = crypto.randomUUID();
-    const timestamp = Date.now();
-    const morseSequence = toMorseSequence(coord);
-    const radarPoint = toRadarPoint(coord);
+    const missileId       = crypto.randomUUID();
+    const timestamp       = Date.now();
+    const morseSequence   = toMorseSequence(coord);
+    const radarPoint      = toRadarPoint(coord);
 
-    // Атомарно выставляем реф ДО отправки — любой повторный вызов в той же
-    // очереди микрозадач увидит true и не пошлёт второй ATTACK_PREP
     missileInFlightRef.current = true;
     setMissileInFlightUI(true);
 
     useGameStore.getState().addMissile({ id: missileId, launchedAt: timestamp, target: coord });
     void radarRef.current?.updateMissile(missileId, radarPoint.x, radarPoint.y, 0);
-    transport.send({ payload: { missileId, target: coord }, type: GameEventType.ATTACK_PREP });
-    transport.send({
-      payload: { missileId, morseSequence, target: coord, timestamp },
-      type: GameEventType.MISSILE_LAUNCHED,
-    });
+    transport.send({ type: GameEventType.ATTACK_PREP,      payload: { missileId, target: coord } });
+    transport.send({ type: GameEventType.MISSILE_LAUNCHED, payload: { missileId, morseSequence, target: coord, timestamp } });
     setSelectedTarget(null);
     setAttackerTurnStart(null);
     setStatusLine(`Передача подтверждена: ${formatCoord(coord)}.`);
   });
 
-  // ── Маршрутизация фаз ──────────────────────────────────────────────────────
+  // ── Phase routing ──────────────────────────────────────────────────────────
 
-  if (phase === "gameOver") {
-    return <GameOverScreen roomId={roomId} />;
-  }
+  if (phase === "gameOver") return <GameOverScreen roomId={roomId} />;
 
   if (phase === "lobby") {
     return (
@@ -329,14 +338,14 @@ export function GameClientWrapper({ roomId }: Props) {
           playerId={playerId}
           onPlaced={() => {
             setHasPlaced(true);
-            try { sessionStorage.setItem(`${PLACED_KEY_PREFIX}${roomId}`, "1"); } catch { /* ignore */ }
+            try { sessionStorage.setItem(`${PLACED_KEY_PREFIX}${roomId}`, "1"); } catch { /* noop */ }
           }}
         />
       </>
     );
   }
 
-  // ── Боевая фаза (battle) ──────────────────────────────────────────────────
+  // ── Battle phase ──────────────────────────────────────────────────────────
 
   const interceptSecondsLeft =
     incomingMissileDeadline === null
@@ -344,44 +353,85 @@ export function GameClientWrapper({ roomId }: Props) {
       : Math.max(0, Math.ceil((incomingMissileDeadline - now) / 1000));
 
   const attackerSecondsLeft =
-    attackerTurnStart !== null && isMyTurn && incomingMissileId === null
+    !isAsync && attackerTurnStart !== null && isMyTurn && incomingMissileId === null
       ? Math.max(0, ATTACKER_TURN_TIMEOUT_S - Math.floor((now - attackerTurnStart) / 1000))
       : null;
 
   const isAttackerWarning = attackerSecondsLeft !== null && attackerSecondsLeft <= 15;
+
   const telegraphMode = incomingMissileId === null ? "attack" : "intercept";
-  const turnLabel = isMyTurn ? "▸ ВАШ ХОД" : "◃ Ожидание противника";
+
+  // Async: can attack whenever not on cooldown and no missile in flight
+  // Turn-based: only on our turn
   const canSelectEnemyTarget =
     phase === "battle" &&
     incomingMissileId === null &&
-    isMyTurn &&
+    (isAsync ? !isOnCooldown : isMyTurn) &&
     !missileInFlightUI;
-  const targetLabel = formatCoord(selectedTarget);
+
+  const turnLabel = isAsync
+    ? isOnCooldown
+      ? `⏳ ПЕРЕЗАРЯДКА ${cooldownSecondsLeft ?? ""}с`
+      : "⚡ ОГОНЬ ОТКРЫТ"
+    : isMyTurn
+      ? "▸ ВАШ ХОД"
+      : "◃ Ожидание противника";
+
+  const turnBadgeClass = isAsync
+    ? isOnCooldown
+      ? "border-morse-amber/50 text-morse-amber"
+      : "border-radar-green/50 text-radar-green"
+    : isMyTurn
+      ? "border-radar-green/50 text-radar-green"
+      : "border-ocean-800 text-miss-white/40";
+
+  const targetLabel      = formatCoord(selectedTarget);
   const targetMorseLabel = formatMorseForCoord(selectedTarget);
+
   const actionTitle =
     incomingMissileId !== null
       ? "Перехват входящей ракеты"
-      : isMyTurn
-        ? selectedTarget === null
-          ? "Выберите цель на поле противника"
-          : "Передайте выбранную цель"
-        : "Ожидайте ход противника";
+      : isAsync
+        ? isOnCooldown
+          ? "Перезарядка орудия"
+          : selectedTarget === null
+            ? "Выберите цель для атаки"
+            : "Передайте выбранную цель"
+        : isMyTurn
+          ? selectedTarget === null
+            ? "Выберите цель на поле противника"
+            : "Передайте выбранную цель"
+          : "Ожидайте ход противника";
+
   const actionDetail =
     incomingMissileId !== null
-      ? `Введите координату принятого сигнала. Попытка ${Math.min(incomingMissileAttempts + 1, INTERCEPT_ATTEMPT_LIMIT)}/${INTERCEPT_ATTEMPT_LIMIT}.`
-      : isMyTurn
-        ? selectedTarget === null
-          ? "Кликните по свободной клетке слева. После выбора появится код Морзе."
-          : `Зажмите телеграфный ключ и передайте: ${targetMorseLabel}.`
-        : "Пока соперник атакует, ваше поле справа остаётся главным ориентиром.";
+      ? `Примите сигнал и введите координату. Попытка ${Math.min(incomingMissileAttempts + 1, INTERCEPT_ATTEMPT_LIMIT)}/${INTERCEPT_ATTEMPT_LIMIT}.`
+      : isAsync
+        ? isOnCooldown
+          ? `Орудие перезаряжается. Осталось ${cooldownSecondsLeft ?? "?"}с. Перехватывайте входящие ракеты пока ждёте.`
+          : selectedTarget === null
+            ? "Кликните по клетке противника. Оба игрока атакуют независимо."
+            : `Зажмите ключ и передайте: ${targetMorseLabel}.`
+        : isMyTurn
+          ? selectedTarget === null
+            ? "Кликните по свободной клетке. После выбора появится код Морзе."
+            : `Зажмите телеграфный ключ и передайте: ${targetMorseLabel}.`
+          : "Пока соперник атакует, следите за своим полем.";
+
   const enemyBoardDisabledMessage =
     incomingMissileId !== null
       ? "Сначала завершите перехват входящей ракеты."
-      : !isMyTurn
-        ? "Сейчас ход противника."
-        : missileInFlightUI
-          ? "Ракета уже в полёте."
-          : undefined;
+      : isAsync
+        ? isOnCooldown
+          ? `Орудие перезаряжается — ${cooldownSecondsLeft ?? "?"}с.`
+          : missileInFlightUI
+            ? "Ракета уже в полёте."
+            : undefined
+        : !isMyTurn
+          ? "Сейчас ход противника."
+          : missileInFlightUI
+            ? "Ракета уже в полёте."
+            : undefined;
 
   return (
     <div className="relative min-h-dvh bg-ocean-950 text-miss-white">
@@ -390,68 +440,95 @@ export function GameClientWrapper({ roomId }: Props) {
 
       <main className="crt-scanlines mx-auto flex min-h-dvh w-full max-w-[1600px] flex-col gap-4 px-4 py-4 lg:px-6 lg:py-6">
 
-        {/* ── Шапка ──────────────────────────────────────────────────────── */}
+        {/* ── Header ──────────────────────────────────────────────────────── */}
         <header className="rounded border border-ocean-800 bg-ocean-900/80 p-3 shadow-[0_0_24px_rgba(0,255,136,0.06)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-baseline gap-4">
               <p className="font-mono text-[9px] uppercase tracking-[0.34em] text-radar-green/60">
-                Морской радиобой
+                {isAsync ? "АСИНХРОННЫЙ БОЙ" : "Морской радиобой"}
               </p>
-              <h1 className="font-mono text-xl font-bold tracking-[0.28em] text-radar-green"
-                style={{ textShadow: "0 0 12px rgba(0,255,136,0.4)" }}>
+              <h1
+                className="font-mono text-xl font-bold tracking-[0.28em] text-radar-green"
+                style={{ textShadow: "0 0 12px rgba(0,255,136,0.4)" }}
+              >
                 ROOM {roomId}
               </h1>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
-              <div className={`rounded border px-3 py-1.5 ${isMyTurn
-                ? "border-radar-green/50 text-radar-green"
-                : "border-ocean-800 text-miss-white/40"
-                }`}>
+
+              {/* Turn / async status */}
+              <div className={`rounded border px-3 py-1.5 transition-colors ${turnBadgeClass}`}>
                 {turnLabel}
               </div>
 
+              {/* Intercept timer */}
               {interceptSecondsLeft !== null && (
-                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${interceptSecondsLeft <= 5
-                  ? "border-hit-red/70 text-hit-red animate-pulse"
-                  : "border-morse-amber/50 text-morse-amber"
-                  }`}>
+                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${
+                  interceptSecondsLeft <= 5
+                    ? "border-hit-red/70 text-hit-red animate-pulse"
+                    : "border-morse-amber/50 text-morse-amber"
+                }`}>
                   ⏱ {interceptSecondsLeft}с перехват
                 </div>
               )}
 
+              {/* Attacker timer (turn-based only) */}
               {attackerSecondsLeft !== null && (
-                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${isAttackerWarning
-                  ? "border-morse-amber/70 text-morse-amber"
-                  : "border-ocean-800 text-miss-white/30"
-                  }`}>
+                <div className={`rounded border px-3 py-1.5 tabular-nums transition-colors ${
+                  isAttackerWarning
+                    ? "border-morse-amber/70 text-morse-amber"
+                    : "border-ocean-800 text-miss-white/30"
+                }`}>
                   ⏱ {attackerSecondsLeft}с ход
                 </div>
               )}
 
-              {/* Индикатор ракеты в полёте */}
+              {/* Cooldown progress bar (async) */}
+              {isAsync && isOnCooldown && cooldownExpiresAt !== null && (
+                <div className="flex items-center gap-1.5 rounded border border-morse-amber/30 px-3 py-1.5">
+                  <div className="h-1.5 w-20 rounded-full bg-ocean-800 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-morse-amber/70 transition-all"
+                      style={{
+                        width: `${Math.max(0, Math.min(100,
+                          ((cooldownExpiresAt - now) / settings.attackCooldownMs) * 100
+                        ))}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="text-morse-amber/70 tabular-nums">
+                    {cooldownSecondsLeft}с
+                  </span>
+                </div>
+              )}
+
+              {/* Missile in flight */}
               {missileInFlightUI && (
-                <div className="rounded border border-hit-red/50 px-3 py-1.5 text-hit-red"
-                  style={{ animation: "morse-blink 0.6s step-end infinite" }}>
+                <div
+                  className="rounded border border-hit-red/50 px-3 py-1.5 text-hit-red"
+                  style={{ animation: "morse-blink 0.6s step-end infinite" }}
+                >
                   ⬆ РАКЕТА
                 </div>
               )}
 
-              <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/30">
-                {phase}
+              {/* Mode badge */}
+              <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/25">
+                {isAsync ? "ASYNC" : phase}
               </div>
 
-              <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/30">
+              <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/25">
                 {playerId ? playerId.slice(0, 8) : "..."}
               </div>
             </div>
           </div>
         </header>
 
-        {/* ── Игровое поле ────────────────────────────────────────────────── */}
+        {/* ── Game field ──────────────────────────────────────────────────── */}
         <div className="grid flex-1 gap-4 xl:grid-cols-[1fr_320px_1fr]">
 
-          {/* ── Левая колонка: вражеское поле ─────────────────────────── */}
+          {/* ── Enemy board ─────────────────────────────────────────────── */}
           <section className="flex flex-col gap-3 rounded border border-ocean-800 bg-ocean-900/80 p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -464,10 +541,11 @@ export function GameClientWrapper({ roomId }: Props) {
                     : enemyBoardDisabledMessage ?? "Клик — выбор цели, затем передача по Морзе."}
                 </p>
               </div>
-              <div className={`min-w-32 rounded border px-2 py-1 text-right font-mono text-[10px] uppercase tracking-normal transition-colors ${selectedTarget !== null
-                ? "border-morse-amber/60 text-morse-amber"
-                : "border-ocean-800 text-miss-white/25"
-                }`}>
+              <div className={`min-w-32 rounded border px-2 py-1 text-right font-mono text-[10px] uppercase tracking-normal transition-colors ${
+                selectedTarget !== null
+                  ? "border-morse-amber/60 text-morse-amber"
+                  : "border-ocean-800 text-miss-white/25"
+              }`}>
                 ⊕ {targetLabel}
               </div>
             </div>
@@ -480,12 +558,22 @@ export function GameClientWrapper({ roomId }: Props) {
                 isInteractive={canSelectEnemyTarget}
                 disabledMessage={enemyBoardDisabledMessage}
                 onCellClick={(coord) => {
-                  if (phase !== "battle") { setStatusLine("Боевая сетка активируется только в фазе battle."); return; }
-                  if (incomingMissileId !== null) { setStatusLine("Сначала завершите перехват входящей ракеты."); return; }
-                  if (!isMyTurn) { setStatusLine("Сейчас не ваш ход."); return; }
-                  if (missileInFlightRef.current) { setStatusLine("Ракета в полёте. Ожидайте результата."); return; }
+                  if (phase !== "battle") return;
+                  if (incomingMissileId !== null) {
+                    setStatusLine("Сначала завершите перехват.");
+                    return;
+                  }
+                  if (isAsync && isOnCooldown) {
+                    setStatusLine(`Перезарядка — ${cooldownSecondsLeft ?? "?"}с.`);
+                    return;
+                  }
+                  if (!isAsync && !isMyTurn) { setStatusLine("Не ваш ход."); return; }
+                  if (missileInFlightRef.current) {
+                    setStatusLine("Ракета в полёте.");
+                    return;
+                  }
                   setSelectedTarget(coord);
-                  setStatusLine(`Цель захвачена: ${formatCoord(coord)}. Передайте её по Морзе.`);
+                  setStatusLine(`Цель захвачена: ${formatCoord(coord)}. Передайте по Морзе.`);
                 }}
               />
               <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 5 }}>
@@ -496,9 +584,17 @@ export function GameClientWrapper({ roomId }: Props) {
             <ShotHistory />
           </section>
 
-          {/* ── Центральная колонка: радиоканал ────────────────────────── */}
+          {/* ── Centre: radio channel ────────────────────────────────────── */}
           <section className="flex flex-col gap-3">
 
+            {/* Async mode info badge */}
+            {isAsync && (
+              <div className="rounded border border-morse-amber/25 bg-morse-amber/5 px-3 py-2 font-mono text-[9px] text-morse-amber/60 uppercase tracking-widest">
+                ⚡ Асинхронный бой · оба игрока атакуют независимо
+              </div>
+            )}
+
+            {/* Action card */}
             <div className="rounded border border-radar-green/35 bg-radar-green/5 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -509,15 +605,15 @@ export function GameClientWrapper({ roomId }: Props) {
                     {actionTitle}
                   </h2>
                 </div>
-                {(interceptSecondsLeft !== null || attackerSecondsLeft !== null) && (
-                  <div
-                    className={`rounded border px-2 py-1 font-mono text-sm tabular-nums ${
-                      interceptSecondsLeft !== null && interceptSecondsLeft <= 5
-                        ? "border-hit-red/70 text-hit-red"
+                {(interceptSecondsLeft !== null || attackerSecondsLeft !== null || cooldownSecondsLeft !== null) && (
+                  <div className={`rounded border px-2 py-1 font-mono text-sm tabular-nums ${
+                    interceptSecondsLeft !== null && interceptSecondsLeft <= 5
+                      ? "border-hit-red/70 text-hit-red"
+                      : cooldownSecondsLeft !== null
+                        ? "border-morse-amber/60 text-morse-amber"
                         : "border-morse-amber/60 text-morse-amber"
-                    }`}
-                  >
-                    {interceptSecondsLeft ?? attackerSecondsLeft}с
+                  }`}>
+                    {interceptSecondsLeft ?? cooldownSecondsLeft ?? attackerSecondsLeft}с
                   </div>
                 )}
               </div>
@@ -526,31 +622,22 @@ export function GameClientWrapper({ roomId }: Props) {
               </p>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <div className="rounded border border-ocean-800/70 bg-ocean-950/50 px-3 py-2">
-                  <p className="font-mono text-[9px] uppercase tracking-normal text-miss-white/35">
-                    Цель
-                  </p>
-                  <p className="mt-1 font-mono text-lg text-morse-amber">
-                    {targetLabel}
-                  </p>
+                  <p className="font-mono text-[9px] uppercase tracking-normal text-miss-white/35">Цель</p>
+                  <p className="mt-1 font-mono text-lg text-morse-amber">{targetLabel}</p>
                 </div>
                 <div className="rounded border border-ocean-800/70 bg-ocean-950/50 px-3 py-2">
-                  <p className="font-mono text-[9px] uppercase tracking-normal text-miss-white/35">
-                    Морзе
-                  </p>
-                  <p className="mt-1 break-words font-mono text-lg text-radar-green">
-                    {targetMorseLabel}
-                  </p>
+                  <p className="font-mono text-[9px] uppercase tracking-normal text-miss-white/35">Морзе</p>
+                  <p className="mt-1 break-words font-mono text-lg text-radar-green">{targetMorseLabel}</p>
                 </div>
               </div>
             </div>
 
+            {/* Status line */}
             <div className="rounded border border-ocean-800 bg-ocean-900/80 p-3">
               <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-radar-green/50 mb-1">
                 Статус канала
               </p>
-              <p className="font-mono text-xs leading-relaxed text-miss-white/70">
-                {statusLine}
-              </p>
+              <p className="font-mono text-xs leading-relaxed text-miss-white/70">{statusLine}</p>
 
               {incomingMissileId !== null && (
                 <div className="mt-2 flex items-center gap-2">
@@ -561,10 +648,9 @@ export function GameClientWrapper({ roomId }: Props) {
                     {Array.from({ length: INTERCEPT_ATTEMPT_LIMIT }).map((_, i) => (
                       <div
                         key={i}
-                        className={`h-2 w-2 rounded-full transition-colors ${i < incomingMissileAttempts
-                          ? "bg-hit-red"
-                          : "bg-ocean-800"
-                          }`}
+                        className={`h-2 w-2 rounded-full transition-colors ${
+                          i < incomingMissileAttempts ? "bg-hit-red" : "bg-ocean-800"
+                        }`}
                       />
                     ))}
                   </div>
@@ -591,9 +677,18 @@ export function GameClientWrapper({ roomId }: Props) {
                 onSpeedChange={setUnitMs}
               />
             ) : null}
+
+            {/* Room settings summary */}
+            <div className="rounded border border-ocean-800/50 bg-ocean-900/40 px-3 py-2 font-mono text-[8px] text-miss-white/20 leading-relaxed">
+              <span className="text-miss-white/30 uppercase tracking-widest">Настройки: </span>
+              {isAsync ? "ASYNC" : "ПОШАГОВЫЙ"}
+              {isAsync && ` · перезарядка ${settings.attackCooldownMs / 1000}с`}
+              {` · перехват ${settings.interceptWindowMs / 1000}с`}
+              {` · ${settings.maxInterceptAttempts} поп.`}
+            </div>
           </section>
 
-          {/* ── Правая колонка: своё поле ───────────────────────────────── */}
+          {/* ── Own board ───────────────────────────────────────────────── */}
           <section className="flex flex-col gap-3 rounded border border-ocean-800 bg-ocean-900/80 p-4">
             <div>
               <h2 className="font-mono text-sm uppercase tracking-[0.28em] text-radar-green">
@@ -610,9 +705,9 @@ export function GameClientWrapper({ roomId }: Props) {
             <div className="mt-auto grid grid-cols-2 gap-1.5 rounded border border-ocean-800/50 p-2">
               {[
                 { symbol: "▪", label: "Корабль", color: "text-radar-green/70" },
-                { symbol: "✕", label: "Ранен", color: "text-morse-amber" },
-                { symbol: "✕", label: "Потоплен", color: "text-hit-red" },
-                { symbol: "·", label: "Промах", color: "text-miss-white/30" },
+                { symbol: "✕", label: "Ранен",   color: "text-morse-amber" },
+                { symbol: "✕", label: "Потоплен",color: "text-hit-red" },
+                { symbol: "·", label: "Промах",  color: "text-miss-white/30" },
               ].map(({ symbol, label, color }) => (
                 <div key={label} className="flex items-center gap-1.5 font-mono text-[9px]">
                   <span className={`w-3 text-center ${color}`}>{symbol}</span>

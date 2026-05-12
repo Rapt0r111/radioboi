@@ -14,3 +14,24 @@ export type Missile = {
   launchedAt: number;
   isIntercepted?: boolean;
 };
+
+// ── Room Settings ─────────────────────────────────────────────────────────────
+
+export type BattleMode = "turn-based" | "async";
+
+export type RoomSettings = {
+  battleMode: BattleMode;
+  /** Async only: ms a player must wait after firing before next attack */
+  attackCooldownMs: number;
+  /** Ms window defender has to intercept an incoming missile */
+  interceptWindowMs: number;
+  /** Maximum intercept attempts per missile */
+  maxInterceptAttempts: number;
+};
+
+export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
+  battleMode: "turn-based",
+  attackCooldownMs: 20_000,
+  interceptWindowMs: 25_000,
+  maxInterceptAttempts: 3,
+};

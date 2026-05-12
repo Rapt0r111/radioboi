@@ -1,11 +1,15 @@
 // apps/worker/src/game-logic.ts
+//
 // Pure, side-effect-free game logic for use inside GameRoomArbitrator.
 //
-// FIX: Добавлена функция validateShipGeometry — серверная проверка геометрии
-// флота. Ранее сервер принимал любые координаты без валидации перекрытий,
-// касаний, нелинейности и состава флота. Это позволяло читерить через
-// модифицированный клиент. Теперь #handleShipsPlaced вызывает validateShipGeometry
-// перед applyShipsPlaced.
+// ASYNC MODE changes:
+//   - pendingAttack → pendingAttacks: Record<attackerId, PendingAttack>
+//   - prepareAttack skips turn check in async; checks cooldown instead
+//   - resolveHit sets attackCooldown instead of toggling turns in async
+//   - processInterceptAttempt finds attack across all pending attacks
+//   - pendingAlarms[] array replaces single ALARM_TYPE_KEY storage
+
+import { isValidCoordinate, parseCoordinate as parseCoordCore } from "@radioboi/game-core";
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
@@ -13,10 +17,7 @@ export type CellState = "ship" | "hit" | "miss" | "sunk";
 export type Coord = string;
 export type BoardMap = Record<Coord, CellState>;
 
-export type ShipRecord = {
-  coords: Coord[];
-  isSunk: boolean;
-};
+export type ShipRecord = { coords: Coord[]; isSunk: boolean };
 
 export type PlayerRecord = {
   id: string;
@@ -35,17 +36,47 @@ export type PendingAttack = {
 
 export type RoomPhase = "lobby" | "placement" | "battle" | "gameOver";
 
+export type RoomSettings = {
+  battleMode: "turn-based" | "async";
+  attackCooldownMs: number;
+  interceptWindowMs: number;
+  maxInterceptAttempts: number;
+};
+
+export const DEFAULT_SETTINGS: RoomSettings = {
+  battleMode: "turn-based",
+  attackCooldownMs: 20_000,
+  interceptWindowMs: 25_000,
+  maxInterceptAttempts: 3,
+};
+
+export type PendingAlarm = {
+  type: "intercept_timeout" | "attacker_turn_timeout";
+  /** Present for intercept_timeout */
+  missileId?: string;
+  /** Present for intercept_timeout — who attacked */
+  attackerId?: string;
+  fireAt: number;
+};
+
 export type RoomState = {
   roomId: string;
   phase: RoomPhase;
   players: PlayerRecord[];
   boards: Record<string, BoardMap>;
   ships: Record<string, ShipRecord[]>;
+  /** null in async mode (no turns), attacker's id in turn-based */
   currentTurnId: string | null;
-  pendingAttack: PendingAttack | null;
+  /** Keyed by attackerId — allows simultaneous attacks in async mode */
+  pendingAttacks: Record<string, PendingAttack>;
   winnerId: string | null;
   shotLog: ShotLogEntry[];
   activeMissiles: Array<{ id: string; target: Coord; launchedAt: number }>;
+  settings: RoomSettings;
+  /** Async mode: playerId → unix ms when they may fire next */
+  attackCooldowns: Record<string, number>;
+  /** Sorted list of upcoming DO alarms */
+  pendingAlarms: PendingAlarm[];
 };
 
 export type ShotLogEntry = {
@@ -55,21 +86,21 @@ export type ShotLogEntry = {
   ts: number;
 };
 
-// ── Fleet definition (mirrors @radioboi/game-core REQUIRED_FLEET) ─────────────
+// ── Fleet definition ──────────────────────────────────────────────────────────
 
-const REQUIRED_FLEET = new Map<number, number>([
+export const REQUIRED_FLEET = new Map<number, number>([
   [4, 1],
   [3, 2],
   [2, 3],
   [1, 4],
 ]);
 
-// ── Column/row triplet definitions (mirrors game-core COLUMNS/ROWS) ───────────
+// ── Column/row triplet definitions ────────────────────────────────────────────
 
 const COLUMNS = ["АБВ","ГДЕ","ЖЗИ","ЙКЛ","МНО","ПРС","ТУФ","ХЦЧ","ШЩЪ","ЫЭЮ"];
-const ROWS = ["000","001","002","003","004","005","006","007","008","009"];
+const ROWS    = ["000","001","002","003","004","005","006","007","008","009"];
 const COLUMN_SET = new Set<string>(COLUMNS);
-const ROW_SET = new Set<string>(ROWS);
+const ROW_SET    = new Set<string>(ROWS);
 
 function parseCoord(coord: string): { colIndex: number; rowIndex: number } | null {
   if (coord.length !== 6) return null;
@@ -84,68 +115,39 @@ function parseCoord(coord: string): { colIndex: number; rowIndex: number } | nul
 
 // ── Server-side ship geometry validation ──────────────────────────────────────
 
-/**
- * Validates ship geometry on the server:
- *  1. All coordinates are valid
- *  2. Each ship is linear (single row or column, contiguous)
- *  3. No overlapping cells between ships
- *  4. No adjacent cells (including diagonals) between ships
- *  5. Fleet composition matches REQUIRED_FLEET
- *
- * Returns null if valid, or an error message string if invalid.
- *
- * This mirrors the client-side validatePlacement from game-core,
- * but is self-contained so the worker doesn't depend on game-core.
- */
 export function validateShipGeometry(
   ships: ReadonlyArray<{ coords: readonly string[] }>,
 ): string | null {
-  // 1. Validate coordinates
   for (const ship of ships) {
     for (const coord of ship.coords) {
-      if (!parseCoord(coord)) {
-        return `Invalid coordinate: ${coord}`;
-      }
+      if (!parseCoord(coord)) return `Invalid coordinate: ${coord}`;
     }
   }
 
-  // 2. Linearity and length >= 1
   for (let i = 0; i < ships.length; i++) {
     const ship = ships[i];
     if (!ship || ship.coords.length < 1) return "Ship has no coordinates";
-
     if (ship.coords.length > 1) {
-      const parsed = ship.coords.map(parseCoord).filter(Boolean) as Array<{colIndex: number; rowIndex: number}>;
+      const parsed = ship.coords.map(parseCoord).filter(Boolean) as Array<{ colIndex: number; rowIndex: number }>;
       const first = parsed[0];
       if (!first) return "Ship parse failed";
-
-      const allSameCol = parsed.every(p => p.colIndex === first.colIndex);
-      const allSameRow = parsed.every(p => p.rowIndex === first.rowIndex);
-
-      if (!allSameCol && !allSameRow) {
-        return `Ship ${i} is not linear (not all same column or row)`;
-      }
-
-      // Check contiguity
+      const allSameCol = parsed.every((p) => p.colIndex === first.colIndex);
+      const allSameRow = parsed.every((p) => p.rowIndex === first.rowIndex);
+      if (!allSameCol && !allSameRow) return `Ship ${i} is not linear`;
       if (allSameCol) {
-        const rows = parsed.map(p => p.rowIndex).sort((a, b) => a - b);
+        const rows = parsed.map((p) => p.rowIndex).sort((a, b) => a - b);
         for (let j = 1; j < rows.length; j++) {
-          if ((rows[j] ?? 0) - (rows[j-1] ?? 0) !== 1) {
-            return `Ship ${i} has gaps between cells`;
-          }
+          if ((rows[j] ?? 0) - (rows[j - 1] ?? 0) !== 1) return `Ship ${i} has gaps`;
         }
       } else {
-        const cols = parsed.map(p => p.colIndex).sort((a, b) => a - b);
+        const cols = parsed.map((p) => p.colIndex).sort((a, b) => a - b);
         for (let j = 1; j < cols.length; j++) {
-          if ((cols[j] ?? 0) - (cols[j-1] ?? 0) !== 1) {
-            return `Ship ${i} has gaps between cells`;
-          }
+          if ((cols[j] ?? 0) - (cols[j - 1] ?? 0) !== 1) return `Ship ${i} has gaps`;
         }
       }
     }
   }
 
-  // 3. No overlaps
   const occupied = new Set<string>();
   for (const ship of ships) {
     for (const coord of ship.coords) {
@@ -154,12 +156,9 @@ export function validateShipGeometry(
     }
   }
 
-  // 4. No adjacency (including diagonals)
   for (let i = 0; i < ships.length; i++) {
     const shipI = ships[i];
     if (!shipI) continue;
-
-    // Build exclusion zone for this ship
     const exclusion = new Set<string>();
     for (const coord of shipI.coords) {
       const p = parseCoord(coord);
@@ -176,42 +175,35 @@ export function validateShipGeometry(
         }
       }
     }
-
     for (let j = i + 1; j < ships.length; j++) {
       const shipJ = ships[j];
       if (!shipJ) continue;
       for (const coord of shipJ.coords) {
-        if (exclusion.has(coord)) {
-          return `Ships ${i} and ${j} are adjacent or overlapping`;
-        }
+        if (exclusion.has(coord)) return `Ships ${i} and ${j} are adjacent`;
       }
     }
   }
 
-  // 5. Fleet composition
   const actualFleet = new Map<number, number>();
   for (const ship of ships) {
     const len = ship.coords.length;
     actualFleet.set(len, (actualFleet.get(len) ?? 0) + 1);
   }
-
   for (const [len, count] of REQUIRED_FLEET) {
     if ((actualFleet.get(len) ?? 0) !== count) {
       return `Invalid fleet: expected ${count}×${len}-cell ship(s), got ${actualFleet.get(len) ?? 0}`;
     }
   }
   for (const len of actualFleet.keys()) {
-    if (!REQUIRED_FLEET.has(len)) {
-      return `Invalid fleet: unexpected ship of size ${len}`;
-    }
+    if (!REQUIRED_FLEET.has(len)) return `Invalid fleet: unexpected ship size ${len}`;
   }
 
-  return null; // valid
+  return null;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
-export function createRoomState(roomId: string): RoomState {
+export function createRoomState(roomId: string, settings?: RoomSettings): RoomState {
   return {
     roomId,
     phase: "lobby",
@@ -219,10 +211,13 @@ export function createRoomState(roomId: string): RoomState {
     boards: {},
     ships: {},
     currentTurnId: null,
-    pendingAttack: null,
+    pendingAttacks: {},
     winnerId: null,
     shotLog: [],
     activeMissiles: [],
+    settings: settings ?? DEFAULT_SETTINGS,
+    attackCooldowns: {},
+    pendingAlarms: [],
   };
 }
 
@@ -235,14 +230,10 @@ export function addPlayer(
   if (state.players.some((p) => p.id === player.id)) {
     const idx = state.players.findIndex((p) => p.id === player.id);
     const existing = state.players[idx];
-    if (existing) {
-      state.players[idx] = { ...existing, wsTag: player.wsTag };
-    }
+    if (existing) state.players[idx] = { ...existing, wsTag: player.wsTag };
     return { ok: true };
   }
-  if (state.players.length >= 2) {
-    return { ok: false, reason: "ROOM_FULL" };
-  }
+  if (state.players.length >= 2) return { ok: false, reason: "ROOM_FULL" };
   state.players.push(player);
   if (state.players.length === 2 && state.phase === "lobby") {
     state.phase = "placement";
@@ -263,28 +254,34 @@ export function applyShipsPlaced(
 ): void {
   const board: BoardMap = {};
   const shipRecords: ShipRecord[] = [];
-
   for (const ship of ships) {
-    for (const coord of ship.coords) {
-      board[coord] = "ship";
-    }
+    for (const coord of ship.coords) board[coord] = "ship";
     shipRecords.push({ coords: ship.coords, isSunk: false });
   }
-
   state.boards[playerId] = board;
-  state.ships[playerId] = shipRecords;
-
+  state.ships[playerId]  = shipRecords;
   const player = state.players.find((p) => p.id === playerId);
   if (player) player.isReady = true;
 
   if (state.players.length === 2 && state.players.every((p) => p.isReady)) {
     state.phase = "battle";
-    const randomIdx = Math.random() < 0.5 ? 0 : 1;
-    state.currentTurnId = state.players[randomIdx]?.id ?? null;
+    if (state.settings.battleMode === "turn-based") {
+      const randomIdx = Math.random() < 0.5 ? 0 : 1;
+      state.currentTurnId = state.players[randomIdx]?.id ?? null;
+    } else {
+      // Async: no turns — both players start ready
+      state.currentTurnId = null;
+    }
   }
 }
 
 // ── Attack lifecycle ──────────────────────────────────────────────────────────
+
+/** Returns how many ms remain on the cooldown (0 = ready) */
+export function getCooldownRemaining(state: RoomState, playerId: string): number {
+  const expires = state.attackCooldowns[playerId] ?? 0;
+  return Math.max(0, expires - Date.now());
+}
 
 export function prepareAttack(
   state: RoomState,
@@ -293,8 +290,23 @@ export function prepareAttack(
   missileId: string,
 ): { ok: true } | { ok: false; reason: string } {
   if (state.phase !== "battle") return { ok: false, reason: "GAME_NOT_STARTED" };
-  if (state.currentTurnId !== attackerId) return { ok: false, reason: "NOT_YOUR_TURN" };
-  if (state.pendingAttack !== null) return { ok: false, reason: "ATTACK_ALREADY_PENDING" };
+
+  if (state.settings.battleMode === "turn-based") {
+    if (state.currentTurnId !== attackerId) return { ok: false, reason: "NOT_YOUR_TURN" };
+    // Turn-based: only one pending attack at a time (from anyone)
+    if (Object.keys(state.pendingAttacks).length > 0) {
+      return { ok: false, reason: "ATTACK_ALREADY_PENDING" };
+    }
+  } else {
+    // Async: check cooldown
+    const remaining = getCooldownRemaining(state, attackerId);
+    if (remaining > 0) return { ok: false, reason: "ATTACK_ON_COOLDOWN" };
+  }
+
+  // Either mode: this player must not already have a pending attack
+  if (state.pendingAttacks[attackerId]) {
+    return { ok: false, reason: "ATTACK_ALREADY_PENDING" };
+  }
 
   const opponentId = getOpponentId(state, attackerId);
   if (!opponentId) return { ok: false, reason: "NO_OPPONENT" };
@@ -305,7 +317,7 @@ export function prepareAttack(
     return { ok: false, reason: "CELL_ALREADY_SHOT" };
   }
 
-  state.pendingAttack = {
+  state.pendingAttacks[attackerId] = {
     attackerId,
     target,
     missileId,
@@ -321,17 +333,13 @@ export function recordMorseSequence(
   missileId: string,
   morseSequence: string[],
 ): { ok: true } | { ok: false; reason: string } {
-  if (!state.pendingAttack || state.pendingAttack.missileId !== missileId) {
-    return { ok: false, reason: "NO_PENDING_ATTACK" };
-  }
-  state.pendingAttack.morseSequence = morseSequence;
+  const attack = Object.values(state.pendingAttacks).find(
+    (a) => a.missileId === missileId,
+  );
+  if (!attack) return { ok: false, reason: "NO_PENDING_ATTACK" };
 
-  state.activeMissiles.push({
-    id: missileId,
-    target: state.pendingAttack.target,
-    launchedAt: Date.now(),
-  });
-
+  attack.morseSequence = morseSequence;
+  state.activeMissiles.push({ id: missileId, target: attack.target, launchedAt: Date.now() });
   return { ok: true };
 }
 
@@ -339,6 +347,8 @@ export type ResolveResult = {
   result: "hit" | "miss" | "sunk";
   isGameOver: boolean;
   winnerId: string | null;
+  /** Async only: ms when attacker can fire again */
+  cooldownExpiresAt?: number;
 };
 
 export const MAX_INTERCEPT_ATTEMPTS = 3;
@@ -351,18 +361,19 @@ export function processInterceptAttempt(
   attemptNumber: number,
   forceResolve: boolean,
 ): ResolveResult | null {
-  const attack = state.pendingAttack;
-  if (!attack || attack.missileId !== missileId) return null;
+  // Find the pending attack by missileId across ALL attackers
+  const attack = Object.values(state.pendingAttacks).find(
+    (a) => a.missileId === missileId,
+  );
+  if (!attack) return null;
 
   attack.attempts = attemptNumber;
-
+  const maxAttempts = state.settings.maxInterceptAttempts;
   const decodedCorrectly = forceResolve || decodedCoord === attack.target;
 
-  if (!decodedCorrectly && attemptNumber < MAX_INTERCEPT_ATTEMPTS) {
-    return null;
-  }
+  if (!decodedCorrectly && attemptNumber < maxAttempts) return null;
 
-  return resolveHit(state, attack.attackerId, attack.target, attack.missileId);
+  return resolveHit(state, attack.attackerId, attack.target, missileId);
 }
 
 export function resolveHit(
@@ -372,15 +383,11 @@ export function resolveHit(
   missileId?: string,
 ): ResolveResult {
   const opponentId = getOpponentId(state, attackerId);
-  if (!opponentId) {
-    return { result: "miss", isGameOver: false, winnerId: null };
-  }
+  if (!opponentId) return { result: "miss", isGameOver: false, winnerId: null };
 
   const existingBoard = state.boards[opponentId];
   const opponentBoard: BoardMap = existingBoard ?? {};
-  if (!existingBoard) {
-    state.boards[opponentId] = opponentBoard;
-  }
+  if (!existingBoard) state.boards[opponentId] = opponentBoard;
 
   const opponentShips = state.ships[opponentId] ?? [];
 
@@ -396,16 +403,13 @@ export function resolveHit(
     result = "miss";
   } else {
     opponentBoard[target] = "hit";
-
     const ship = opponentShips.find((s) => s.coords.includes(target));
     if (ship) {
       const allHit = ship.coords.every(
         (c) => opponentBoard[c] === "hit" || opponentBoard[c] === "sunk",
       );
       if (allHit) {
-        for (const c of ship.coords) {
-          opponentBoard[c] = "sunk";
-        }
+        for (const c of ship.coords) opponentBoard[c] = "sunk";
         ship.isSunk = true;
         result = "sunk";
       } else {
@@ -427,17 +431,75 @@ export function resolveHit(
     state.winnerId = winnerId;
   }
 
-  if (!isGameOver) {
-    state.currentTurnId = result === "miss" ? opponentId : attackerId;
+  // ── Turn / cooldown management ────────────────────────────────────────────
+  let cooldownExpiresAt: number | undefined;
+
+  if (state.settings.battleMode === "turn-based") {
+    if (!isGameOver) {
+      state.currentTurnId = result === "miss" ? opponentId : attackerId;
+    }
+  } else {
+    // Async: apply per-attacker cooldown
+    cooldownExpiresAt = Date.now() + state.settings.attackCooldownMs;
+    state.attackCooldowns[attackerId] = cooldownExpiresAt;
   }
 
-  state.pendingAttack = null;
+  // Clear this attacker's pending entry
+  delete state.pendingAttacks[attackerId];
 
   if (missileId !== undefined) {
     state.activeMissiles = state.activeMissiles.filter((m) => m.id !== missileId);
+    // Remove pending alarm for this missile
+    state.pendingAlarms = state.pendingAlarms.filter(
+      (a) => !(a.type === "intercept_timeout" && a.missileId === missileId),
+    );
   }
 
-  return { result, isGameOver, winnerId };
+  return { result, isGameOver, winnerId, cooldownExpiresAt };
+}
+
+// ── Alarm helpers ─────────────────────────────────────────────────────────────
+
+export function addInterceptAlarm(
+  state: RoomState,
+  missileId: string,
+  attackerId: string,
+  interceptWindowMs: number,
+): void {
+  state.pendingAlarms.push({
+    type: "intercept_timeout",
+    missileId,
+    attackerId,
+    fireAt: Date.now() + interceptWindowMs,
+  });
+  // Keep sorted by fireAt ascending
+  state.pendingAlarms.sort((a, b) => a.fireAt - b.fireAt);
+}
+
+export function addAttackerTurnAlarm(
+  state: RoomState,
+  attackerTurnTimeoutMs: number,
+): void {
+  // For turn-based: remove any existing attacker_turn_timeout first
+  state.pendingAlarms = state.pendingAlarms.filter(
+    (a) => a.type !== "attacker_turn_timeout",
+  );
+  state.pendingAlarms.push({
+    type: "attacker_turn_timeout",
+    fireAt: Date.now() + attackerTurnTimeoutMs,
+  });
+  state.pendingAlarms.sort((a, b) => a.fireAt - b.fireAt);
+}
+
+export function popExpiredAlarms(state: RoomState): PendingAlarm[] {
+  const now = Date.now();
+  const expired = state.pendingAlarms.filter((a) => a.fireAt <= now);
+  state.pendingAlarms = state.pendingAlarms.filter((a) => a.fireAt > now);
+  return expired;
+}
+
+export function nextAlarmAt(state: RoomState): number | null {
+  return state.pendingAlarms[0]?.fireAt ?? null;
 }
 
 // ── Board projection helpers ──────────────────────────────────────────────────
@@ -449,15 +511,19 @@ export function getOwnBoard(state: RoomState, playerId: string): BoardMap {
 export function getEnemyBoard(state: RoomState, viewerId: string): BoardMap {
   const opponentId = getOpponentId(state, viewerId);
   if (!opponentId) return {};
-
   const full = state.boards[opponentId] ?? {};
   const masked: BoardMap = {};
-
   for (const [coord, cell] of Object.entries(full)) {
-    if (cell === "hit" || cell === "miss" || cell === "sunk") {
-      masked[coord] = cell;
-    }
+    if (cell === "hit" || cell === "miss" || cell === "sunk") masked[coord] = cell;
   }
-
   return masked;
 }
+
+export function formatCoordForShotLog(coord: string): string {
+  const col = coord.slice(0, 3);
+  const rowNum = Number(coord.slice(3, 6));
+  return `${col}-${rowNum}`;
+}
+
+// Re-export for GameRoomArbitrator
+export { isValidCoordinate, parseCoordCore as parseCoordinate };

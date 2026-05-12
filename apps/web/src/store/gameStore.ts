@@ -1,20 +1,16 @@
-// apps/web/src/store/gameStore.ts
 "use client";
+// apps/web/src/store/gameStore.ts
 //
-// FIX (HIGH): SyncSnapshot теперь включает shotLog из SYNC_STATE.
-// syncFromServer восстанавливает историю при реконнекте: если сервер прислал
-// более длинный лог — берём его; если живой лог длиннее (нормальная игра) —
-// оставляем текущий. Это предотвращает затирание лога при каждом SYNC_STATE.
+// FIX (HIGH): SyncSnapshot теперь включает shotLog, settings, attackCooldownExpiresAt.
+// syncFromServer восстанавливает историю при реконнекте и синхронизирует
+// настройки комнаты и cooldown для async-режима.
 
-import type { Board, Coordinate, GamePhase, Missile } from "@radioboi/game-core";
+import type { Board, Coordinate, GamePhase, Missile, RoomSettings } from "@radioboi/game-core";
+import { DEFAULT_ROOM_SETTINGS } from "@radioboi/game-core";
 import { create } from "zustand";
 
 // ── Типы ──────────────────────────────────────────────────────────────────────
 
-/**
- * Запись об одном выстреле для истории ходов.
- * by: "us" — мы стреляли, "them" — стрелял противник.
- */
 export type ShotLogEntry = {
   by: "us" | "them";
   coord: string;
@@ -32,12 +28,15 @@ type GameState = {
   isMyTurn: boolean;
   winnerId: string | null;
   shotLog: ShotLogEntry[];
+  /** Room settings received from server via SYNC_STATE */
+  settings: RoomSettings;
+  /**
+   * Async mode: unix ms when this player can attack again.
+   * null = not on cooldown / turn-based mode.
+   */
+  attackCooldownExpiresAt: number | null;
 };
 
-/**
- * FIX: Добавлено поле shotLog — история выстрелов из SYNC_STATE.
- * Опционально для обратной совместимости (старые SYNC_STATE без shotLog).
- */
 type SyncSnapshot = {
   phase: GamePhase;
   ownBoard: Board;
@@ -45,6 +44,9 @@ type SyncSnapshot = {
   isMyTurn: boolean;
   winnerId?: string | undefined;
   shotLog?: ShotLogEntry[] | undefined;
+  settings?: RoomSettings | undefined;
+  /** 0 means cooldown has expired / not applicable */
+  attackCooldownExpiresAt?: number | undefined;
 };
 
 type GameActions = {
@@ -57,8 +59,9 @@ type GameActions = {
   interceptMissile(missileId: string): void;
   toggleTurn(): void;
   syncFromServer(snapshot: SyncSnapshot): void;
-  /** Добавляет запись в историю ходов */
   addShotEntry(entry: ShotLogEntry): void;
+  /** Called on ATTACK_COOLDOWN_UPDATE event (async mode) */
+  setAttackCooldown(expiresAt: number): void;
   reset(): void;
 };
 
@@ -75,6 +78,8 @@ function makeInitialState(): GameState {
     isMyTurn: false,
     winnerId: null,
     shotLog: [],
+    settings: DEFAULT_ROOM_SETTINGS,
+    attackCooldownExpiresAt: null,
   };
 }
 
@@ -114,30 +119,27 @@ export const useGameStore = create<GameStore>((set) => ({
 
   toggleTurn() { set((state) => ({ isMyTurn: !state.isMyTurn })); },
 
-  /**
-   * FIX (HIGH): Восстанавливает историю выстрелов из серверного снапшота.
-   *
-   * Логика мержа shotLog:
-   * - Если сервер прислал более длинный лог (реконнект после нескольких ходов)
-   *   → берём серверный (восстановление истории).
-   * - Если живой лог не короче серверного (нормальная игра, SYNC_STATE после
-   *   каждого RESOLVE_HIT) → оставляем текущий.
-   *
-   * Это предотвращает двойную запись при нормальной игре:
-   * addShotEntry уже добавил запись → SYNC_STATE приходит с тем же количеством
-   * → мерж не перезаписывает (lengths equal → keep current).
-   */
-  syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn, winnerId, shotLog }) {
+  syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn, winnerId, shotLog, settings, attackCooldownExpiresAt }) {
     set((state) => ({
       phase,
       ownBoard,
       enemyBoard,
       isMyTurn,
       winnerId: winnerId ?? null,
+      // Merge shotLog: keep server's if longer (reconnect restore)
       shotLog:
         shotLog !== undefined && shotLog.length > state.shotLog.length
           ? shotLog
           : state.shotLog,
+      // Always update settings when server sends them
+      settings: settings ?? state.settings,
+      // attackCooldownExpiresAt: 0 from server means "not on cooldown"
+      attackCooldownExpiresAt:
+        attackCooldownExpiresAt !== undefined && attackCooldownExpiresAt > 0
+          ? attackCooldownExpiresAt
+          : attackCooldownExpiresAt === 0
+            ? null
+            : state.attackCooldownExpiresAt,
     }));
   },
 
@@ -145,22 +147,27 @@ export const useGameStore = create<GameStore>((set) => ({
     set((state) => ({ shotLog: [...state.shotLog, entry] }));
   },
 
+  setAttackCooldown(expiresAt) {
+    set({ attackCooldownExpiresAt: expiresAt > Date.now() ? expiresAt : null });
+  },
+
   reset() { set(makeInitialState()); },
 }));
 
 // ── Selectors ─────────────────────────────────────────────────────────────────
 
-export const selectPhase = (s: GameStore) => s.phase;
-export const selectOwnBoard = (s: GameStore) => s.ownBoard;
-export const selectEnemyBoard = (s: GameStore) => s.enemyBoard;
-export const selectActiveMissiles = (s: GameStore) => s.activeMissiles;
-export const selectIsMyTurn = (s: GameStore) => s.isMyTurn;
-export const selectWinnerId = (s: GameStore) => s.winnerId;
-export const selectShotLog = (s: GameStore) => s.shotLog;
+export const selectPhase            = (s: GameStore) => s.phase;
+export const selectOwnBoard         = (s: GameStore) => s.ownBoard;
+export const selectEnemyBoard       = (s: GameStore) => s.enemyBoard;
+export const selectActiveMissiles   = (s: GameStore) => s.activeMissiles;
+export const selectIsMyTurn         = (s: GameStore) => s.isMyTurn;
+export const selectWinnerId         = (s: GameStore) => s.winnerId;
+export const selectShotLog          = (s: GameStore) => s.shotLog;
+export const selectSettings         = (s: GameStore) => s.settings;
+export const selectCooldownExpiresAt = (s: GameStore) => s.attackCooldownExpiresAt;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** "АБВ005" → "АБВ-5" для отображения в истории ходов */
 export function formatCoordForLog(coord: Coordinate): string {
   const col = coord.slice(0, 3);
   const rowNum = Number(coord.slice(3, 6));

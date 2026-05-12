@@ -1,14 +1,9 @@
+"use client";
 // apps/web/src/hooks/useGameLoop.ts
 //
-// FIX (HIGH): Устранён двойной вызов syncFromServer при каждом SYNC_STATE.
-//   Ранее: #applyToStore в gameClient.ts вызывал syncFromServer(payload),
-//   затем этот handler вызывал syncFromServer ещё раз. Второй вызов был
-//   безвредным (идемпотентным), но избыточным и запутывал flow.
-//   Теперь handler обрабатывает только activeMissiles и runtime state reset —
-//   то, что syncFromServer не затрагивает.
-//
-// FIX (EXISTING, kept): stopSync handler forwards winnerId in snapshot.
-"use client";
+// FIX: Added ATTACK_COOLDOWN_UPDATE handler for async mode.
+// When server sends cooldown info after missile resolves, we update
+// store.attackCooldownExpiresAt so UI can show reload timer.
 
 import {
   GameEventType,
@@ -61,9 +56,7 @@ function readRuntimeState(): GameLoopRuntimeState {
 function encodeToken(token: string): number[] {
   const sequence: number[] = [];
   for (const [index, symbol] of [...token].entries()) {
-    if (index > 0) {
-      sequence.push(ELEMENT_GAP);
-    }
+    if (index > 0) sequence.push(ELEMENT_GAP);
     sequence.push(symbol === "." ? DOT_UNIT : DASH_UNIT);
   }
   return sequence;
@@ -72,11 +65,9 @@ function encodeToken(token: string): number[] {
 function toPlaybackSequence(sequence: readonly MorseSymbol[]): number[] {
   const flat = sequence.join("");
   for (let splitAt = 1; splitAt < flat.length; splitAt++) {
-    const left = flat.slice(0, splitAt);
+    const left  = flat.slice(0, splitAt);
     const right = flat.slice(splitAt);
-    if (MORSE_REVERSE[left] === undefined || MORSE_REVERSE[right] === undefined) {
-      continue;
-    }
+    if (MORSE_REVERSE[left] === undefined || MORSE_REVERSE[right] === undefined) continue;
     return [...encodeToken(left), CHARACTER_GAP, ...encodeToken(right)];
   }
   return encodeToken(flat);
@@ -84,7 +75,7 @@ function toPlaybackSequence(sequence: readonly MorseSymbol[]): number[] {
 
 function removeMissileFromStore(missileId: string): void {
   useGameStore.setState((state) => ({
-    activeMissiles: state.activeMissiles.filter((missile) => missile.id !== missileId),
+    activeMissiles: state.activeMissiles.filter((m) => m.id !== missileId),
   }));
 }
 
@@ -113,12 +104,17 @@ export function useGameLoop(
       return;
     }
 
+    // ── INCOMING_MISSILE ──────────────────────────────────────────────────
     const stopIncoming = transport.on(GameEventType.INCOMING_MISSILE, (event) => {
+      // Derive intercept window from current settings (may differ from default)
+      const settings = useGameStore.getState().settings;
+      const windowMs = settings?.interceptWindowMs ?? INTERCEPT_WINDOW_MS;
+
       const playbackSequence = toPlaybackSequence(event.payload.morseSequence);
 
       patchGameLoopRuntimeState({
         incomingMissileAttempts: 0,
-        incomingMissileDeadline: Date.now() + INTERCEPT_WINDOW_MS,
+        incomingMissileDeadline: Date.now() + windowMs,
         incomingMissileId: event.payload.missileId,
         incomingMissileSequence: playbackSequence,
         lastInterceptWrong: false,
@@ -127,9 +123,10 @@ export function useGameLoop(
       void morseEngine?.playSequence(playbackSequence);
     });
 
+    // ── RESOLVE_HIT ───────────────────────────────────────────────────────
     const stopResolve = transport.on(GameEventType.RESOLVE_HIT, (event) => {
       const runtime = readRuntimeState();
-      const store = useGameStore.getState();
+      const store   = useGameStore.getState();
 
       const isByThem = runtime.incomingMissileId === event.payload.missileId;
       const boardUpdater = isByThem ? store.applyOwnHit : store.applyEnemyShot;
@@ -159,16 +156,8 @@ export function useGameLoop(
       resetGameLoopRuntimeState();
     });
 
-    // FIX (HIGH): Убран двойной вызов syncFromServer.
-    // gameClient.ts → #applyToStore уже вызвал store.syncFromServer(event.payload)
-    // до того как этот handler запустился. Повторный вызов здесь был избыточным.
-    //
-    // Остаётся только то, что syncFromServer НЕ делает:
-    //   1. Обновление activeMissiles (не входит в SyncSnapshot)
-    //   2. Сброс runtime state при отсутствии ракет
+    // ── SYNC_STATE ────────────────────────────────────────────────────────
     const stopSync = transport.on(GameEventType.SYNC_STATE, (event) => {
-      // syncFromServer вызван в #applyToStore — не повторяем.
-      // Устанавливаем activeMissiles — syncFromServer его не трогает.
       useGameStore.setState({
         activeMissiles: event.payload.activeMissiles as Missile[],
       });
@@ -178,6 +167,14 @@ export function useGameLoop(
       }
     });
 
+    // ── ATTACK_COOLDOWN_UPDATE (async mode) ───────────────────────────────
+    // Server sends this immediately after a missile resolves in async mode.
+    // expiresAt is a unix ms timestamp when the player can fire again.
+    const stopCooldown = transport.on(GameEventType.ATTACK_COOLDOWN_UPDATE, (event) => {
+      useGameStore.getState().setAttackCooldown(event.payload.expiresAt);
+    });
+
+    // ── ERROR ─────────────────────────────────────────────────────────────
     const stopError = transport.on(GameEventType.ERROR, (event) => {
       if (event.payload.code === "MORSE_MISMATCH") {
         const runtime = readRuntimeState();
@@ -194,6 +191,7 @@ export function useGameLoop(
       stopIncoming();
       stopResolve();
       stopSync();
+      stopCooldown();
       stopError();
       cleanupRef.current = () => {};
     };

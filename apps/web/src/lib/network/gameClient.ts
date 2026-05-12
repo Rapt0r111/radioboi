@@ -1,5 +1,5 @@
-// apps/web/src/lib/network/gameClient.ts
 "use client";
+// apps/web/src/lib/network/gameClient.ts
 
 import {
   type ClientGameEvent,
@@ -14,8 +14,8 @@ import { decodeServerEvent, encodeClientEvent, FrameDecodeError } from "./msgpac
 
 const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8787";
 const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
-const RECONNECT_JITTER = 0.2;
+const RECONNECT_MAX_MS  = 30_000;
+const RECONNECT_JITTER  = 0.2;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,10 +32,10 @@ type HandlerMap = {
 export class GameClient {
   #ws: WebSocket | null = null;
   #status: ConnectionStatus = "disconnected";
-  #reconnectDelay: number = RECONNECT_BASE_MS;
+  #reconnectDelay  = RECONNECT_BASE_MS;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  #destroyed: boolean = false;
-  #url: string = "";
+  #destroyed = false;
+  #url = "";
 
   readonly #handlers: HandlerMap = {};
   readonly #statusListeners = new Set<(status: ConnectionStatus) => void>();
@@ -56,9 +56,7 @@ export class GameClient {
     this.#setStatus("disconnected");
   }
 
-  get status(): ConnectionStatus {
-    return this.#status;
-  }
+  get status(): ConnectionStatus { return this.#status; }
 
   // ── Sending ───────────────────────────────────────────────────────────────
 
@@ -174,33 +172,21 @@ export class GameClient {
     this.#dispatch(event);
   }
 
-  /**
-   * Applies known server events to the Zustand gameStore.
-   *
-   * SYNC_STATE is the authoritative source of truth — sent after every phase
-   * transition and after each RESOLVE_HIT.  We also apply a few events
-   * eagerly so the UI reacts immediately without waiting for SYNC_STATE.
-   */
   #applyToStore(event: ServerGameEvent): void {
     const store = useGameStore.getState();
 
     switch (event.type) {
       case GameEventType.PLAYER_JOINED:
-        // When a second player joins, the server now sends SYNC_STATE to all
-        // players (see GameRoomArbitrator fix), so phase "lobby" → "placement"
-        // is handled by the SYNC_STATE handler below.  Nothing extra needed.
         break;
 
       case GameEventType.GAME_STARTED:
-        // Eagerly advance to battle phase. SYNC_STATE follows immediately and
-        // will also set isMyTurn correctly.
+        // Async mode sends firstTurnPlayerId="" — only advance phase, don't set turn
         store.setPhase("battle");
         break;
 
       case GameEventType.INCOMING_MISSILE:
         store.addMissile({
           id: event.payload.missileId,
-          // Defender does not know the target yet; placeholder required by type.
           target: "" as unknown as Coordinate,
           launchedAt: event.payload.timestamp,
         });
@@ -210,18 +196,20 @@ export class GameClient {
         store.interceptMissile(event.payload.missileId);
         if (event.payload.isGameOver) {
           store.setPhase("gameOver");
-          useGameStore.setState({ winnerId: event.payload.winnerId ?? null }); // ← добавить
+          useGameStore.setState({ winnerId: event.payload.winnerId ?? null });
         }
         break;
 
-      // Full authoritative snapshot — sync phase, boards, and turn flag atomically.
       case GameEventType.SYNC_STATE:
         store.syncFromServer(event.payload);
         break;
 
+      // Async mode: server tells us exactly when we can fire again
+      case GameEventType.ATTACK_COOLDOWN_UPDATE:
+        store.setAttackCooldown(event.payload.expiresAt);
+        break;
+
       case GameEventType.ERROR:
-        // MORSE_MISMATCH on an intercept attempt is expected game feedback —
-        // log at info level, not error, to avoid console noise.
         if (event.payload.code === "MORSE_MISMATCH") {
           console.info(`[GameClient] Server: ${event.payload.message}`);
         } else {
@@ -252,7 +240,7 @@ export function getGameClient(): GameClient {
   if (typeof window === "undefined") {
     throw new Error(
       "getGameClient() must only be called in browser environments. " +
-      "Use dynamic import or wrap in useEffect.",
+        "Use dynamic import or wrap in useEffect.",
     );
   }
   _instance ??= new GameClient();

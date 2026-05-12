@@ -1,13 +1,11 @@
 // apps/worker/src/protocol.ts
-// Binary serialisation helpers for the Worker.
-// All network frames use @msgpack/msgpack to minimise bytes and avoid
-// JSON string-parsing overhead on the hot path.
 //
-// FIX (HIGH): makeSyncState теперь принимает shotLog — историю выстрелов,
-// уже отформатированную с точки зрения конкретного игрока (by: "us"|"them").
-// Это позволяет восстанавливать историю при реконнекте через SYNC_STATE.
+// Binary serialisation helpers for the Worker.
+// FIX: makeSyncState now accepts settings + attackCooldownExpiresAt for async mode.
+// NEW:  makeAttackCooldownUpdate — sent to attacker after resolve in async mode.
 
 import { decode, encode } from "@msgpack/msgpack";
+import type { RoomSettings } from "./game-logic";
 
 type RawEvent = { type: string; payload: Record<string, unknown> };
 
@@ -22,10 +20,8 @@ export function encodeEvent(event: RawEvent): Uint8Array {
 export function decodeEvent(msg: string | ArrayBuffer): RawEvent | null {
   try {
     if (typeof msg === "string") return null;
-
     const buf = msg instanceof ArrayBuffer ? new Uint8Array(msg) : msg;
     const value = decode(buf);
-
     if (
       typeof value !== "object" ||
       value === null ||
@@ -34,7 +30,6 @@ export function decodeEvent(msg: string | ArrayBuffer): RawEvent | null {
     ) {
       return null;
     }
-
     return value as RawEvent;
   } catch {
     return null;
@@ -48,17 +43,11 @@ export function makePlayerJoined(
   playerName: string,
   playerCount: 1 | 2,
 ): Uint8Array {
-  return encodeEvent({
-    type: "PLAYER_JOINED",
-    payload: { playerId, playerName, playerCount },
-  });
+  return encodeEvent({ type: "PLAYER_JOINED", payload: { playerId, playerName, playerCount } });
 }
 
 export function makeGameStarted(firstTurnPlayerId: string): Uint8Array {
-  return encodeEvent({
-    type: "GAME_STARTED",
-    payload: { firstTurnPlayerId },
-  });
+  return encodeEvent({ type: "GAME_STARTED", payload: { firstTurnPlayerId } });
 }
 
 export function makeIncomingMissile(
@@ -96,7 +85,6 @@ export function makeResolveHit(
   });
 }
 
-/** Элемент истории выстрелов в SYNC_STATE (перспектива конкретного игрока). */
 type ShotLogEntry = {
   by: "us" | "them";
   coord: string;
@@ -110,9 +98,10 @@ export function makeSyncState(
   enemyBoard: Record<string, string>,
   activeMissiles: unknown[],
   isMyTurn: boolean,
-  /** История выстрелов с точки зрения получателя. Обязателен (передай [] если нет ходов). */
   shotLog: ShotLogEntry[],
   winnerId?: string,
+  settings?: RoomSettings,
+  attackCooldownExpiresAt?: number,
 ): Uint8Array {
   return encodeEvent({
     type: "SYNC_STATE",
@@ -124,7 +113,17 @@ export function makeSyncState(
       isMyTurn,
       shotLog,
       ...(winnerId !== undefined ? { winnerId } : {}),
+      ...(settings !== undefined ? { settings } : {}),
+      ...(attackCooldownExpiresAt !== undefined ? { attackCooldownExpiresAt } : {}),
     },
+  });
+}
+
+/** Sent only to the attacker immediately after their missile resolves (async mode) */
+export function makeAttackCooldownUpdate(expiresAt: number): Uint8Array {
+  return encodeEvent({
+    type: "ATTACK_COOLDOWN_UPDATE",
+    payload: { expiresAt },
   });
 }
 

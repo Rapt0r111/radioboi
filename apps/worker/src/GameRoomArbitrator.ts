@@ -1,30 +1,31 @@
 // apps/worker/src/GameRoomArbitrator.ts
 //
-// FIX (CRITICAL): #handleAttackerTimeout теперь ставит новый alarm для следующего
-//   игрока. Без этого после первого таймаута игра замораживалась навсегда —
-//   alarm больше не существовал, ход никогда не передавался следующему атакующему.
-//
-// FIX (HIGH): #sendSyncToAll теперь передаёт shotLog в SYNC_STATE.
-//   Ранее история выстрелов терялась при реконнекте — syncFromServer получал
-//   пустой список. Теперь сервер формирует log из перспективы каждого игрока
-//   (by: "us"|"them") и включает его в снапшот.
-//
-// EXISTING FIXES (kept from original):
-//   - extends DurableObject<Env> вместо implements (FIX HIGH)
-//   - Серверная валидация геометрии кораблей в #handleShipsPlaced (FIX HIGH)
-//   - PLAYER_JOINED не рассылается при реконнекте (FIX MEDIUM)
-//   - Серверный таймаут хода атакующего (FIX MEDIUM)
+// KEY CHANGES for async mode:
+//   - Loads RoomSettings from KV on first fetch (room creator stored them)
+//   - #alarm() uses pendingAlarms[] — processes all expired alarms, then
+//     re-schedules for the next earliest one (supports multiple missiles in flight)
+//   - #handleMissileLaunched uses addInterceptAlarm() (no more ALARM_TYPE_KEY)
+//   - #handleAttackPrep does NOT delete alarm — no attacker turn alarm in async
+//   - After resolveHit, sends makeAttackCooldownUpdate to attacker in async mode
+//   - #sendSyncToAll passes settings + per-player cooldown to each client
 
 import { DurableObject } from "cloudflare:workers";
-import type { RoomPhase, RoomState } from "./game-logic";
+import type { PendingAlarm, RoomSettings, RoomState } from "./game-logic";
 import {
+  addAttackerTurnAlarm,
+  addInterceptAlarm,
   addPlayer,
   applyShipsPlaced,
   createRoomState,
+  DEFAULT_SETTINGS,
+  formatCoordForShotLog,
   getEnemyBoard,
   getOpponentId,
   getOwnBoard,
-  MAX_INTERCEPT_ATTEMPTS,
+  isValidCoordinate,
+  nextAlarmAt,
+  parseCoordinate,
+  popExpiredAlarms,
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
@@ -34,6 +35,7 @@ import {
 import { validateMorseForCoord } from "./morse";
 import {
   decodeEvent,
+  makeAttackCooldownUpdate,
   makeError,
   makeGameStarted,
   makeIncomingMissile,
@@ -43,25 +45,9 @@ import {
 } from "./protocol";
 import type { Env } from "./types";
 
-import { isValidCoordinate, parseCoordinate as parseCoordCore } from "@radioboi/game-core";
-
-function coordToIndices(coord: string): { colIndex: number; rowIndex: number } | null {
-  if (!isValidCoordinate(coord)) return null;
-  return parseCoordCore(coord);
-}
-
-/** Форматирует координату для отображения: "АБВ005" → "АБВ-5" */
-function formatCoordForShotLog(coord: string): string {
-  const col = coord.slice(0, 3);
-  const rowNum = Number(coord.slice(3, 6));
-  return `${col}-${rowNum}`;
-}
-
 const STATE_KEY = "room:state";
 const WS_TAG_PREFIX = "player:";
 const ATTACKER_TURN_TIMEOUT_MS = 90_000;
-const ALARM_TYPE_KEY = "alarm:type";
-type AlarmType = "intercept_timeout" | "attacker_timeout";
 
 export class GameRoomArbitrator extends DurableObject<Env> {
 
@@ -74,8 +60,8 @@ export class GameRoomArbitrator extends DurableObject<Env> {
 
     const url = new URL(request.url);
     const roomId = url.pathname.split("/").pop() ?? "unknown";
-    const playerId = url.searchParams.get("playerId");
-    const playerName = url.searchParams.get("playerName") ?? "Player";
+    const playerId     = url.searchParams.get("playerId");
+    const playerName   = url.searchParams.get("playerName") ?? "Player";
 
     if (!playerId) {
       return new Response("Missing playerId query param", { status: 400 });
@@ -108,13 +94,12 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       );
     }
 
-    // Всегда шлём SYNC_STATE всем — клиент увидит актуальное состояние
     this.#sendSyncToAll(roomState);
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // ── WebSocket event handlers (Hibernation API) ─────────────────────────────
+  // ── WebSocket event handlers ───────────────────────────────────────────────
 
   override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     const event = decodeEvent(raw);
@@ -154,48 +139,64 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     ws.close(1011, "WebSocket error");
   }
 
-  // ── DO Alarm ───────────────────────────────────────────────────────────────
+  // ── DO Alarm — unified multi-alarm handler ─────────────────────────────────
+  //
+  // Uses pendingAlarms[] in state instead of a single ALARM_TYPE_KEY.
+  // On each alarm fire:
+  //   1. Pop all expired alarms from state.pendingAlarms
+  //   2. Process each (intercept_timeout or attacker_turn_timeout)
+  //   3. Re-schedule for the next earliest remaining alarm
+  //
+  // This allows simultaneous missiles in async mode (each has its own alarm).
 
   override async alarm(): Promise<void> {
-    const alarmType = await this.ctx.storage.get<AlarmType>(ALARM_TYPE_KEY);
     const state = await this.#loadState();
+    const expired = popExpiredAlarms(state);
 
-    if (alarmType === "attacker_timeout") {
-      await this.#handleAttackerTimeout(state);
-    } else {
-      await this.#handleInterceptTimeout(state);
+    for (const alarmEntry of expired) {
+      if (alarmEntry.type === "intercept_timeout" && alarmEntry.missileId) {
+        await this.#handleInterceptTimeout(state, alarmEntry.missileId, alarmEntry.attackerId);
+      } else if (alarmEntry.type === "attacker_turn_timeout") {
+        await this.#handleAttackerTimeout(state);
+      }
     }
+
+    await this.#saveState(state);
+    await this.#rescheduleAlarm(state);
   }
 
-  // ── Attacker turn timeout ───────────────────────────────────────────────────
+  // ── Attacker turn timeout (turn-based only) ────────────────────────────────
 
   async #handleAttackerTimeout(state: RoomState): Promise<void> {
-    if (state.phase !== "battle" || state.pendingAttack !== null) return;
+    if (state.phase !== "battle" || Object.keys(state.pendingAttacks).length > 0) return;
     const opponentId = state.currentTurnId
       ? getOpponentId(state, state.currentTurnId)
       : null;
     if (!opponentId) return;
     state.currentTurnId = opponentId;
-    await this.#saveState(state);
     this.#sendSyncToAll(state);
 
-    // FIX (CRITICAL): Ставим новый alarm для следующего игрока.
-    // Без этого после первого таймаута ход никогда не передаётся снова —
-    // alarm исчез, следующий атакующий может бездействовать вечно.
-    if (state.phase === "battle") {
-      await this.ctx.storage.put<AlarmType>(ALARM_TYPE_KEY, "attacker_timeout");
-      await this.ctx.storage.setAlarm(Date.now() + ATTACKER_TURN_TIMEOUT_MS);
+    // Schedule alarm for the new attacker's turn
+    if (state.phase === "battle" && state.settings.battleMode === "turn-based") {
+      addAttackerTurnAlarm(state, ATTACKER_TURN_TIMEOUT_MS);
     }
   }
 
-  // ── Intercept timeout (27s after MISSILE_LAUNCHED) ─────────────────────────
+  // ── Intercept timeout ──────────────────────────────────────────────────────
 
-  async #handleInterceptTimeout(state: RoomState): Promise<void> {
-    const attack = state.pendingAttack;
+  async #handleInterceptTimeout(
+    state: RoomState,
+    missileId: string,
+    attackerId?: string,
+  ): Promise<void> {
+    // Find the pending attack
+    const attack = attackerId
+      ? state.pendingAttacks[attackerId]
+      : Object.values(state.pendingAttacks).find((a) => a.missileId === missileId);
+
     if (!attack) return;
 
     const result = resolveHit(state, attack.attackerId, attack.target, attack.missileId);
-    await this.#saveState(state);
 
     this.#broadcast(
       makeResolveHit(
@@ -210,12 +211,16 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       null,
     );
 
+    // Async: send cooldown update to attacker
+    if (state.settings.battleMode === "async" && result.cooldownExpiresAt !== undefined) {
+      this.#sendToPlayer(attack.attackerId, makeAttackCooldownUpdate(result.cooldownExpiresAt));
+    }
+
     this.#sendSyncToAll(state);
 
-    // Запускаем таймаут следующего хода
-    if (!result.isGameOver && state.currentTurnId !== null) {
-      await this.ctx.storage.put<AlarmType>(ALARM_TYPE_KEY, "attacker_timeout");
-      await this.ctx.storage.setAlarm(Date.now() + ATTACKER_TURN_TIMEOUT_MS);
+    // Turn-based: schedule next attacker's turn alarm
+    if (!result.isGameOver && state.settings.battleMode === "turn-based" && state.currentTurnId) {
+      addAttackerTurnAlarm(state, ATTACKER_TURN_TIMEOUT_MS);
     }
   }
 
@@ -272,17 +277,20 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     applyShipsPlaced(state, playerId, parsedShips);
     await this.#saveState(state);
 
-    const phaseAfterPlacement = state.phase as RoomPhase;
-
-    if (phaseAfterPlacement === "battle") {
-      const firstTurnId = state.currentTurnId;
-      if (firstTurnId !== null) {
-        this.#broadcast(makeGameStarted(firstTurnId), null);
+    if (state.phase === "battle") {
+      // Turn-based: announce first turn; async: no first turn
+      if (state.settings.battleMode === "turn-based" && state.currentTurnId !== null) {
+        this.#broadcast(makeGameStarted(state.currentTurnId), null);
+        addAttackerTurnAlarm(state, ATTACKER_TURN_TIMEOUT_MS);
+        await this.#saveState(state);
+        await this.#rescheduleAlarm(state);
+      } else if (state.settings.battleMode === "async") {
+        // Broadcast a "game started" with empty firstTurnPlayerId to signal async mode
+        this.#broadcast(makeGameStarted(""), null);
       }
       this.#sendSyncToAll(state);
-      await this.ctx.storage.put<AlarmType>(ALARM_TYPE_KEY, "attacker_timeout");
-      await this.ctx.storage.setAlarm(Date.now() + ATTACKER_TURN_TIMEOUT_MS);
     } else {
+      // Only one player placed — send personal sync
       this.#sendToPlayer(
         playerId,
         makeSyncState(
@@ -290,9 +298,11 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           getOwnBoard(state, playerId),
           getEnemyBoard(state, playerId),
           state.activeMissiles,
-          state.currentTurnId === playerId,
-          [],  // no shots yet in placement phase
-          state.winnerId ?? undefined,
+          false,
+          [],
+          undefined,
+          state.settings,
+          undefined,
         ),
       );
     }
@@ -304,7 +314,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    const target = payload.target;
+    const target   = payload.target;
     const missileId = payload.missileId;
 
     if (typeof target !== "string" || typeof missileId !== "string") {
@@ -319,8 +329,15 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     }
 
     await this.#saveState(state);
-    // Атакующий начал атаку — снимаем таймаут хода
-    await this.ctx.storage.deleteAlarm();
+
+    // Turn-based: cancel the attacker-turn alarm once they start attacking
+    if (state.settings.battleMode === "turn-based") {
+      state.pendingAlarms = state.pendingAlarms.filter(
+        (a) => a.type !== "attacker_turn_timeout",
+      );
+      await this.#saveState(state);
+      await this.#rescheduleAlarm(state);
+    }
   }
 
   async #handleMissileLaunched(
@@ -329,10 +346,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    const missileId = payload.missileId;
-    const target = payload.target;
-    const morseSequence = payload.morseSequence;
-    const timestamp = payload.timestamp;
+    const { missileId, target, morseSequence, timestamp } = payload;
 
     if (
       typeof missileId !== "string" ||
@@ -344,39 +358,41 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return;
     }
 
-    const attack = state.pendingAttack;
-    if (!attack || attack.missileId !== missileId || attack.attackerId !== playerId) {
+    const attack = state.pendingAttacks[playerId];
+    if (!attack || attack.missileId !== missileId) {
       ws.send(makeError("NO_PENDING_ATTACK", "No matching ATTACK_PREP found"));
       return;
     }
 
     if (attack.target !== target) {
-      state.pendingAttack = null;
+      delete state.pendingAttacks[playerId];
       await this.#saveState(state);
       ws.send(makeError("INVALID_COORDINATE", "MISSILE_LAUNCHED target differs from ATTACK_PREP"));
       return;
     }
 
-    const indices = coordToIndices(target);
+    const indices = this.#parseCoordIndices(target);
     if (!indices) {
-      state.pendingAttack = null;
+      delete state.pendingAttacks[playerId];
       await this.#saveState(state);
-      ws.send(makeError("INVALID_COORDINATE", `Invalid target coordinate: ${target}`));
+      ws.send(makeError("INVALID_COORDINATE", `Invalid target: ${target}`));
       return;
     }
 
     if (!validateMorseForCoord(morseSequence as string[], indices.colIndex, indices.rowIndex)) {
-      state.pendingAttack = null;
+      delete state.pendingAttacks[playerId];
       await this.#saveState(state);
-      ws.send(makeError("MORSE_MISMATCH", "Morse sequence does not match target coordinate"));
+      ws.send(makeError("MORSE_MISMATCH", "Morse sequence does not match target"));
       return;
     }
 
     recordMorseSequence(state, missileId, morseSequence as string[]);
-    await this.#saveState(state);
 
-    await this.ctx.storage.put<AlarmType>(ALARM_TYPE_KEY, "intercept_timeout");
-    await this.ctx.storage.setAlarm(Date.now() + 27_000);
+    // Add intercept alarm using settings window
+    addInterceptAlarm(state, missileId, playerId, state.settings.interceptWindowMs);
+
+    await this.#saveState(state);
+    await this.#rescheduleAlarm(state);
 
     const opponentId = getOpponentId(state, playerId);
     if (opponentId) {
@@ -385,8 +401,8 @@ export class GameRoomArbitrator extends DurableObject<Env> {
         makeIncomingMissile(
           missileId,
           morseSequence as string[],
-          timestamp,
-          MAX_INTERCEPT_ATTEMPTS,
+          timestamp as number,
+          state.settings.maxInterceptAttempts,
         ),
       );
     }
@@ -398,9 +414,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     payload: Record<string, unknown>,
     state: RoomState,
   ): Promise<void> {
-    const missileId = payload.missileId;
-    const decodedCoord = payload.decodedCoord;
-    const attemptNumber = payload.attemptNumber;
+    const { missileId, decodedCoord, attemptNumber } = payload;
 
     if (
       typeof missileId !== "string" ||
@@ -416,7 +430,8 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return;
     }
 
-    const forceResolve = attemptNumber >= MAX_INTERCEPT_ATTEMPTS;
+    const maxAttempts = state.settings.maxInterceptAttempts;
+    const forceResolve = attemptNumber >= maxAttempts;
 
     const resolveResult = processInterceptAttempt(
       state,
@@ -433,8 +448,13 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return;
     }
 
-    await this.ctx.storage.deleteAlarm();
+    // Remove intercept alarm for this missile (resolved early)
+    state.pendingAlarms = state.pendingAlarms.filter(
+      (a) => !(a.type === "intercept_timeout" && a.missileId === missileId),
+    );
+
     await this.#saveState(state);
+    await this.#rescheduleAlarm(state);
 
     const lastShot = state.shotLog[state.shotLog.length - 1];
     const shotTarget = lastShot?.target ?? "";
@@ -453,15 +473,38 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       null,
     );
 
+    // Async: send cooldown update to the attacker
+    if (
+      state.settings.battleMode === "async" &&
+      resolveResult.cooldownExpiresAt !== undefined &&
+      lastShot?.attackerId
+    ) {
+      this.#sendToPlayer(
+        lastShot.attackerId,
+        makeAttackCooldownUpdate(resolveResult.cooldownExpiresAt),
+      );
+    }
+
     this.#sendSyncToAll(state);
 
-    if (!resolveResult.isGameOver && state.currentTurnId !== null) {
-      await this.ctx.storage.put<AlarmType>(ALARM_TYPE_KEY, "attacker_timeout");
-      await this.ctx.storage.setAlarm(Date.now() + ATTACKER_TURN_TIMEOUT_MS);
+    // Turn-based: schedule next attacker's turn alarm
+    if (
+      !resolveResult.isGameOver &&
+      state.settings.battleMode === "turn-based" &&
+      state.currentTurnId !== null
+    ) {
+      addAttackerTurnAlarm(state, ATTACKER_TURN_TIMEOUT_MS);
+      await this.#saveState(state);
+      await this.#rescheduleAlarm(state);
     }
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  #parseCoordIndices(coord: string): { colIndex: number; rowIndex: number } | null {
+    if (!isValidCoordinate(coord)) return null;
+    return parseCoordinate(coord);
+  }
 
   #sendToPlayer(playerId: string, frame: Uint8Array): void {
     for (const ws of this.ctx.getWebSockets(`${WS_TAG_PREFIX}${playerId}`)) {
@@ -480,14 +523,11 @@ export class GameRoomArbitrator extends DurableObject<Env> {
   }
 
   /**
-   * Отправляет SYNC_STATE каждому игроку с правильной перспективой.
-   *
-   * FIX (HIGH): теперь включает shotLog — историю выстрелов, отформатированную
-   * с точки зрения каждого игрока (by: "us"|"them"). До этого исправления
-   * история выстрелов терялась при реконнекте, потому что SYNC_STATE её
-   * не передавал, а syncFromServer затирал накопленный лог пустым массивом.
+   * Sends SYNC_STATE to each player with their own perspective.
+   * Includes room settings and per-player cooldown (async mode).
    */
   #sendSyncToAll(state: RoomState): void {
+    const now = Date.now();
     for (const player of state.players) {
       const shotLog = state.shotLog.map((entry) => ({
         by: entry.attackerId === player.id ? "us" as const : "them" as const,
@@ -496,6 +536,18 @@ export class GameRoomArbitrator extends DurableObject<Env> {
         ts: entry.ts,
       }));
 
+      // isMyTurn: true in turn-based when it's their turn;
+      //           always false in async (no concept of "my turn")
+      const isMyTurn =
+        state.settings.battleMode === "turn-based"
+          ? state.currentTurnId === player.id
+          : false;
+
+      const cooldownExpires =
+        state.settings.battleMode === "async"
+          ? (state.attackCooldowns[player.id] ?? 0)
+          : undefined;
+
       this.#sendToPlayer(
         player.id,
         makeSyncState(
@@ -503,11 +555,23 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           getOwnBoard(state, player.id),
           getEnemyBoard(state, player.id),
           state.activeMissiles,
-          state.currentTurnId === player.id,
+          isMyTurn,
           shotLog,
           state.winnerId ?? undefined,
+          state.settings,
+          cooldownExpires !== undefined && cooldownExpires > now ? cooldownExpires : 0,
         ),
       );
+    }
+  }
+
+  /** Sets DO alarm to the next pending alarm, or deletes it if none remain. */
+  async #rescheduleAlarm(state: RoomState): Promise<void> {
+    const next = nextAlarmAt(state);
+    if (next === null) {
+      await this.ctx.storage.deleteAlarm();
+    } else {
+      await this.ctx.storage.setAlarm(next);
     }
   }
 
@@ -515,8 +579,25 @@ export class GameRoomArbitrator extends DurableObject<Env> {
 
   async #loadState(roomId?: string): Promise<RoomState> {
     const stored = await this.ctx.storage.get<RoomState>(STATE_KEY);
-    if (stored) return stored;
-    return createRoomState(roomId ?? "room");
+    if (stored) {
+      // Back-compat: older state without pendingAlarms / pendingAttacks
+      if (!stored.pendingAlarms) stored.pendingAlarms = [];
+      if (!stored.pendingAttacks) stored.pendingAttacks = {};
+      if (!stored.attackCooldowns) stored.attackCooldowns = {};
+      if (!stored.settings) stored.settings = DEFAULT_SETTINGS;
+      return stored;
+    }
+
+    // First time: try to load settings from KV (set by room creator via lobby action)
+    let settings: RoomSettings = DEFAULT_SETTINGS;
+    if (roomId) {
+      try {
+        const raw = await this.env.ROOM_STATE.get(`settings:${roomId}`);
+        if (raw) settings = JSON.parse(raw) as RoomSettings;
+      } catch { /* use defaults */ }
+    }
+
+    return createRoomState(roomId ?? "room", settings);
   }
 
   async #saveState(state: RoomState): Promise<void> {
