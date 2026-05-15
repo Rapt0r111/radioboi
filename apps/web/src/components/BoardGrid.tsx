@@ -10,6 +10,7 @@ function cellClass(
   isEnemy: boolean,
   isPlacement: boolean,
   isSelected: boolean,
+  isHighlighted: boolean,
 ): string {
   const base =
     "relative flex h-8 w-8 items-center justify-center text-[11px] font-mono sm:h-9 sm:w-9 lg:h-10 lg:w-10 " +
@@ -23,6 +24,9 @@ function cellClass(
 
   // ── Placement mode ────────────────────────────────────────────────────
   if (isPlacement) {
+    if (isHighlighted) {
+      return `${base} bg-[var(--color-morse-amber)]/20 border-[var(--color-morse-amber)] text-[var(--color-morse-amber)] ring-1 ring-[var(--color-morse-amber)]/60 enabled:cursor-pointer`;
+    }
     switch (state) {
       case "ship":
         return `${base} bg-[var(--color-radar-green)]/20 border-[var(--color-radar-green)]/60 enabled:cursor-pointer`;
@@ -97,6 +101,7 @@ type Props = {
    * Highlights the selected enemy target in amber.
    */
   selectedCoord?: Coordinate | null;
+  highlightedCoords?: ReadonlySet<Coordinate> | readonly Coordinate[];
   /**
    * Disables the whole board without changing already-known cell states.
    */
@@ -112,9 +117,15 @@ export function BoardGrid({
   isPlacement = false,
   onCellClick,
   selectedCoord = null,
+  highlightedCoords,
   isInteractive = true,
   disabledMessage,
 }: Props) {
+  const highlightedSet =
+    highlightedCoords instanceof Set
+      ? highlightedCoords
+      : new Set(highlightedCoords ?? []);
+
   return (
     <table
       className="border-separate border-spacing-0.5"
@@ -151,6 +162,7 @@ export function BoardGrid({
               const coord = (col + row) as Coordinate;
               const state = board[coord];
               const isSelected = selectedCoord === coord;
+              const isHighlighted = highlightedSet.has(coord);
               const isDisabled =
                 !isInteractive || isCellDisabled(state, isEnemy, isPlacement);
 
@@ -161,7 +173,7 @@ export function BoardGrid({
                     data-coord={coord}
                     aria-label={`${col}${rowIndex}${isSelected ? " (цель)" : ""} — ${state ?? "пусто"}${!isInteractive && disabledMessage ? `. ${disabledMessage}` : ""}`}
                     aria-pressed={isSelected}
-                    className={cellClass(state, isEnemy, isPlacement, isSelected)}
+                    className={cellClass(state, isEnemy, isPlacement, isSelected, isHighlighted)}
                     onClick={() => onCellClick?.(coord)}
                     disabled={isDisabled}
                     title={!isInteractive ? disabledMessage : undefined}

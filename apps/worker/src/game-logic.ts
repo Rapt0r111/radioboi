@@ -50,6 +50,37 @@ export const DEFAULT_SETTINGS: RoomSettings = {
   maxInterceptAttempts: 3,
 };
 
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+export function clampRoomSettings(raw: unknown): RoomSettings {
+  const record =
+    typeof raw === "object" && raw !== null ? raw as Partial<RoomSettings> : {};
+  return {
+    battleMode: record.battleMode === "async" ? "async" : "turn-based",
+    attackCooldownMs: clampNumber(
+      record.attackCooldownMs,
+      5_000,
+      60_000,
+      DEFAULT_SETTINGS.attackCooldownMs,
+    ),
+    interceptWindowMs: clampNumber(
+      record.interceptWindowMs,
+      10_000,
+      60_000,
+      DEFAULT_SETTINGS.interceptWindowMs,
+    ),
+    maxInterceptAttempts: clampNumber(
+      record.maxInterceptAttempts,
+      1,
+      5,
+      DEFAULT_SETTINGS.maxInterceptAttempts,
+    ),
+  };
+}
+
 export type PendingAlarm = {
   type: "intercept_timeout" | "attacker_turn_timeout";
   /** Present for intercept_timeout */
@@ -94,6 +125,20 @@ export const REQUIRED_FLEET = new Map<number, number>([
   [2, 3],
   [1, 4],
 ]);
+
+function secureRandomIndex(maxExclusive: number): number {
+  if (!Number.isInteger(maxExclusive) || maxExclusive <= 0) {
+    throw new RangeError(`secureRandomIndex: invalid maxExclusive=${maxExclusive}`);
+  }
+
+  const bytes = new Uint32Array(1);
+  crypto.getRandomValues(bytes);
+  const value = bytes[0];
+  if (value === undefined) {
+    throw new Error("secureRandomIndex: crypto.getRandomValues returned no data");
+  }
+  return value % maxExclusive;
+}
 
 // ── Column/row triplet definitions ────────────────────────────────────────────
 
@@ -266,7 +311,7 @@ export function applyShipsPlaced(
   if (state.players.length === 2 && state.players.every((p) => p.isReady)) {
     state.phase = "battle";
     if (state.settings.battleMode === "turn-based") {
-      const randomIdx = Math.random() < 0.5 ? 0 : 1;
+      const randomIdx = secureRandomIndex(state.players.length);
       state.currentTurnId = state.players[randomIdx]?.id ?? null;
     } else {
       // Async: no turns — both players start ready
@@ -455,7 +500,9 @@ export function resolveHit(
     );
   }
 
-  return { result, isGameOver, winnerId, cooldownExpiresAt };
+  return cooldownExpiresAt === undefined
+    ? { result, isGameOver, winnerId }
+    : { result, isGameOver, winnerId, cooldownExpiresAt };
 }
 
 // ── Alarm helpers ─────────────────────────────────────────────────────────────

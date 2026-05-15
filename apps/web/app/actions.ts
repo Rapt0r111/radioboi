@@ -19,6 +19,7 @@ type RoomRecord = {
 };
 
 type JoinResult = { success: true; roomId: string } | { error: string };
+const ROOM_CODE_RE = /^[A-Z0-9]{6}$/;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -41,12 +42,32 @@ function getKV(): KVNamespace {
   return kv;
 }
 
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
 function clampSettings(raw: Partial<RoomSettings>): RoomSettings {
   return {
     battleMode: raw.battleMode === "async" ? "async" : "turn-based",
-    attackCooldownMs: Math.min(60_000, Math.max(5_000, raw.attackCooldownMs ?? DEFAULT_ROOM_SETTINGS.attackCooldownMs)),
-    interceptWindowMs: Math.min(60_000, Math.max(10_000, raw.interceptWindowMs ?? DEFAULT_ROOM_SETTINGS.interceptWindowMs)),
-    maxInterceptAttempts: Math.min(5, Math.max(1, raw.maxInterceptAttempts ?? DEFAULT_ROOM_SETTINGS.maxInterceptAttempts)),
+    attackCooldownMs: clampNumber(
+      raw.attackCooldownMs,
+      5_000,
+      60_000,
+      DEFAULT_ROOM_SETTINGS.attackCooldownMs,
+    ),
+    interceptWindowMs: clampNumber(
+      raw.interceptWindowMs,
+      10_000,
+      60_000,
+      DEFAULT_ROOM_SETTINGS.interceptWindowMs,
+    ),
+    maxInterceptAttempts: clampNumber(
+      raw.maxInterceptAttempts,
+      1,
+      5,
+      DEFAULT_ROOM_SETTINGS.maxInterceptAttempts,
+    ),
   };
 }
 
@@ -84,7 +105,7 @@ export async function createRoomAction(settings?: Partial<RoomSettings>): Promis
 export async function joinRoomAction(code: string): Promise<JoinResult> {
   const normalized = code.trim().toUpperCase();
 
-  if (normalized.length !== 6) {
+  if (!ROOM_CODE_RE.test(normalized)) {
     return { error: "Invalid room code" };
   }
 

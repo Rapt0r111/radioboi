@@ -25,7 +25,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
       </header>
 
       {/* ── Форма (client component) ────────────────────────────────────────── */}
-      <LobbyCreateForm initialError={error ? decodeURIComponent(error) : undefined} />
+      <LobbyCreateForm {...(error ? { initialError: decodeURIComponent(error) } : {})} />
 
       {/* ── Футер ──────────────────────────────────────────────────────────── */}
       <footer className="font-mono text-[10px] text-miss-white/20">

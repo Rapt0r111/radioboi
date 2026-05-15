@@ -10,7 +10,37 @@ import type { RoomSettings } from "@radioboi/game-core";
 import { DEFAULT_ROOM_SETTINGS } from "@radioboi/game-core";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { createRoomAction, joinRoomAction } from "../../app/actions"
+import { createRoomAction, joinRoomAction } from "../../app/actions";
+
+const ROOM_CODE_RE = /^[A-Z0-9]{6}$/;
+
+const SETTINGS_PRESETS: Array<{ id: string; label: string; settings: RoomSettings }> = [
+  {
+    id: "classic",
+    label: "CLASSIC",
+    settings: DEFAULT_ROOM_SETTINGS,
+  },
+  {
+    id: "rapid",
+    label: "RAPID",
+    settings: {
+      battleMode: "turn-based",
+      attackCooldownMs: 10_000,
+      interceptWindowMs: 15_000,
+      maxInterceptAttempts: 2,
+    },
+  },
+  {
+    id: "async",
+    label: "ASYNC",
+    settings: {
+      battleMode: "async",
+      attackCooldownMs: 20_000,
+      interceptWindowMs: 25_000,
+      maxInterceptAttempts: 3,
+    },
+  },
+];
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -99,15 +129,16 @@ type SegmentProps = {
 
 function CrtSegment({ id, label, options, value, onChange }: SegmentProps) {
   return (
-    <div className="flex flex-col gap-2">
-      <label className="font-mono text-xs uppercase tracking-widest text-miss-white/60">
+    <fieldset className="flex flex-col gap-2">
+      <legend className="font-mono text-xs uppercase tracking-widest text-miss-white/60">
         {label}
-      </label>
-      <div id={id} className="flex gap-1" role="group" aria-label={label}>
+      </legend>
+      <div id={id} className="flex gap-1">
         {options.map((opt) => (
           <button
             key={opt.value}
             type="button"
+            aria-pressed={value === opt.value}
             onClick={() => onChange(opt.value)}
             className={`
               flex-1 rounded border px-2 py-1.5 font-mono text-[10px] uppercase tracking-widest
@@ -122,7 +153,7 @@ function CrtSegment({ id, label, options, value, onChange }: SegmentProps) {
           </button>
         ))}
       </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -145,6 +176,13 @@ export function LobbyCreateForm({ initialError }: Props) {
   const [cooldownMs, setCooldownMs] = useState(DEFAULT_ROOM_SETTINGS.attackCooldownMs);
   const [interceptMs, setInterceptMs] = useState(DEFAULT_ROOM_SETTINGS.interceptWindowMs);
   const [maxAttempts, setMaxAttempts] = useState(DEFAULT_ROOM_SETTINGS.maxInterceptAttempts);
+
+  function applySettings(settings: RoomSettings): void {
+    setIsAsync(settings.battleMode === "async");
+    setCooldownMs(settings.attackCooldownMs);
+    setInterceptMs(settings.interceptWindowMs);
+    setMaxAttempts(settings.maxInterceptAttempts);
+  }
 
   function buildSettings(): Partial<RoomSettings> {
     return {
@@ -169,8 +207,8 @@ export function LobbyCreateForm({ initialError }: Props) {
   function handleJoin(e: React.FormEvent) {
     e.preventDefault();
     const code = joinCode.trim().toUpperCase();
-    if (code.length !== 6) {
-      setJoinError("Code must be exactly 6 characters");
+    if (!ROOM_CODE_RE.test(code)) {
+      setJoinError("Code must be 6 letters or digits");
       return;
     }
     startTransition(async () => {
@@ -210,6 +248,25 @@ export function LobbyCreateForm({ initialError }: Props) {
             <p className="font-mono text-[9px] uppercase tracking-[0.3em] text-radar-green/50 border-b border-ocean-800 pb-2">
               Параметры комнаты
             </p>
+
+            <div className="grid grid-cols-3 gap-1">
+              {SETTINGS_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => applySettings(preset.settings)}
+                  className="
+                    rounded border border-ocean-800 px-2 py-1.5
+                    font-mono text-[9px] uppercase tracking-widest
+                    text-miss-white/40 transition-colors duration-150
+                    hover:border-radar-green/60 hover:text-radar-green
+                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green
+                  "
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
 
             {/* Battle mode */}
             <CrtToggle
@@ -351,7 +408,7 @@ export function LobbyCreateForm({ initialError }: Props) {
           required
           value={joinCode}
           onChange={(e) => {
-            setJoinCode(e.target.value.toUpperCase().slice(0, 6));
+            setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6));
             setJoinError("");
           }}
           className="

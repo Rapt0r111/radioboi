@@ -10,12 +10,13 @@
 //   - #sendSyncToAll passes settings + per-player cooldown to each client
 
 import { DurableObject } from "cloudflare:workers";
-import type { PendingAlarm, RoomSettings, RoomState } from "./game-logic";
+import type { RoomSettings, RoomState } from "./game-logic";
 import {
   addAttackerTurnAlarm,
   addInterceptAlarm,
   addPlayer,
   applyShipsPlaced,
+  clampRoomSettings,
   createRoomState,
   DEFAULT_SETTINGS,
   formatCoordForShotLog,
@@ -277,7 +278,8 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     applyShipsPlaced(state, playerId, parsedShips);
     await this.#saveState(state);
 
-    if (state.phase === "battle") {
+    const phaseAfterPlacement = state.phase as RoomState["phase"];
+    if (phaseAfterPlacement === "battle") {
       // Turn-based: announce first turn; async: no first turn
       if (state.settings.battleMode === "turn-based" && state.currentTurnId !== null) {
         this.#broadcast(makeGameStarted(state.currentTurnId), null);
@@ -593,7 +595,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     if (roomId) {
       try {
         const raw = await this.env.ROOM_STATE.get(`settings:${roomId}`);
-        if (raw) settings = JSON.parse(raw) as RoomSettings;
+        if (raw) settings = clampRoomSettings(JSON.parse(raw));
       } catch { /* use defaults */ }
     }
 

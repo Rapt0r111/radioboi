@@ -8,6 +8,14 @@ import { decode, encode } from "@msgpack/msgpack";
 import type { RoomSettings } from "./game-logic";
 
 type RawEvent = { type: string; payload: Record<string, unknown> };
+const MAX_FRAME_BYTES = 16_384;
+const CLIENT_EVENT_TYPES = new Set([
+  "JOIN_ROOM",
+  "SHIPS_PLACED",
+  "ATTACK_PREP",
+  "MISSILE_LAUNCHED",
+  "INTERCEPT_ATTEMPT",
+]);
 
 // ── Encoding ─────────────────────────────────────────────────────────────────
 
@@ -20,17 +28,22 @@ export function encodeEvent(event: RawEvent): Uint8Array {
 export function decodeEvent(msg: string | ArrayBuffer): RawEvent | null {
   try {
     if (typeof msg === "string") return null;
+    if (msg.byteLength > MAX_FRAME_BYTES) return null;
     const buf = msg instanceof ArrayBuffer ? new Uint8Array(msg) : msg;
     const value = decode(buf);
+    const record = value as Record<string, unknown>;
     if (
       typeof value !== "object" ||
       value === null ||
-      typeof (value as Record<string, unknown>).type !== "string" ||
-      typeof (value as Record<string, unknown>).payload !== "object"
+      typeof record.type !== "string" ||
+      !CLIENT_EVENT_TYPES.has(record.type) ||
+      typeof record.payload !== "object" ||
+      record.payload === null ||
+      Array.isArray(record.payload)
     ) {
       return null;
     }
-    return value as RawEvent;
+    return { type: record.type, payload: record.payload as Record<string, unknown> };
   } catch {
     return null;
   }

@@ -73,7 +73,7 @@ describe("attack resolution", () => {
 
     expect(result).toEqual({ result: "miss", isGameOver: false, winnerId: null });
     expect(state.currentTurnId).toBe("p2");
-    expect(state.pendingAttack).toBeNull();
+    expect(state.pendingAttacks).toEqual({});
     expect(getEnemyBoard(state, "p1")[target]).toBe("miss");
   });
 

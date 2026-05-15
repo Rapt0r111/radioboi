@@ -49,6 +49,17 @@ function getRowIndex(coord: Coordinate): number {
   return ROWS.indexOf(coord.slice(3, 6) as typeof ROWS[number]);
 }
 
+function cryptoRandomInt(maxExclusive: number): number {
+  if (!Number.isInteger(maxExclusive) || maxExclusive <= 0) {
+    throw new RangeError(`cryptoRandomInt: invalid maxExclusive=${maxExclusive}`);
+  }
+  const bytes = new Uint32Array(1);
+  crypto.getRandomValues(bytes);
+  const value = bytes[0];
+  if (value === undefined) throw new Error("cryptoRandomInt: no random data");
+  return value % maxExclusive;
+}
+
 // ── Fleet builder ──────────────────────────────────────────────────────────────
 
 function buildFleet(): PlacedShip[] {
@@ -100,11 +111,11 @@ function randomPlacement(): PlacedShip[] {
     let attempts = 0;
     while (!placed && attempts < 500) {
       attempts++;
-      const isH = Math.random() < 0.5;
+      const isH = cryptoRandomInt(2) === 0;
       const maxCol = isH ? 10 - ship.size : 9;
       const maxRow = isH ? 9 : 10 - ship.size;
-      const sc = Math.floor(Math.random() * (maxCol + 1));
-      const sr = Math.floor(Math.random() * (maxRow + 1));
+      const sc = cryptoRandomInt(maxCol + 1);
+      const sr = cryptoRandomInt(maxRow + 1);
 
       const coords: Coordinate[] = [];
       let valid = true;
@@ -166,6 +177,10 @@ function buildBoard(ships: PlacedShip[]): Board {
   return board;
 }
 
+function findShipByCoord(ships: readonly PlacedShip[], coord: Coordinate): PlacedShip | null {
+  return ships.find((ship) => ship.coords.includes(coord)) ?? null;
+}
+
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -186,9 +201,27 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
 
   const board = buildBoard(ships);
   const allPlaced = ships.every((s) => s.coords.length === s.size);
+  const selectedShip = selectedShipId
+    ? ships.find((ship) => ship.id === selectedShipId) ?? null
+    : null;
+  const highlightedCoords = selectedShip?.coords ?? [];
 
   const handleCellClick = useCallback((coord: Coordinate) => {
-    if (!selectedShipId) return;
+    const existingShip = findShipByCoord(ships, coord);
+    if (!selectedShipId) {
+      if (existingShip) {
+        setSelectedShipId(existingShip.id);
+        setError(null);
+      }
+      return;
+    }
+
+    if (existingShip?.id === selectedShipId) {
+      setSelectedShipId(null);
+      setError(null);
+      return;
+    }
+
     setShips((prev) => {
       const ship = prev.find((s) => s.id === selectedShipId);
       if (!ship) return prev;
@@ -201,8 +234,7 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
       setError(null);
       return updated;
     });
-    setSelectedShipId(null);
-  }, [selectedShipId]);
+  }, [selectedShipId, ships]);
 
   const toggleOrientation = useCallback((id: ShipId) => {
     setShips((prev) => {
@@ -232,6 +264,12 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
 
   const removeShip = useCallback((id: ShipId) => {
     setShips((prev) => prev.map((s) => s.id === id ? { ...s, coords: [] } : s));
+    setSelectedShipId(null);
+    setError(null);
+  }, []);
+
+  const clearFleet = useCallback(() => {
+    setShips((prev) => prev.map((ship) => ({ ...ship, coords: [] })));
     setSelectedShipId(null);
     setError(null);
   }, []);
@@ -297,6 +335,7 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
             board={board}
             isEnemy={false}
             isPlacement
+            highlightedCoords={highlightedCoords}
             onCellClick={handleCellClick}
           />
         </div>
@@ -394,6 +433,19 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
               "
             >
               ↻ Случайно
+            </button>
+
+            <button
+              type="button"
+              onClick={clearFleet}
+              className="
+                rounded border border-ocean-800 px-4 py-2
+                font-mono text-[10px] uppercase tracking-widest
+                text-miss-white/40 hover:border-hit-red/60 hover:text-hit-red
+                transition-colors duration-150
+              "
+            >
+              × Очистить поле
             </button>
 
             <button

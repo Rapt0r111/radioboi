@@ -26,7 +26,6 @@ export type {
   MorseSymbol,
   PlayerJoinedEvent,
   ResolveHitEvent,
-  RoomSettings,
   ServerGameEvent,
   ShipsPlacedEvent,
   SyncStateEvent,

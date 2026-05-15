@@ -14,8 +14,8 @@ test("home page exposes the lobby form and security headers", async ({ page, req
 
   const codeInput = page.locator('input[name="code"]');
   await expect(codeInput).toHaveAttribute("maxlength", "6");
-  await codeInput.fill("abcdef123");
-  await expect(codeInput).toHaveValue("abcdef");
+  await codeInput.fill("ab-cd");
+  await expect(codeInput).toHaveValue("ABCD");
 });
 
 test("home page renders server-side join errors", async ({ page }) => {
