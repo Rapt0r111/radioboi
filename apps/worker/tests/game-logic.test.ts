@@ -13,6 +13,7 @@ import {
   validateShipGeometry,
 } from "../src/game-logic";
 import { splitMorseSequence, validateMorseForCoord } from "../src/morse";
+import { closeWebSocketSafely } from "../src/websocket";
 
 function validFleet() {
   return [
@@ -97,5 +98,17 @@ describe("worker Morse validation", () => {
     expect(splitMorseSequence(sequence)).toEqual([".-", "--..."]);
     expect(validateMorseForCoord([".", "-", "-", "-", ".", ".", "."], 0, 7)).toBe(true);
     expect(validateMorseForCoord([".", "-", "-", "-", ".", ".", "."], 1, 7)).toBe(false);
+  });
+});
+
+describe("websocket lifecycle", () => {
+  test("ignores close errors from already-closed sockets", () => {
+    const socket = {
+      close() {
+        throw new Error("already closed");
+      },
+    };
+
+    expect(() => closeWebSocketSafely(socket, 1000, "closed")).not.toThrow();
   });
 });

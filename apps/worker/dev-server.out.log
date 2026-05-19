@@ -1,0 +1,13 @@
+
+ ⛅️ wrangler 4.92.0
+───────────────────
+
+Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
+Your Worker has access to the following bindings:
+Binding                                                Resource            Mode
+env.GAME_ROOM (GameRoomArbitrator)                     Durable Object      local
+env.ROOM_STATE (0c0408ceb0064351bd2b1c14646df2e5)      KV Namespace        local
+
+⎔ Starting local server...
+[wrangler:info] Ready on http://127.0.0.1:8787
+[wrangler:info] GET / 200 OK (6ms)

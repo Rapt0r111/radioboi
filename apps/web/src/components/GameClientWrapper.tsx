@@ -47,6 +47,8 @@ import {
 } from "@/src/store/gameStore";
 
 const PLAYER_ID_KEY         = "radioboi:playerId";
+const TAB_ID_KEY            = "radioboi:tabId";
+const TAB_NAME_PREFIX       = "radioboi-tab:";
 const INTERCEPT_ATTEMPT_LIMIT = 3;
 const PLACED_KEY_PREFIX     = "radioboi:placed:";
 const ATTACKER_TURN_TIMEOUT_S = 60;
@@ -61,10 +63,22 @@ type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   lastInterceptWrong?: boolean;
 };
 
-function getOrCreatePlayerId(): string {
-  const stored = sessionStorage.getItem(PLAYER_ID_KEY);
-  if (stored !== null) return stored;
+function getOrCreateTabId(): string {
+  if (window.name.startsWith(TAB_NAME_PREFIX)) {
+    return window.name.slice(TAB_NAME_PREFIX.length);
+  }
   const next = crypto.randomUUID();
+  window.name = `${TAB_NAME_PREFIX}${next}`;
+  return next;
+}
+
+function getOrCreatePlayerId(): string {
+  const tabId = getOrCreateTabId();
+  const storedTabId = sessionStorage.getItem(TAB_ID_KEY);
+  const stored = sessionStorage.getItem(PLAYER_ID_KEY);
+  if (stored !== null && storedTabId === tabId) return stored;
+  const next = crypto.randomUUID();
+  sessionStorage.setItem(TAB_ID_KEY, tabId);
   sessionStorage.setItem(PLAYER_ID_KEY, next);
   return next;
 }

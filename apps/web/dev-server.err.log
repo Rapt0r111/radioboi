@@ -1,22 +1,4 @@
-$ next dev --turbopack --port "3000"
-⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
- We detected multiple lockfiles and selected the directory of C:\Users\Aquarius\Documents\radioboi\bun.lock as the root directory.
- To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
-   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
- Detected additional lockfiles: 
-   * C:\Users\Aquarius\Documents\radioboi\apps\web\bun.lock
-
-[browser] Detected `scroll-behavior: smooth` on the `<html>` element. To disable smooth scrolling during route transitions, add `data-scroll-behavior="smooth"` to your <html> element. Learn more: https://nextjs.org/docs/messages/missing-data-scroll-behavior
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
-[browser] [GameClient] WebSocket error (src/lib/network/gameClient.ts:130:17)
+$ next dev --turbopack
+(node:3020) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+error: script "dev" exited with code 255

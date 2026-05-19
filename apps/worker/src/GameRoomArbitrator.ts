@@ -45,6 +45,7 @@ import {
   makeSyncState,
 } from "./protocol";
 import type { Env } from "./types";
+import { closeWebSocketSafely } from "./websocket";
 
 const STATE_KEY = "room:state";
 const WS_TAG_PREFIX = "player:";
@@ -133,11 +134,11 @@ export class GameRoomArbitrator extends DurableObject<Env> {
   }
 
   override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    ws.close(code, reason);
+    closeWebSocketSafely(ws, code, reason);
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
-    ws.close(1011, "WebSocket error");
+    closeWebSocketSafely(ws, 1011, "WebSocket error");
   }
 
   // ── DO Alarm — unified multi-alarm handler ─────────────────────────────────

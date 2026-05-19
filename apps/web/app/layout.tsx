@@ -12,7 +12,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     // suppressHydrationWarning обязателен: globals.css устанавливает
     // color-scheme: dark на <html>, что браузер применяет до гидрации
     // и вызывает ложные React hydration mismatch предупреждения.
-    <html lang="ru" suppressHydrationWarning>
+    <html lang="ru" suppressHydrationWarning data-scroll-behavior="smooth">
       <body>{children}</body>
     </html>
   );

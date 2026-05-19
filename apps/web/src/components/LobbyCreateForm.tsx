@@ -14,6 +14,10 @@ import { createRoomAction, joinRoomAction } from "../../app/actions";
 
 const ROOM_CODE_RE = /^[A-Z0-9]{6}$/;
 
+function cx(...classes: Array<string | false | null | undefined>): string {
+  return classes.filter(Boolean).join(" ");
+}
+
 const SETTINGS_PRESETS: Array<{ id: string; label: string; settings: RoomSettings }> = [
   {
     id: "classic",
@@ -63,17 +67,16 @@ function CrtToggle({ id, label, value, onChange }: ToggleProps) {
         role="switch"
         aria-checked={value}
         onClick={() => onChange(!value)}
-        className={`
-          relative h-6 w-12 rounded-full border transition-colors duration-200
-          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green
-          ${value ? "border-radar-green bg-radar-green/20" : "border-ocean-800 bg-ocean-900"}
-        `}
+        className={cx(
+          "relative h-6 w-12 rounded-full border transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green",
+          value ? "border-radar-green bg-radar-green/20" : "border-ocean-800 bg-ocean-900",
+        )}
       >
         <span
-          className={`
-            absolute top-0.5 left-0.5 h-5 w-5 rounded-full transition-transform duration-200
-            ${value ? "translate-x-6 bg-radar-green" : "translate-x-0 bg-ocean-700"}
-          `}
+          className={cx(
+            "absolute top-0.5 left-0.5 h-5 w-5 rounded-full transition-transform duration-200",
+            value ? "translate-x-6 bg-radar-green" : "translate-x-0 bg-ocean-700",
+          )}
           aria-hidden="true"
         />
       </button>
@@ -95,7 +98,7 @@ type SliderProps = {
 
 function CrtSlider({ id, label, min, max, step, value, onChange, format, disabled }: SliderProps) {
   return (
-    <div className={`flex flex-col gap-1 ${disabled ? "opacity-35 pointer-events-none" : ""}`}>
+    <div className={cx("flex flex-col gap-1", disabled && "opacity-35 pointer-events-none")}>
       <div className="flex items-baseline justify-between">
         <label htmlFor={id} className="font-mono text-xs uppercase tracking-widest text-miss-white/60">
           {label}
@@ -140,14 +143,12 @@ function CrtSegment({ id, label, options, value, onChange }: SegmentProps) {
             type="button"
             aria-pressed={value === opt.value}
             onClick={() => onChange(opt.value)}
-            className={`
-              flex-1 rounded border px-2 py-1.5 font-mono text-[10px] uppercase tracking-widest
-              transition-colors duration-150
-              ${value === opt.value
+            className={cx(
+              "flex-1 rounded border px-2 py-1.5 font-mono text-[10px] uppercase tracking-widest transition-colors duration-150",
+              value === opt.value
                 ? "border-radar-green bg-radar-green/15 text-radar-green"
-                : "border-ocean-800 text-miss-white/40 hover:border-ocean-700 hover:text-miss-white/60"
-              }
-            `}
+                : "border-ocean-800 text-miss-white/40 hover:border-ocean-700 hover:text-miss-white/60",
+            )}
           >
             {opt.label}
           </button>
@@ -229,15 +230,7 @@ export function LobbyCreateForm({ initialError }: Props) {
         <button
           type="button"
           onClick={() => setShowSettings((v) => !v)}
-          className="
-            w-full rounded border border-radar-green
-            px-6 py-3 font-mono text-sm font-bold
-            text-radar-green uppercase tracking-widest
-            transition-colors duration-150
-            hover:bg-radar-green/10
-            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green
-            radar-glow
-          "
+          className="w-full rounded border border-radar-green px-6 py-3 font-mono text-sm font-bold text-radar-green uppercase tracking-widest transition-colors duration-150 hover:bg-radar-green/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green radar-glow"
         >
           {showSettings ? "▾ НАСТРОЙКИ КОМНАТЫ" : "▸ СОЗДАТЬ КОМНАТУ"}
         </button>
@@ -255,13 +248,7 @@ export function LobbyCreateForm({ initialError }: Props) {
                   key={preset.id}
                   type="button"
                   onClick={() => applySettings(preset.settings)}
-                  className="
-                    rounded border border-ocean-800 px-2 py-1.5
-                    font-mono text-[9px] uppercase tracking-widest
-                    text-miss-white/40 transition-colors duration-150
-                    hover:border-radar-green/60 hover:text-radar-green
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green
-                  "
+                  className="rounded border border-ocean-800 px-2 py-1.5 font-mono text-[9px] uppercase tracking-widest text-miss-white/40 transition-colors duration-150 hover:border-radar-green/60 hover:text-radar-green focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green"
                 >
                   {preset.label}
                 </button>
@@ -339,15 +326,7 @@ export function LobbyCreateForm({ initialError }: Props) {
               type="button"
               onClick={handleCreate}
               disabled={isPending}
-              className="
-                rounded border border-radar-green
-                px-6 py-2.5 font-mono text-sm font-bold
-                text-radar-green uppercase tracking-widest
-                transition-colors duration-150
-                disabled:opacity-40 disabled:cursor-not-allowed
-                enabled:hover:bg-radar-green enabled:hover:text-ocean-950
-                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green
-              "
+              className="rounded border border-radar-green px-6 py-2.5 font-mono text-sm font-bold text-radar-green uppercase tracking-widest transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:bg-radar-green enabled:hover:text-ocean-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green"
             >
               {isPending ? (
                 <span style={{ animation: "morse-blink 0.8s step-end infinite" }}>
@@ -365,15 +344,7 @@ export function LobbyCreateForm({ initialError }: Props) {
             type="button"
             onClick={handleCreate}
             disabled={isPending}
-            className="
-              w-full rounded border border-radar-green
-              px-6 py-3 font-mono text-sm font-bold
-              text-radar-green uppercase tracking-widest
-              transition-colors duration-150
-              disabled:opacity-40
-              enabled:hover:bg-radar-green enabled:hover:text-ocean-950
-              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green
-            "
+            className="w-full rounded border border-radar-green px-6 py-3 font-mono text-sm font-bold text-radar-green uppercase tracking-widest transition-colors duration-150 disabled:opacity-40 enabled:hover:bg-radar-green enabled:hover:text-ocean-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green"
             style={{ display: showSettings ? "none" : undefined }}
           >
             {isPending ? "СОЗДАНИЕ..." : "[ СОЗДАТЬ — БЫСТРО ]"}
@@ -411,29 +382,12 @@ export function LobbyCreateForm({ initialError }: Props) {
             setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6));
             setJoinError("");
           }}
-          className="
-            rounded border border-ocean-800
-            bg-ocean-900 px-4 py-3
-            font-mono text-lg font-bold tracking-[0.35em] uppercase
-            text-miss-white placeholder-miss-white/20
-            outline-none transition-colors duration-150
-            focus:border-radar-dim
-            focus-visible:ring-2 focus-visible:ring-radar-green
-          "
+          className="rounded border border-ocean-800 bg-ocean-900 px-4 py-3 font-mono text-lg font-bold tracking-[0.35em] uppercase text-miss-white placeholder-miss-white/20 outline-none transition-colors duration-150 focus:border-radar-dim focus-visible:ring-2 focus-visible:ring-radar-green"
         />
         <button
           type="submit"
           disabled={isPending || joinCode.length !== 6}
-          className="
-            rounded border border-morse-amber
-            px-6 py-3 font-mono text-sm font-bold
-            text-morse-amber uppercase tracking-widest
-            transition-colors duration-150
-            disabled:opacity-40 disabled:cursor-not-allowed
-            enabled:hover:bg-morse-amber enabled:hover:text-ocean-950
-            focus-visible:outline-none focus-visible:ring-2
-            focus-visible:ring-morse-amber
-          "
+          className="rounded border border-morse-amber px-6 py-3 font-mono text-sm font-bold text-morse-amber uppercase tracking-widest transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:bg-morse-amber enabled:hover:text-ocean-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-morse-amber"
         >
           [ ВОЙТИ В КОМНАТУ ]
         </button>

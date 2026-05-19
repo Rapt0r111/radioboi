@@ -74,7 +74,7 @@
     "turborepo": {
       "source": "vercel/turborepo",
       "sourceType": "autoskills-registry",
-      "computedHash": "fd27be587062baeba611e0e7d12c6939e6df859cb8984cf7fe4bdc6d6d3dcde1"
+      "computedHash": "341f67c77a99b473c48207db023503509de7955af1517ce39e17b21a0127d79c"
     },
     "typescript-advanced-types": {
       "source": "wshobson/agents",
