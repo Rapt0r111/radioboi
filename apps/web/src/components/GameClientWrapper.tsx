@@ -565,7 +565,7 @@ export function GameClientWrapper({ roomId }: Props) {
               </div>
             </div>
 
-            <div className="relative inline-block max-w-full overflow-hidden">
+            <div className="relative inline-block max-w-full overflow-hidden self-start">
               <BoardGrid
                 board={enemyBoard}
                 isEnemy
