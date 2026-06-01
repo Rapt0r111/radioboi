@@ -25,6 +25,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 const LIVE_TONE_SEQUENCE = [30_000];
 const LIVE_TONE_UNIT_MS = 1;
 const DISPLAY_SLOTS = 6;
+const DISPLAY_SLOT_KEYS = Array.from({ length: DISPLAY_SLOTS }, (_, index) => `display-slot-${index + 1}`);
 
 type Props = {
   mode: "attack" | "intercept";
@@ -87,6 +88,7 @@ export function MorseTelegraph({
   unitMsRef.current = unitMs;
 
   const isPressedRef = useRef(false);
+  const previousModeRef = useRef(mode);
   const wrongFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const completeSequence = useEffectEvent((chars: readonly string[]) => {
@@ -143,12 +145,14 @@ export function MorseTelegraph({
 
   // Сброс состояния при смене режима (attack ↔ intercept)
   useEffect(() => {
+    if (previousModeRef.current === mode) return;
+    previousModeRef.current = mode;
     decoderRef.current?.reset();
     setDecodedChars([]);
     setLiveMorse("");
     isPressedRef.current = false;
     setIsPressed(false);
-  }, [mode]);
+  });
 
   // Flash-анимация при неверном перехвате
   useEffect(() => {
@@ -245,9 +249,12 @@ export function MorseTelegraph({
 
       {/* Декодированные символы */}
       <div className="grid grid-cols-6 gap-2">
-        {displayChars.map((char, index) => (
+        {DISPLAY_SLOT_KEYS.map((slotKey, index) => {
+          const char = displayChars[index] ?? "";
+
+          return (
           <div
-            key={`${index}-${char || "empty"}`}
+            key={slotKey}
             className={`flex h-11 items-center justify-center rounded border font-mono text-lg shadow-[0_0_10px_rgba(34,197,94,0.15)] transition-colors duration-150 ${
               isWrongFlash
                 ? "border-[var(--color-hit-red)]/40 bg-[var(--color-hit-red)]/5 text-[var(--color-hit-red)]/70"
@@ -258,7 +265,8 @@ export function MorseTelegraph({
           >
             {char || "·"}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Кнопка телеграфного ключа */}

@@ -1,4 +1,0 @@
-$ next dev --turbopack
-(node:3020) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
-(Use `node --trace-deprecation ...` to show where the warning was created)
-error: script "dev" exited with code 255

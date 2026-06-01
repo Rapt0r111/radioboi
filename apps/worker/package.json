@@ -13,12 +13,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@msgpack/msgpack": "latest",
+    "@msgpack/msgpack": "3.1.3",
     "@radioboi/game-core": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "latest",
-    "typescript": "latest",
-    "wrangler": "latest"
+    "@cloudflare/workers-types": "4.20260519.1",
+    "typescript": "6.0.3",
+    "wrangler": "4.93.0"
   }
 }

@@ -32,6 +32,8 @@ import { BoardGrid } from "./BoardGrid";
 
 type ShipId = string;
 
+const SHIP_SEGMENT_KEYS = ["segment-1", "segment-2", "segment-3", "segment-4"] as const;
+
 type PlacedShip = {
   id: ShipId;
   size: number;
@@ -367,8 +369,8 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
                         `}
                       >
                         <div className={`flex ${ship.isHorizontal ? "flex-row" : "flex-col"} gap-0.5 shrink-0`}>
-                          {Array.from({ length: ship.size }).map((_, i) => (
-                            <div key={i} className="h-3 w-3 rounded-[1px] bg-current opacity-80" />
+                          {SHIP_SEGMENT_KEYS.slice(0, ship.size).map((segmentKey) => (
+                            <div key={segmentKey} className="h-3 w-3 rounded-[1px] bg-current opacity-80" />
                           ))}
                         </div>
                         <span className="flex-1 uppercase tracking-widest text-[9px]">
@@ -402,8 +404,8 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
                     className="flex items-center gap-2 font-mono text-[9px] text-miss-white/40"
                   >
                     <div className="flex gap-0.5">
-                      {Array.from({ length: ship.size }).map((_, i) => (
-                        <div key={i} className="h-2 w-2 rounded-[1px] bg-radar-green/60" />
+                      {SHIP_SEGMENT_KEYS.slice(0, ship.size).map((segmentKey) => (
+                        <div key={segmentKey} className="h-2 w-2 rounded-[1px] bg-radar-green/60" />
                       ))}
                     </div>
                     <span className="flex-1">{ship.size}-пал {ship.isHorizontal ? "↔" : "↕"}</span>

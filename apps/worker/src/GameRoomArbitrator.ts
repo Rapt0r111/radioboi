@@ -433,16 +433,11 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return;
     }
 
-    const maxAttempts = state.settings.maxInterceptAttempts;
-    const forceResolve = attemptNumber >= maxAttempts;
-
     const resolveResult = processInterceptAttempt(
       state,
       playerId,
       missileId,
       decodedCoord,
-      attemptNumber,
-      forceResolve,
     );
 
     if (resolveResult === null) {

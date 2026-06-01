@@ -10,8 +10,10 @@ test-results/
 .env.local
 .env.*.local
 .dev.vars
-bun.lock
 Thumbs.db
 desktop.ini
 
 .agents
+*.tsbuildinfo
+dev-server.*.log
+.omx/

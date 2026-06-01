@@ -23,6 +23,7 @@ const WPM_MAX = 30;
 const WPM_DEFAULT = 20;
 
 const MAX_REPEATS = 3;
+const REPEAT_INDICATOR_KEYS = ["repeat-1", "repeat-2", "repeat-3"] as const;
 
 function wpmToUnitMs(wpm: number): number {
   return Math.round(1200 / wpm);
@@ -94,8 +95,7 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
     const initialUnitMs = wpmToUnitMs(WPM_DEFAULT);
     engine.setSpeed(initialUnitMs);
     onSpeedChange?.(initialUnitMs);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine]); // только при смене экземпляра движка
+  }, [engine, onSpeedChange]); // только при смене экземпляра движка
 
   useEffect(() => {
     if (currentMissileId === lastMissileIdRef.current) return;
@@ -203,9 +203,9 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
             <span className="flex items-center justify-center gap-2">
               <span>▶ ПОВТОРИТЬ СИГНАЛ</span>
               <span className="flex gap-0.5" aria-hidden="true">
-                {Array.from({ length: MAX_REPEATS }).map((_, i) => (
+                {REPEAT_INDICATOR_KEYS.map((repeatKey, i) => (
                   <span
-                    key={i}
+                    key={repeatKey}
                     className={
                       i < repeatCount
                         ? "h-1.5 w-1.5 rounded-full bg-[var(--color-hit-red)]"

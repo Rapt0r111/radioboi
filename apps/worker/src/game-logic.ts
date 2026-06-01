@@ -335,6 +335,7 @@ export function prepareAttack(
   missileId: string,
 ): { ok: true } | { ok: false; reason: string } {
   if (state.phase !== "battle") return { ok: false, reason: "GAME_NOT_STARTED" };
+  if (!isValidCoordinate(target)) return { ok: false, reason: "INVALID_COORDINATE" };
 
   if (state.settings.battleMode === "turn-based") {
     if (state.currentTurnId !== attackerId) return { ok: false, reason: "NOT_YOUR_TURN" };
@@ -400,23 +401,22 @@ export const MAX_INTERCEPT_ATTEMPTS = 3;
 
 export function processInterceptAttempt(
   state: RoomState,
-  _defenderId: string,
+  defenderId: string,
   missileId: string,
   decodedCoord: Coord,
-  attemptNumber: number,
-  forceResolve: boolean,
 ): ResolveResult | null {
   // Find the pending attack by missileId across ALL attackers
   const attack = Object.values(state.pendingAttacks).find(
     (a) => a.missileId === missileId,
   );
   if (!attack) return null;
+  if (attack.attackerId === defenderId) return null;
 
-  attack.attempts = attemptNumber;
+  attack.attempts += 1;
   const maxAttempts = state.settings.maxInterceptAttempts;
-  const decodedCorrectly = forceResolve || decodedCoord === attack.target;
+  const decodedCorrectly = decodedCoord === attack.target;
 
-  if (!decodedCorrectly && attemptNumber < maxAttempts) return null;
+  if (!decodedCorrectly && attack.attempts < maxAttempts) return null;
 
   return resolveHit(state, attack.attackerId, attack.target, missileId);
 }

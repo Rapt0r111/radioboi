@@ -70,12 +70,44 @@ describe("attack resolution", () => {
     expect(prepareAttack(state, "p1", target, "m1")).toEqual({ ok: true });
     expect(recordMorseSequence(state, "m1", [".", "-"])).toEqual({ ok: true });
 
-    const result = processInterceptAttempt(state, "p2", "m1", target, 1, true);
+    const result = processInterceptAttempt(state, "p2", "m1", target);
 
     expect(result).toEqual({ result: "miss", isGameOver: false, winnerId: null });
     expect(state.currentTurnId).toBe("p2");
     expect(state.pendingAttacks).toEqual({});
     expect(getEnemyBoard(state, "p1")[target]).toBe("miss");
+  });
+
+  test("rejects malformed targets before creating a pending attack", () => {
+    const state = roomReadyForBattle();
+
+    expect(prepareAttack(state, "p1", "BAD", "m-invalid")).toEqual({
+      ok: false,
+      reason: "INVALID_COORDINATE",
+    });
+    expect(state.pendingAttacks).toEqual({});
+  });
+
+  test("keeps intercept attempts server-owned and blocks self-intercepts", () => {
+    const state = roomReadyForBattle();
+    const target = makeCoordinate(9, 9);
+    const wrongTarget = makeCoordinate(8, 8);
+
+    expect(prepareAttack(state, "p1", target, "m-secure")).toEqual({ ok: true });
+    expect(recordMorseSequence(state, "m-secure", [".", "-"])).toEqual({ ok: true });
+
+    expect(processInterceptAttempt(state, "p1", "m-secure", target)).toBeNull();
+    expect(state.pendingAttacks.p1?.attempts).toBe(0);
+
+    expect(processInterceptAttempt(state, "p2", "m-secure", wrongTarget)).toBeNull();
+    expect(state.pendingAttacks.p1?.attempts).toBe(1);
+
+    expect(processInterceptAttempt(state, "p2", "m-secure", wrongTarget)).toBeNull();
+    expect(state.pendingAttacks.p1?.attempts).toBe(2);
+
+    const result = processInterceptAttempt(state, "p2", "m-secure", wrongTarget);
+    expect(result).toEqual({ result: "miss", isGameOver: false, winnerId: null });
+    expect(state.pendingAttacks).toEqual({});
   });
 
   test("keeps the turn after a hit and sinks a single-cell ship", () => {

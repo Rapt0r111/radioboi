@@ -42,7 +42,7 @@ export function ShotHistory() {
     if (el) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [shotLog.length]);
+  });
 
   return (
     <section
@@ -81,7 +81,7 @@ export function ShotHistory() {
 
             return (
               <div
-                key={index}
+                key={`${entry.ts}-${entry.by}-${entry.coord}-${entry.result}`}
                 className={`flex items-center gap-2 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
                   isByMe
                     ? "bg-[var(--color-radar-green)]/5"

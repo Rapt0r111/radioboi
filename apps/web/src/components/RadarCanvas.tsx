@@ -1,19 +1,8 @@
 // apps/web/src/components/RadarCanvas.tsx
-// React-обёртка для OffscreenCanvas + Comlink-прокси.
-// Экспортирует ref на прокси, чтобы вызывать updateMissile без ре-рендера.
-//
-// ВАЖНО: canvas создаётся императивно внутри effect, а не через JSX.
-// Причина: React Strict Mode в dev дважды запускает effects (mount → cleanup →
-// mount). После первого transferControlToOffscreen() canvas заблокирован —
-// попытка записать width/height при повторном запуске бросает InvalidStateError.
-// Создавая свежий <canvas> в каждом запуске и удаляя его в cleanup, мы
-// гарантируем, что каждый effect работает с чистым, незахваченным элементом.
 "use client";
 
 import * as Comlink from "comlink";
 import { useEffect, useLayoutEffect, useRef } from "react";
-
-// ── Тип воркера (совпадает с экспортируемым классом) ──────────────────────────
 
 type RadarRendererProxy = {
   init(canvas: OffscreenCanvas): Promise<void>;
@@ -21,66 +10,101 @@ type RadarRendererProxy = {
   removeMissile(id: string): Promise<void>;
 };
 
-// ── Ref-тип, экспортируемый наружу ───────────────────────────────────────────
-
 export type RadarRef = RadarRendererProxy | null;
 
 type Props = {
   radarRef?: React.RefObject<RadarRef>;
 };
 
-// Используем useLayoutEffect в браузере, useEffect на сервере (SSR guard).
 const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 export function RadarCanvas({ radarRef }: Props) {
-  // Ref указывает на контейнер-обёртку, а не на сам canvas.
-  // Canvas создаётся/удаляется императивно внутри effect.
   const containerRef = useRef<HTMLDivElement>(null);
 
   useIsomorphicLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    // 1. Создаём чистый canvas при каждом запуске effect.
-    //    Это ключевое отличие от ref-подхода: каждый запуск получает
-    //    новый элемент без истории вызовов transferControlToOffscreen().
-    const canvas = document.createElement("canvas");
-    canvas.className = "absolute inset-0 w-full h-full pointer-events-none";
-    canvas.setAttribute("aria-hidden", "true");
-    canvas.tabIndex = -1;
-    container.appendChild(canvas);
+    const el: HTMLDivElement = container;
 
-    // 2. Устанавливаем размер ПЕРЕД передачей контроля воркеру.
-    //    После transferControlToOffscreen() менять width/height нельзя.
-    const rect = container.getBoundingClientRect();
-    canvas.width = rect.width > 0 ? rect.width : container.offsetWidth || 400;
-    canvas.height = rect.height > 0 ? rect.height : container.offsetHeight || 400;
+    let canvas: HTMLCanvasElement | null = null;
+    let worker: Worker | null = null;
+    let proxy: Comlink.Remote<RadarRendererProxy> | null = null;
 
-    // 3. Создаём воркер и Comlink-прокси.
-    const worker = new Worker(new URL("../workers/radarWorker.ts", import.meta.url), {
-      type: "module",
-    });
-    const proxy = Comlink.wrap<RadarRendererProxy>(worker);
+    function setup(width: number, height: number) {
+      if (proxy) {
+        if (radarRef) radarRef.current = null;
+        proxy[Comlink.releaseProxy]();
+        proxy = null;
+      }
+      if (worker) {
+        worker.terminate();
+        worker = null;
+      }
+      if (canvas) {
+        canvas.remove();
+        canvas = null;
+      }
 
-    // 4. Передаём OffscreenCanvas в воркер (transferable).
-    const offscreen = canvas.transferControlToOffscreen();
-    void proxy.init(Comlink.transfer(offscreen, [offscreen]));
+      canvas = document.createElement("canvas");
+      canvas.className = "absolute inset-0 w-full h-full pointer-events-none";
+      canvas.setAttribute("aria-hidden", "true");
+      canvas.tabIndex = -1;
+      canvas.width = Math.round(width);
+      canvas.height = Math.round(height);
+      el.appendChild(canvas);
 
-    // 5. Пробрасываем прокси наружу.
-    if (radarRef) {
-      radarRef.current = proxy;
+      worker = new Worker(new URL("../workers/radarWorker.ts", import.meta.url), {
+        type: "module",
+      });
+      proxy = Comlink.wrap<RadarRendererProxy>(worker);
+
+      const offscreen = canvas.transferControlToOffscreen();
+      void proxy.init(Comlink.transfer(offscreen, [offscreen]));
+
+      if (radarRef) {
+        radarRef.current = proxy;
+      }
     }
 
+    const rect = el.getBoundingClientRect();
+    const initW = rect.width > 0 ? rect.width : el.offsetWidth || 400;
+    const initH = rect.height > 0 ? rect.height : el.offsetHeight || 400;
+    setup(initW, initH);
+
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width === 0 || height === 0) return;
+      if (resizeTimeout !== null) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        const currentW = canvas?.width ?? 0;
+        const currentH = canvas?.height ?? 0;
+        if (Math.abs(currentW - width) > 1 || Math.abs(currentH - height) > 1) {
+          setup(width, height);
+        }
+      }, 150);
+    });
+    observer.observe(el);
+
     return () => {
-      // Очищаем ref до завершения воркера, чтобы внешний код не вызвал
-      // updateMissile/removeMissile на уже уничтоженном прокси.
-      if (radarRef) {
-        radarRef.current = null;
+      if (resizeTimeout !== null) clearTimeout(resizeTimeout);
+      observer.disconnect();
+      if (radarRef) radarRef.current = null;
+      if (proxy) {
+        proxy[Comlink.releaseProxy]();
+        proxy = null;
       }
-      proxy[Comlink.releaseProxy]();
-      worker.terminate();
-      // Удаляем canvas из DOM — следующий запуск effect создаст новый.
-      canvas.remove();
+      if (worker) {
+        worker.terminate();
+        worker = null;
+      }
+      if (canvas) {
+        canvas.remove();
+        canvas = null;
+      }
     };
   }, [radarRef]);
 
@@ -88,6 +112,8 @@ export function RadarCanvas({ radarRef }: Props) {
     <div
       ref={containerRef}
       className="absolute inset-0 pointer-events-none"
+      // overflow-hidden обрезает всё что выходит за границы — включая shadowBlur воркера
+      style={{ overflow: "hidden" }}
       aria-hidden="true"
     />
   );

@@ -27,6 +27,7 @@ export type GameLoopRuntimeState = {
   incomingMissileAttempts: number;
   incomingMissileDeadline: number | null;
   incomingMissileId: string | null;
+  incomingMissileMaxAttempts: number;
   incomingMissileSequence: number[] | null;
   lastInterceptWrong: boolean;
 };
@@ -38,6 +39,7 @@ const DEFAULT_RUNTIME_STATE: GameLoopRuntimeState = {
   incomingMissileAttempts: 0,
   incomingMissileDeadline: null,
   incomingMissileId: null,
+  incomingMissileMaxAttempts: 3,
   incomingMissileSequence: null,
   lastInterceptWrong: false,
 };
@@ -48,6 +50,7 @@ function readRuntimeState(): GameLoopRuntimeState {
     incomingMissileAttempts: state.incomingMissileAttempts ?? 0,
     incomingMissileDeadline: state.incomingMissileDeadline ?? null,
     incomingMissileId: state.incomingMissileId ?? null,
+    incomingMissileMaxAttempts: state.incomingMissileMaxAttempts ?? 3,
     incomingMissileSequence: state.incomingMissileSequence ?? null,
     lastInterceptWrong: state.lastInterceptWrong ?? false,
   };
@@ -116,6 +119,7 @@ export function useGameLoop(
         incomingMissileAttempts: 0,
         incomingMissileDeadline: Date.now() + windowMs,
         incomingMissileId: event.payload.missileId,
+        incomingMissileMaxAttempts: event.payload.maxAttempts,
         incomingMissileSequence: playbackSequence,
         lastInterceptWrong: false,
       });
