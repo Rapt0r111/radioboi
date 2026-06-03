@@ -22,8 +22,6 @@ import {
 import { FuzzyDecoder, type MorseEngine } from "@radioboi/morse-engine";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-const LIVE_TONE_SEQUENCE = [30_000];
-const LIVE_TONE_UNIT_MS = 1;
 const DISPLAY_SLOTS = 6;
 const DISPLAY_SLOT_KEYS = Array.from({ length: DISPLAY_SLOTS }, (_, index) => `display-slot-${index + 1}`);
 
@@ -179,7 +177,7 @@ export function MorseTelegraph({
     if (isPressedRef.current) return;
     isPressedRef.current = true;
     decoderRef.current?.pointerDown(performance.now());
-    void morseEngine?.playSequence(LIVE_TONE_SEQUENCE, LIVE_TONE_UNIT_MS);
+    morseEngine?.startTone();
     setIsPressed(true);
   }
 
@@ -187,7 +185,7 @@ export function MorseTelegraph({
     if (!isPressedRef.current) return;
     isPressedRef.current = false;
     decoderRef.current?.pointerUp(performance.now());
-    morseEngine?.stop();
+    morseEngine?.stopTone();
     setIsPressed(false);
   }
 

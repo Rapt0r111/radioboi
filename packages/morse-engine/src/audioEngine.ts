@@ -59,6 +59,7 @@ export class MorseEngine {
   #playbackId: number = 0;
   #unitMs: number = DEFAULT_UNIT_MS;
   #resolvePlayback: (() => void) | null = null;
+  #manualToneId: number = 0;
 
   constructor(options: MorseEngineOptions = {}) {
     // SSR guard — AudioContext недоступен вне браузера
@@ -141,6 +142,7 @@ export class MorseEngine {
 
   async playSequence(sequence: number[], unitMs?: number): Promise<void> {
     const resolvedUnitMs = unitMs ?? this.#unitMs;
+    this.#manualToneId++;
     await this.resume();
     this.stop();
 
@@ -166,6 +168,37 @@ export class MorseEngine {
         Math.max(0, remainingMs),
       );
     });
+  }
+
+  startTone(): void {
+    const id = ++this.#manualToneId;
+    this.#playbackId++;
+    this.#isPlaying = true;
+    this.#resolvePlayback?.();
+    this.#resolvePlayback = null;
+
+    const begin = () => {
+      if (this.#manualToneId !== id) return;
+      const gain = this.#envelopeGain.gain;
+      const now = this.#ctx.currentTime;
+      gain.cancelScheduledValues(now);
+      gain.setValueAtTime(0, now);
+      gain.linearRampToValueAtTime(1, now + ATTACK_S);
+    };
+
+    if (this.#ctx.state === "suspended") {
+      void this.resume().then(begin).catch(() => {
+        if (this.#manualToneId === id) this.stop();
+      });
+      return;
+    }
+
+    begin();
+  }
+
+  stopTone(): void {
+    this.#manualToneId++;
+    this.stop();
   }
 
   stop(): void {

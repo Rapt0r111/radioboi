@@ -115,9 +115,14 @@ export function useGameLoop(
 
       const playbackSequence = toPlaybackSequence(event.payload.morseSequence);
 
+      const deadline =
+        typeof event.payload.expiresAt === "number"
+          ? event.payload.expiresAt
+          : Date.now() + windowMs;
+
       patchGameLoopRuntimeState({
-        incomingMissileAttempts: 0,
-        incomingMissileDeadline: Date.now() + windowMs,
+        incomingMissileAttempts: event.payload.attemptsMade ?? 0,
+        incomingMissileDeadline: deadline,
         incomingMissileId: event.payload.missileId,
         incomingMissileMaxAttempts: event.payload.maxAttempts,
         incomingMissileSequence: playbackSequence,

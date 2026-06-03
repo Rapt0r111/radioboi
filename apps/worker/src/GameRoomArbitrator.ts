@@ -30,6 +30,7 @@ import {
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
+  replacePlayerId,
   resolveHit,
   validateShipGeometry,
 } from "./game-logic";
@@ -74,13 +75,25 @@ export class GameRoomArbitrator extends DurableObject<Env> {
 
     const roomState = await this.#loadState(roomId);
     const isReconnect = roomState.players.some((p) => p.id === playerId);
-
-    const addResult = addPlayer(roomState, {
+    const playerRecord = {
       id: playerId,
       name: playerName,
       wsTag: `${WS_TAG_PREFIX}${playerId}`,
       isReady: roomState.players.find((p) => p.id === playerId)?.isReady ?? false,
-    });
+    };
+
+    let addResult = addPlayer(roomState, playerRecord);
+
+    if (!addResult.ok && addResult.reason === "ROOM_FULL") {
+      const disconnectedPlayer = roomState.players.find(
+        (p) => this.ctx.getWebSockets(`${WS_TAG_PREFIX}${p.id}`).length === 0,
+      );
+      if (disconnectedPlayer) {
+        if (replacePlayerId(roomState, disconnectedPlayer.id, playerRecord)) {
+          addResult = { ok: true };
+        }
+      }
+    }
 
     if (!addResult.ok) {
       server.close(4001, addResult.reason);
@@ -97,6 +110,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     }
 
     this.#sendSyncToAll(roomState);
+    this.#sendPendingIncomingToPlayer(roomState, playerId);
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -300,7 +314,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           state.phase,
           getOwnBoard(state, playerId),
           getEnemyBoard(state, playerId),
-          state.activeMissiles,
+          this.#activeMissilesForPlayer(state, playerId),
           false,
           [],
           undefined,
@@ -392,7 +406,12 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     recordMorseSequence(state, missileId, morseSequence as string[]);
 
     // Add intercept alarm using settings window
-    addInterceptAlarm(state, missileId, playerId, state.settings.interceptWindowMs);
+    const expiresAt = addInterceptAlarm(
+      state,
+      missileId,
+      playerId,
+      state.settings.interceptWindowMs,
+    );
 
     await this.#saveState(state);
     await this.#rescheduleAlarm(state);
@@ -406,6 +425,8 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           morseSequence as string[],
           timestamp as number,
           state.settings.maxInterceptAttempts,
+          expiresAt,
+          attack.attempts,
         ),
       );
     }
@@ -499,6 +520,43 @@ export class GameRoomArbitrator extends DurableObject<Env> {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  #activeMissilesForPlayer(state: RoomState, playerId: string): RoomState["activeMissiles"] {
+    const ownMissileIds = new Set(
+      Object.values(state.pendingAttacks)
+        .filter((attack) => attack.attackerId === playerId)
+        .map((attack) => attack.missileId),
+    );
+
+    return state.activeMissiles.map((missile) =>
+      ownMissileIds.has(missile.id) ? missile : { ...missile, target: "" },
+    );
+  }
+
+  #getInterceptExpiresAt(state: RoomState, missileId: string): number | undefined {
+    return state.pendingAlarms.find(
+      (alarm) => alarm.type === "intercept_timeout" && alarm.missileId === missileId,
+    )?.fireAt;
+  }
+
+  #sendPendingIncomingToPlayer(state: RoomState, playerId: string): void {
+    const attack = Object.values(state.pendingAttacks).find(
+      (pending) => pending.attackerId !== playerId && pending.morseSequence.length > 0,
+    );
+    if (!attack) return;
+
+    this.#sendToPlayer(
+      playerId,
+      makeIncomingMissile(
+        attack.missileId,
+        attack.morseSequence,
+        Date.now(),
+        state.settings.maxInterceptAttempts,
+        this.#getInterceptExpiresAt(state, attack.missileId),
+        attack.attempts,
+      ),
+    );
+  }
+
   #parseCoordIndices(coord: string): { colIndex: number; rowIndex: number } | null {
     if (!isValidCoordinate(coord)) return null;
     return parseCoordinate(coord);
@@ -552,7 +610,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           state.phase,
           getOwnBoard(state, player.id),
           getEnemyBoard(state, player.id),
-          state.activeMissiles,
+          this.#activeMissilesForPlayer(state, player.id),
           isMyTurn,
           shotLog,
           state.winnerId ?? undefined,

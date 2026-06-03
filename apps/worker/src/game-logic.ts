@@ -290,6 +290,52 @@ export function getOpponentId(state: RoomState, playerId: string): string | null
   return state.players.find((p) => p.id !== playerId)?.id ?? null;
 }
 
+export function replacePlayerId(
+  state: RoomState,
+  fromId: string,
+  nextPlayer: PlayerRecord,
+): boolean {
+  if (fromId === nextPlayer.id) return true;
+  if (state.players.some((p) => p.id === nextPlayer.id)) return false;
+
+  const idx = state.players.findIndex((p) => p.id === fromId);
+  const existing = state.players[idx];
+  if (!existing) return false;
+
+  state.players[idx] = { ...existing, ...nextPlayer, isReady: existing.isReady };
+
+  if (state.boards[fromId] !== undefined) {
+    state.boards[nextPlayer.id] = state.boards[fromId];
+    delete state.boards[fromId];
+  }
+  if (state.ships[fromId] !== undefined) {
+    state.ships[nextPlayer.id] = state.ships[fromId];
+    delete state.ships[fromId];
+  }
+  if (state.attackCooldowns[fromId] !== undefined) {
+    state.attackCooldowns[nextPlayer.id] = state.attackCooldowns[fromId];
+    delete state.attackCooldowns[fromId];
+  }
+
+  const pending = state.pendingAttacks[fromId];
+  if (pending !== undefined) {
+    state.pendingAttacks[nextPlayer.id] = { ...pending, attackerId: nextPlayer.id };
+    delete state.pendingAttacks[fromId];
+  }
+
+  if (state.currentTurnId === fromId) state.currentTurnId = nextPlayer.id;
+  if (state.winnerId === fromId) state.winnerId = nextPlayer.id;
+
+  state.shotLog = state.shotLog.map((entry) =>
+    entry.attackerId === fromId ? { ...entry, attackerId: nextPlayer.id } : entry,
+  );
+  state.pendingAlarms = state.pendingAlarms.map((alarm) =>
+    alarm.attackerId === fromId ? { ...alarm, attackerId: nextPlayer.id } : alarm,
+  );
+
+  return true;
+}
+
 // ── Ship placement ────────────────────────────────────────────────────────────
 
 export function applyShipsPlaced(
@@ -512,15 +558,17 @@ export function addInterceptAlarm(
   missileId: string,
   attackerId: string,
   interceptWindowMs: number,
-): void {
+): number {
+  const fireAt = Date.now() + interceptWindowMs;
   state.pendingAlarms.push({
     type: "intercept_timeout",
     missileId,
     attackerId,
-    fireAt: Date.now() + interceptWindowMs,
+    fireAt,
   });
   // Keep sorted by fireAt ascending
   state.pendingAlarms.sort((a, b) => a.fireAt - b.fireAt);
+  return fireAt;
 }
 
 export function addAttackerTurnAlarm(

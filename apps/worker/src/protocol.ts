@@ -68,10 +68,19 @@ export function makeIncomingMissile(
   morseSequence: string[],
   timestamp: number,
   maxAttempts: number,
+  expiresAt?: number,
+  attemptsMade?: number,
 ): Uint8Array {
   return encodeEvent({
     type: "INCOMING_MISSILE",
-    payload: { missileId, morseSequence, timestamp, maxAttempts },
+    payload: {
+      missileId,
+      morseSequence,
+      timestamp,
+      maxAttempts,
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+      ...(attemptsMade !== undefined ? { attemptsMade } : {}),
+    },
   });
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { makeCoordinate } from "@radioboi/game-core";
 import {
+  addInterceptAlarm,
   addPlayer,
   applyShipsPlaced,
   createRoomState,
@@ -9,6 +10,7 @@ import {
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
+  replacePlayerId,
   resolveHit,
   validateShipGeometry,
 } from "../src/game-logic";
@@ -59,6 +61,42 @@ describe("room lifecycle", () => {
     expect(validateShipGeometry([{ coords: [makeCoordinate(0, 0), makeCoordinate(1, 1)] }])).toContain(
       "not linear",
     );
+  });
+
+  test("can claim a disconnected full-room slot without losing state", () => {
+    const state = roomReadyForBattle();
+    const oldTarget = makeCoordinate(0, 8);
+    state.attackCooldowns.p1 = 12345;
+    state.pendingAttacks.p1 = {
+      attackerId: "p1",
+      attempts: 1,
+      missileId: "m-reconnect",
+      morseSequence: ["."],
+      target: oldTarget,
+    };
+    state.pendingAlarms.push({
+      type: "intercept_timeout",
+      attackerId: "p1",
+      missileId: "m-reconnect",
+      fireAt: Date.now() + 1000,
+    });
+
+    expect(
+      replacePlayerId(state, "p1", {
+        id: "p1-new",
+        name: "P1 reconnected",
+        wsTag: "new",
+        isReady: false,
+      }),
+    ).toBe(true);
+
+    expect(state.players.some((p) => p.id === "p1-new" && p.isReady)).toBe(true);
+    expect(state.boards["p1-new"]).toBeDefined();
+    expect(state.boards.p1).toBeUndefined();
+    expect(state.currentTurnId).toBe("p1-new");
+    expect(state.attackCooldowns["p1-new"]).toBe(12345);
+    expect(state.pendingAttacks["p1-new"]?.attackerId).toBe("p1-new");
+    expect(state.pendingAlarms[0]?.attackerId).toBe("p1-new");
   });
 });
 
@@ -120,6 +158,21 @@ describe("attack resolution", () => {
     expect(state.currentTurnId).toBe("p1");
     expect(state.boards.p2?.[target]).toBe("sunk");
     expect(state.shotLog.at(-1)?.target).toBe(target);
+  });
+});
+
+describe("alarm scheduling", () => {
+  test("records a stable intercept deadline for reconnect payloads", () => {
+    const state = roomReadyForBattle();
+    const fireAt = addInterceptAlarm(state, "m-deadline", "p1", 15_000);
+
+    expect(state.pendingAlarms[0]).toMatchObject({
+      type: "intercept_timeout",
+      missileId: "m-deadline",
+      attackerId: "p1",
+      fireAt,
+    });
+    expect(fireAt).toBeGreaterThan(Date.now());
   });
 });
 

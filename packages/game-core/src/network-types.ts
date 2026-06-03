@@ -85,6 +85,10 @@ export type IncomingMissileEvent = {
     morseSequence: MorseSequence;
     timestamp: number;
     maxAttempts: number;
+    /** Unix ms server deadline for interception; absent in older servers. */
+    expiresAt?: number;
+    /** Attempts already spent before this delivery (used after reconnect). */
+    attemptsMade?: number;
   };
 };
 

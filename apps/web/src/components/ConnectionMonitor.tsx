@@ -15,7 +15,6 @@
 import { useEffect, useState } from "react";
 import {
   type ConnectionStatus,
-  destroyGameClient,
   getGameClient,
 } from "@/src/lib/network/gameClient";
 import { useGameStore } from "@/src/store/gameStore";
@@ -62,12 +61,14 @@ export function ConnectionMonitor() {
 
     setIsSyncing(true);
 
-    // Уничтожаем текущее соединение и создаём новое.
-    // При переподключении сервер вызывает makeSyncState() и отправляет
-    // полный снапшот через gameClient.ts → store.syncFromServer().
-    destroyGameClient();
+    // Keep the same GameClient instance so existing event subscriptions stay alive.
     try {
-      getGameClient().connect(roomId, playerId, "Player");
+      const client = getGameClient();
+      if (client.status === "disconnected") {
+        client.connect(roomId, playerId, "Player");
+      } else {
+        client.reconnect();
+      }
     } catch (err) {
       console.error("[ConnectionMonitor] forceSync failed:", err);
       setIsSyncing(false);

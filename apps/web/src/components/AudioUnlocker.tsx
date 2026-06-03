@@ -59,12 +59,11 @@ export function AudioUnlocker({ engine, onUnlocked }: Props): null {
         await engine.resume();
         setIsUnlocked(true);
         onUnlockedRef.current?.();
-      } catch (err) {
-        // resume() может бросить если AudioContext уже закрыт
-        console.warn("[AudioUnlocker] resume() failed:", err);
-        didUnlock = false; // разрешаем повторную попытку
-      } finally {
         removeListeners();
+      } catch (err) {
+        // Keep listeners registered so a later user gesture can retry unlock.
+        console.warn("[AudioUnlocker] resume() failed:", err);
+        didUnlock = false;
       }
     }
 
@@ -77,13 +76,13 @@ export function AudioUnlocker({ engine, onUnlocked }: Props): null {
     }
 
     function removeListeners(): void {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown, { capture: true });
+      document.removeEventListener("keydown", handleKeyDown, { capture: true });
     }
 
     // passive: true важно для производительности (не блокируем scroll)
-    document.addEventListener("pointerdown", handlePointerDown, { once: true, passive: true });
-    document.addEventListener("keydown", handleKeyDown, { once: true, passive: true });
+    document.addEventListener("pointerdown", handlePointerDown, { once: true, passive: true, capture: true });
+    document.addEventListener("keydown", handleKeyDown, { once: true, passive: true, capture: true });
 
     return removeListeners;
   }, [engine]);

@@ -16,6 +16,8 @@ const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8787";
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS  = 30_000;
 const RECONNECT_JITTER  = 0.2;
+const MAX_OUTBOX_EVENTS = 32;
+const FATAL_CLOSE_CODES = new Set([4001]);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +38,9 @@ export class GameClient {
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #destroyed = false;
   #url = "";
+  #playerId = "";
+  #playerName = "";
+  readonly #outbox: ClientGameEvent[] = [];
 
   readonly #handlers: HandlerMap = {};
   readonly #statusListeners = new Set<(status: ConnectionStatus) => void>();
@@ -44,8 +49,18 @@ export class GameClient {
 
   connect(roomId: string, playerId: string, playerName: string): void {
     if (this.#destroyed) throw new Error("GameClient has been destroyed");
+    this.#playerId = playerId;
+    this.#playerName = playerName;
     this.#url = `${DEFAULT_WS_URL}/room/${roomId}?playerId=${encodeURIComponent(playerId)}&playerName=${encodeURIComponent(playerName)}`;
-    this.#openSocket(playerId, playerName);
+    this.#openSocket();
+  }
+
+  reconnect(): void {
+    if (this.#destroyed || !this.#url) return;
+    this.#clearReconnectTimer();
+    this.#ws?.close(1000, "Client reconnect");
+    this.#ws = null;
+    this.#openSocket();
   }
 
   destroy(): void {
@@ -53,6 +68,7 @@ export class GameClient {
     this.#clearReconnectTimer();
     this.#ws?.close(1000, "Client destroyed");
     this.#ws = null;
+    this.#outbox.length = 0;
     this.#setStatus("disconnected");
   }
 
@@ -61,11 +77,37 @@ export class GameClient {
   // ── Sending ───────────────────────────────────────────────────────────────
 
   send(event: ClientGameEvent): void {
-    if (this.#ws?.readyState !== WebSocket.OPEN) return;
+    if (!this.#sendNow(event)) {
+      this.#queueEvent(event);
+    }
+  }
+
+  #sendNow(event: ClientGameEvent): boolean {
+    if (this.#ws?.readyState !== WebSocket.OPEN) return false;
     try {
       this.#ws.send(encodeClientEvent(event));
+      return true;
     } catch (err) {
       console.warn("[GameClient] send error:", err);
+      return false;
+    }
+  }
+
+  #queueEvent(event: ClientGameEvent): void {
+    if (event.type === GameEventType.JOIN_ROOM) return;
+    this.#outbox.push(event);
+    if (this.#outbox.length > MAX_OUTBOX_EVENTS) {
+      this.#outbox.splice(0, this.#outbox.length - MAX_OUTBOX_EVENTS);
+    }
+  }
+
+  #flushOutbox(): void {
+    while (this.#outbox.length > 0 && this.#ws?.readyState === WebSocket.OPEN) {
+      const event = this.#outbox.shift();
+      if (event !== undefined && !this.#sendNow(event)) {
+        this.#outbox.unshift(event);
+        return;
+      }
     }
   }
 
@@ -93,8 +135,9 @@ export class GameClient {
 
   // ── Private: socket management ────────────────────────────────────────────
 
-  #openSocket(playerId: string, playerName: string): void {
+  #openSocket(): void {
     this.#clearReconnectTimer();
+    this.#ws?.close(1000, "Socket replaced");
     this.#setStatus(this.#status === "disconnected" ? "connecting" : "reconnecting");
 
     try {
@@ -106,7 +149,11 @@ export class GameClient {
         if (ws !== this.#ws) return;
         this.#reconnectDelay = RECONNECT_BASE_MS;
         this.#setStatus("connected");
-        this.send({ type: GameEventType.JOIN_ROOM, payload: { playerId, playerName } });
+        this.#sendNow({
+          type: GameEventType.JOIN_ROOM,
+          payload: { playerId: this.#playerId, playerName: this.#playerName },
+        });
+        this.#flushOutbox();
       });
 
       ws.addEventListener("message", (ev: MessageEvent<ArrayBuffer | Blob | string>) => {
@@ -118,28 +165,30 @@ export class GameClient {
       ws.addEventListener("close", (ev) => {
         if (ws !== this.#ws) return;
         this.#ws = null;
-        if (!this.#destroyed) {
-          console.info(`[GameClient] socket closed (${ev.code}); reconnecting…`);
-          this.#scheduleReconnect(playerId, playerName);
+        if (!this.#destroyed && !FATAL_CLOSE_CODES.has(ev.code)) {
+          console.info(`[GameClient] socket closed (${ev.code}); reconnecting...`);
+          this.#scheduleReconnect();
+        } else if (FATAL_CLOSE_CODES.has(ev.code)) {
+          console.warn(`[GameClient] socket closed permanently (${ev.code}): ${ev.reason}`);
+          this.#setStatus("disconnected");
         }
       });
-
       ws.addEventListener("error", () => {
         console.warn("[GameClient] WebSocket error");
       });
     } catch (err) {
       console.error("[GameClient] WebSocket construction failed:", err);
-      if (!this.#destroyed) this.#scheduleReconnect(playerId, playerName);
+      if (!this.#destroyed) this.#scheduleReconnect();
     }
   }
 
-  #scheduleReconnect(playerId: string, playerName: string): void {
+  #scheduleReconnect(): void {
     const jitter = 1 + (Math.random() * 2 - 1) * RECONNECT_JITTER;
     const delay = Math.min(this.#reconnectDelay * jitter, RECONNECT_MAX_MS);
     this.#reconnectDelay = Math.min(this.#reconnectDelay * 2, RECONNECT_MAX_MS);
     this.#setStatus("reconnecting");
     this.#reconnectTimer = setTimeout(() => {
-      if (!this.#destroyed) this.#openSocket(playerId, playerName);
+      if (!this.#destroyed) this.#openSocket();
     }, delay);
   }
 
