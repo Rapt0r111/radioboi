@@ -78,7 +78,7 @@ function makeInitialState(): GameState {
     isMyTurn: false,
     winnerId: null,
     shotLog: [],
-    settings: DEFAULT_ROOM_SETTINGS,
+    settings: { ...DEFAULT_ROOM_SETTINGS },
     attackCooldownExpiresAt: null,
   };
 }

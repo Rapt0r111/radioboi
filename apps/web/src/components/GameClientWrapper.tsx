@@ -102,9 +102,10 @@ function toRadarPoint(coord: Coordinate): { x: number; y: number } {
 }
 
 function formatCoord(coord: Coordinate | null): string {
-  if (coord === null) return "нет";
+  if (coord === null) return "???";
   const { digit, letter } = coordinateToMorseNotation(coord);
-  return `${letter}${digit} / ${coord.slice(0, 3)}-${Number(coord.slice(3))}`;
+  const columnLabel = digit === "0" ? "10" : digit;
+  return `${letter}${columnLabel}`;
 }
 
 function formatMorseForCoord(coord: Coordinate | null): string {
@@ -278,8 +279,8 @@ export function GameClientWrapper({ roomId }: Props) {
   const handleSequenceComplete = useEffectEvent((coord: Coordinate) => {
     if (!transport) { setStatusLine("Транспорт ещё не поднят."); return; }
 
-    // Intercept takes priority regardless of mode
-    if (incomingMissileId !== null) {
+    // Intercept is available only in turn-based mode.
+    if (!isAsync && incomingMissileId !== null) {
       const attemptNumber = incomingMissileAttempts + 1;
       patchGameLoopRuntimeState({
         incomingMissileAttempts: Math.min(attemptNumber, incomingMissileMaxAttempts),
@@ -316,6 +317,11 @@ export function GameClientWrapper({ roomId }: Props) {
 
     missileInFlightRef.current = true;
     setMissileInFlightUI(true);
+    void morseEngine?.playEffect([3, -1, 3, -1, 1, -1, 1], 34);
+    void radarRef.current?.triggerEffect("rocket", radarPoint.x, radarPoint.y);
+    if (isAsync) {
+      useGameStore.getState().setAttackCooldown(timestamp + settings.attackCooldownMs);
+    }
 
     useGameStore.getState().addMissile({ id: missileId, launchedAt: timestamp, target: coord });
     void radarRef.current?.updateMissile(missileId, radarPoint.x, radarPoint.y, 0);

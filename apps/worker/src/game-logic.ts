@@ -9,7 +9,7 @@
 //   - processInterceptAttempt finds attack across all pending attacks
 //   - pendingAlarms[] array replaces single ALARM_TYPE_KEY storage
 
-import { isValidCoordinate, parseCoordinate as parseCoordCore } from "@radioboi/game-core";
+import { COLUMNS, isValidCoordinate, parseCoordinate as parseCoordCore, ROWS, type Coordinate } from "@radioboi/game-core";
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
@@ -45,7 +45,7 @@ export type RoomSettings = {
 
 export const DEFAULT_SETTINGS: RoomSettings = {
   battleMode: "turn-based",
-  attackCooldownMs: 20_000,
+  attackCooldownMs: 2_000,
   interceptWindowMs: 25_000,
   maxInterceptAttempts: 3,
 };
@@ -62,7 +62,7 @@ export function clampRoomSettings(raw: unknown): RoomSettings {
     battleMode: record.battleMode === "async" ? "async" : "turn-based",
     attackCooldownMs: clampNumber(
       record.attackCooldownMs,
-      5_000,
+      2_000,
       60_000,
       DEFAULT_SETTINGS.attackCooldownMs,
     ),
@@ -142,23 +142,10 @@ function secureRandomIndex(maxExclusive: number): number {
 
 // ── Column/row triplet definitions ────────────────────────────────────────────
 
-const COLUMNS = ["АБВ","ГДЕ","ЖЗИ","ЙКЛ","МНО","ПРС","ТУФ","ХЦЧ","ШЩЪ","ЫЭЮ"];
-const ROWS    = ["000","001","002","003","004","005","006","007","008","009"];
-const COLUMN_SET = new Set<string>(COLUMNS);
-const ROW_SET    = new Set<string>(ROWS);
-
 function parseCoord(coord: string): { colIndex: number; rowIndex: number } | null {
-  if (coord.length !== 6) return null;
-  const colStr = coord.slice(0, 3);
-  const rowStr = coord.slice(3, 6);
-  if (!COLUMN_SET.has(colStr) || !ROW_SET.has(rowStr)) return null;
-  const colIndex = COLUMNS.indexOf(colStr);
-  const rowIndex = ROWS.indexOf(rowStr);
-  if (colIndex === -1 || rowIndex === -1) return null;
-  return { colIndex, rowIndex };
+  if (!isValidCoordinate(coord)) return null;
+  return parseCoordCore(coord as Coordinate);
 }
-
-// ── Server-side ship geometry validation ──────────────────────────────────────
 
 export function validateShipGeometry(
   ships: ReadonlyArray<{ coords: readonly string[] }>,
@@ -260,7 +247,7 @@ export function createRoomState(roomId: string, settings?: RoomSettings): RoomSt
     winnerId: null,
     shotLog: [],
     activeMissiles: [],
-    settings: settings ?? DEFAULT_SETTINGS,
+    settings: { ...(settings ?? DEFAULT_SETTINGS) },
     attackCooldowns: {},
     pendingAlarms: [],
   };
@@ -424,7 +411,7 @@ export function recordMorseSequence(
   state: RoomState,
   missileId: string,
   morseSequence: string[],
-): { ok: true } | { ok: false; reason: string } {
+): { ok: true; cooldownExpiresAt?: number } | { ok: false; reason: string } {
   const attack = Object.values(state.pendingAttacks).find(
     (a) => a.missileId === missileId,
   );
@@ -432,6 +419,13 @@ export function recordMorseSequence(
 
   attack.morseSequence = morseSequence;
   state.activeMissiles.push({ id: missileId, target: attack.target, launchedAt: Date.now() });
+
+  if (state.settings.battleMode === "async") {
+    const cooldownExpiresAt = Date.now() + state.settings.attackCooldownMs;
+    state.attackCooldowns[attack.attackerId] = cooldownExpiresAt;
+    return { ok: true, cooldownExpiresAt };
+  }
+
   return { ok: true };
 }
 
@@ -439,9 +433,15 @@ export type ResolveResult = {
   result: "hit" | "miss" | "sunk";
   isGameOver: boolean;
   winnerId: string | null;
-  /** Async only: ms when attacker can fire again */
-  cooldownExpiresAt?: number;
 };
+
+export type InterceptedResult = {
+  intercepted: true;
+  attackerId: string;
+  target: Coord;
+};
+
+export type InterceptAttemptResult = ResolveResult | InterceptedResult;
 
 export const MAX_INTERCEPT_ATTEMPTS = 3;
 
@@ -450,8 +450,9 @@ export function processInterceptAttempt(
   defenderId: string,
   missileId: string,
   decodedCoord: Coord,
-): ResolveResult | null {
-  // Find the pending attack by missileId across ALL attackers
+): InterceptAttemptResult | null {
+  if (state.settings.battleMode === "async") return null;
+
   const attack = Object.values(state.pendingAttacks).find(
     (a) => a.missileId === missileId,
   );
@@ -462,7 +463,20 @@ export function processInterceptAttempt(
   const maxAttempts = state.settings.maxInterceptAttempts;
   const decodedCorrectly = decodedCoord === attack.target;
 
-  if (!decodedCorrectly && attack.attempts < maxAttempts) return null;
+  if (decodedCorrectly) {
+    const opponentId = getOpponentId(state, attack.attackerId);
+    if (state.settings.battleMode === "turn-based" && opponentId && !state.winnerId) {
+      state.currentTurnId = opponentId;
+    }
+    delete state.pendingAttacks[attack.attackerId];
+    state.activeMissiles = state.activeMissiles.filter((m) => m.id !== missileId);
+    state.pendingAlarms = state.pendingAlarms.filter(
+      (a) => !(a.type === "intercept_timeout" && a.missileId === missileId),
+    );
+    return { intercepted: true, attackerId: attack.attackerId, target: attack.target };
+  }
+
+  if (attack.attempts < maxAttempts) return null;
 
   return resolveHit(state, attack.attackerId, attack.target, missileId);
 }
@@ -522,17 +536,9 @@ export function resolveHit(
     state.winnerId = winnerId;
   }
 
-  // ── Turn / cooldown management ────────────────────────────────────────────
-  let cooldownExpiresAt: number | undefined;
-
-  if (state.settings.battleMode === "turn-based") {
-    if (!isGameOver) {
-      state.currentTurnId = result === "miss" ? opponentId : attackerId;
-    }
-  } else {
-    // Async: apply per-attacker cooldown
-    cooldownExpiresAt = Date.now() + state.settings.attackCooldownMs;
-    state.attackCooldowns[attackerId] = cooldownExpiresAt;
+  // ?? Turn management ???????????????????????????????????????????????????????
+  if (state.settings.battleMode === "turn-based" && !isGameOver) {
+    state.currentTurnId = result === "miss" ? opponentId : attackerId;
   }
 
   // Clear this attacker's pending entry
@@ -546,9 +552,7 @@ export function resolveHit(
     );
   }
 
-  return cooldownExpiresAt === undefined
-    ? { result, isGameOver, winnerId }
-    : { result, isGameOver, winnerId, cooldownExpiresAt };
+  return { result, isGameOver, winnerId };
 }
 
 // ── Alarm helpers ─────────────────────────────────────────────────────────────

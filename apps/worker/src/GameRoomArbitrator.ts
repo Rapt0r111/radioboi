@@ -41,6 +41,7 @@ import {
   makeError,
   makeGameStarted,
   makeIncomingMissile,
+  makeMissileIntercepted,
   makePlayerJoined,
   makeResolveHit,
   makeSyncState,
@@ -227,11 +228,6 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       null,
     );
 
-    // Async: send cooldown update to attacker
-    if (state.settings.battleMode === "async" && result.cooldownExpiresAt !== undefined) {
-      this.#sendToPlayer(attack.attackerId, makeAttackCooldownUpdate(result.cooldownExpiresAt));
-    }
-
     this.#sendSyncToAll(state);
 
     // Turn-based: schedule next attacker's turn alarm
@@ -403,9 +399,37 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return;
     }
 
-    recordMorseSequence(state, missileId, morseSequence as string[]);
+    const recordResult = recordMorseSequence(state, missileId, morseSequence as string[]);
+    if (!recordResult.ok) {
+      ws.send(makeError(recordResult.reason, recordResult.reason));
+      return;
+    }
 
-    // Add intercept alarm using settings window
+    if (state.settings.battleMode === "async") {
+      const result = resolveHit(state, playerId, target, missileId);
+      await this.#saveState(state);
+
+      if (recordResult.cooldownExpiresAt !== undefined) {
+        this.#sendToPlayer(playerId, makeAttackCooldownUpdate(recordResult.cooldownExpiresAt));
+      }
+
+      this.#broadcast(
+        makeResolveHit(
+          missileId,
+          target,
+          result.result,
+          state.currentTurnId ?? playerId,
+          result.isGameOver,
+          false,
+          result.winnerId ?? undefined,
+        ),
+        null,
+      );
+      this.#sendSyncToAll(state);
+      return;
+    }
+
+    // Turn-based mode keeps the defender intercept window.
     const expiresAt = addInterceptAlarm(
       state,
       missileId,
@@ -454,6 +478,11 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return;
     }
 
+    if (state.settings.battleMode === "async") {
+      ws.send(makeError("INTERCEPT_DISABLED", "Intercept is disabled in async mode"));
+      return;
+    }
+
     const resolveResult = processInterceptAttempt(
       state,
       playerId,
@@ -467,13 +496,27 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return;
     }
 
-    // Remove intercept alarm for this missile (resolved early)
-    state.pendingAlarms = state.pendingAlarms.filter(
-      (a) => !(a.type === "intercept_timeout" && a.missileId === missileId),
-    );
-
     await this.#saveState(state);
     await this.#rescheduleAlarm(state);
+
+    if ("intercepted" in resolveResult) {
+      this.#broadcast(
+        makeMissileIntercepted(
+          missileId,
+          resolveResult.target,
+          state.currentTurnId ?? playerId,
+        ),
+        null,
+      );
+      this.#sendSyncToAll(state);
+
+      if (state.settings.battleMode === "turn-based" && state.currentTurnId !== null) {
+        addAttackerTurnAlarm(state, ATTACKER_TURN_TIMEOUT_MS);
+        await this.#saveState(state);
+        await this.#rescheduleAlarm(state);
+      }
+      return;
+    }
 
     const lastShot = state.shotLog[state.shotLog.length - 1];
     const shotTarget = lastShot?.target ?? "";
@@ -491,18 +534,6 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       ),
       null,
     );
-
-    // Async: send cooldown update to the attacker
-    if (
-      state.settings.battleMode === "async" &&
-      resolveResult.cooldownExpiresAt !== undefined &&
-      lastShot?.attackerId
-    ) {
-      this.#sendToPlayer(
-        lastShot.attackerId,
-        makeAttackCooldownUpdate(resolveResult.cooldownExpiresAt),
-      );
-    }
 
     this.#sendSyncToAll(state);
 
@@ -539,6 +570,8 @@ export class GameRoomArbitrator extends DurableObject<Env> {
   }
 
   #sendPendingIncomingToPlayer(state: RoomState, playerId: string): void {
+    if (state.settings.battleMode === "async") return;
+
     const attack = Object.values(state.pendingAttacks).find(
       (pending) => pending.attackerId !== playerId && pending.morseSequence.length > 0,
     );

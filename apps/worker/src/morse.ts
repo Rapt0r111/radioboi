@@ -1,4 +1,6 @@
 // apps/worker/src/morse.ts
+
+import { BOARD_ROW_LABELS, COLUMN_MORSE_DIGITS } from "@radioboi/game-core";
 // Self-contained Morse encoder / decoder for the Worker.
 // Covers A–Z and 0–9 (international standard).
 // Used by GameRoomArbitrator to verify that the attacker's Morse
@@ -10,32 +12,27 @@
 // ── Code table ────────────────────────────────────────────────────────────────
 
 const MORSE_TABLE: Readonly<Record<string, string>> = {
+  "\u0410": ".-",
+  "\u0411": "-...",
+  "\u0412": ".--",
+  "\u0413": "--.",
+  "\u0414": "-..",
+  "\u0415": ".",
+  "\u0416": "...-",
+  "\u0417": "--..",
+  "\u0418": "..",
+  "\u041A": "-.-",
   A: ".-",
   B: "-...",
-  C: "-.-.",
-  D: "-..",
-  E: ".",
-  F: "..-.",
-  G: "--.",
-  H: "....",
+  C: ".--",
+  D: "--.",
+  E: "-..",
+  F: ".",
+  G: "...-",
+  H: "--..",
   I: "..",
-  J: ".---",
+  J: "-.-",
   K: "-.-",
-  L: ".-..",
-  M: "--",
-  N: "-.",
-  O: "---",
-  P: ".--.",
-  Q: "--.-",
-  R: ".-.",
-  S: "...",
-  T: "-",
-  U: "..-",
-  V: "...-",
-  W: ".--",
-  X: "-..-",
-  Y: "-.--",
-  Z: "--..",
   "0": "-----",
   "1": ".----",
   "2": "..---",
@@ -49,9 +46,19 @@ const MORSE_TABLE: Readonly<Record<string, string>> = {
 };
 
 // Reverse lookup: morse string → character
-const REVERSE_TABLE: Readonly<Record<string, string>> = Object.fromEntries(
-  Object.entries(MORSE_TABLE).map(([char, morse]) => [morse, char]),
-);
+const REVERSE_TABLE: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(Object.entries(MORSE_TABLE).map(([char, morse]) => [morse, char])),
+  ".-": "\u0410",
+  "-...": "\u0411",
+  ".--": "\u0412",
+  "--.": "\u0413",
+  "-..": "\u0414",
+  ".": "\u0415",
+  "...-": "\u0416",
+  "--..": "\u0417",
+  "..": "\u0418",
+  "-.-": "\u041A",
+};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -83,14 +90,14 @@ export function morseToChar(morse: string): string | null {
  * @returns [columnMorse, rowMorse]
  */
 export function coordIndicesToMorse(colIndex: number, rowIndex: number): CoordMorseTokens {
-  const letter = String.fromCharCode(65 + colIndex); // A–J
-  const digit = String(rowIndex); // 0–9
-  const colMorse = MORSE_TABLE[letter];
-  const rowMorse = MORSE_TABLE[digit];
-  if (colMorse === undefined || rowMorse === undefined) {
+  const letter = BOARD_ROW_LABELS[rowIndex];
+  const digit = COLUMN_MORSE_DIGITS[colIndex];
+  const rowMorse = letter ? MORSE_TABLE[letter] : undefined;
+  const colMorse = digit ? MORSE_TABLE[digit] : undefined;
+  if (rowMorse === undefined || colMorse === undefined) {
     throw new RangeError(`coordIndicesToMorse: invalid indices col=${colIndex} row=${rowIndex}`);
   }
-  return [colMorse, rowMorse];
+  return [rowMorse, colMorse];
 }
 
 /**
@@ -98,22 +105,22 @@ export function coordIndicesToMorse(colIndex: number, rowIndex: number): CoordMo
  * Returns null if either token is unrecognised.
  */
 export function morseToCoordIndices(
-  colMorse: string,
   rowMorse: string,
+  colMorse: string,
 ): { colIndex: number; rowIndex: number } | null {
-  const letter = REVERSE_TABLE[colMorse];
-  const digit = REVERSE_TABLE[rowMorse];
+  const letter = REVERSE_TABLE[rowMorse];
+  const digit = REVERSE_TABLE[colMorse];
 
   if (!letter || !digit) return null;
 
-  const colIndex = letter.charCodeAt(0) - 65; // A→0 … J→9
-  const rowIndex = parseInt(digit, 10);
+  const rowIndex = BOARD_ROW_LABELS.indexOf(
+    letter.toUpperCase() as (typeof BOARD_ROW_LABELS)[number],
+  );
+  const colIndex = COLUMN_MORSE_DIGITS.indexOf(
+    digit as (typeof COLUMN_MORSE_DIGITS)[number],
+  );
 
-  // FIX(noGlobalIsNan): use Number.isNaN — the global isNaN coerces its
-  // argument before testing, which can mask bugs. Number.isNaN is strict.
-  if (colIndex < 0 || colIndex > 9 || Number.isNaN(rowIndex) || rowIndex < 0 || rowIndex > 9) {
-    return null;
-  }
+  if (colIndex < 0 || rowIndex < 0) return null;
 
   return { colIndex, rowIndex };
 }
@@ -152,9 +159,6 @@ export function validateMorseForCoord(
   colIndex: number,
   rowIndex: number,
 ): boolean {
-  const tokens = splitMorseSequence(sequence);
-  if (!tokens) return false;
-  const decoded = morseToCoordIndices(tokens[0], tokens[1]);
-  if (!decoded) return false;
-  return decoded.colIndex === colIndex && decoded.rowIndex === rowIndex;
+  const [rowToken, colToken] = coordIndicesToMorse(colIndex, rowIndex);
+  return sequence.join("") === `${rowToken}${colToken}`;
 }

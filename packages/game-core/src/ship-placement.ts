@@ -2,6 +2,8 @@
 // Pure ship-placement validation. No side-effects, no I/O.
 
 import {
+  BOARD_ROW_LABELS,
+  COLUMN_MORSE_DIGITS,
   getAdjacentCoordinates,
   isValidCoordinate,
   makeCoordinate,
@@ -233,16 +235,22 @@ export function findShipAt(
 
 export function colIndexToMorseLetter(colIndex: number): string {
   if (colIndex < 0 || colIndex > 9) {
-    throw new RangeError(`colIndexToMorseLetter: index ${colIndex} out of 0–9`);
+    throw new RangeError(`colIndexToMorseLetter: index ${colIndex} out of 0?9`);
   }
-  return String.fromCharCode(65 + colIndex);
+  const label = BOARD_ROW_LABELS[colIndex];
+  if (label === undefined) {
+    throw new RangeError(`colIndexToMorseLetter: unreachable index ${colIndex}`);
+  }
+  return label;
 }
 
 export function morseLetterToColIndex(letter: string): number {
-  const idx = letter.toUpperCase().charCodeAt(0) - 65;
-  if (idx < 0 || idx > 9) {
+  const idx = BOARD_ROW_LABELS.indexOf(
+    letter.toUpperCase() as (typeof BOARD_ROW_LABELS)[number],
+  );
+  if (idx < 0) {
     throw new RangeError(
-      `morseLetterToColIndex: letter "${letter}" maps to index ${idx}, out of 0–9`,
+      `morseLetterToColIndex: letter "${letter}" is not a board row`,
     );
   }
   return idx;
@@ -250,17 +258,21 @@ export function morseLetterToColIndex(letter: string): number {
 
 export function coordinateToMorseNotation(coord: Coordinate): { letter: string; digit: string } {
   const { colIndex, rowIndex } = parseCoordinate(coord);
-  return {
-    letter: colIndexToMorseLetter(colIndex),
-    digit: String(rowIndex),
-  };
+  const letter = BOARD_ROW_LABELS[rowIndex];
+  const digit = COLUMN_MORSE_DIGITS[colIndex];
+  if (letter === undefined || digit === undefined) {
+    throw new RangeError(`coordinateToMorseNotation: unreachable coordinate ${coord}`);
+  }
+  return { letter, digit };
 }
 
 export function morseNotationToCoordinate(letter: string, digit: string): Coordinate {
-  const colIndex = morseLetterToColIndex(letter);
-  const rowIndex = parseInt(digit, 10);
-  if (Number.isNaN(rowIndex) || rowIndex < 0 || rowIndex > 9) {
-    throw new RangeError(`morseNotationToCoordinate: digit "${digit}" out of 0–9`);
+  const rowIndex = morseLetterToColIndex(letter);
+  const colIndex = COLUMN_MORSE_DIGITS.indexOf(
+    digit as (typeof COLUMN_MORSE_DIGITS)[number],
+  );
+  if (colIndex < 0) {
+    throw new RangeError(`morseNotationToCoordinate: digit "${digit}" is not a board column`);
   }
   return makeCoordinate(colIndex, rowIndex);
 }

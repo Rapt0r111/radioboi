@@ -2,15 +2,19 @@
   "name": "radioboi",
   "private": true,
   "version": "0.0.0",
-  "description": "Морской радиобой — реалтайм PvP-игра с азбукой Морзе",
+  "description": "Realtime PvP Morse battleship game",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
     "dev": "turbo run dev",
+    "dev:server": "cd apps/worker && bun run dev -- --port 8787 --ip 127.0.0.1",
+    "dev:client": "cd apps/web && bun run dev -- --hostname 127.0.0.1 -p 3000",
+    "dev:local": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1",
+    "stop:local": "powershell -ExecutionPolicy Bypass -File scripts/stop-local.ps1",
     "build": "turbo run build",
-        "lint": "turbo run lint",
+    "lint": "turbo run lint",
     "type-check": "turbo run type-check",
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",

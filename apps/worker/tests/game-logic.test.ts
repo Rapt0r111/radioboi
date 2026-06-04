@@ -14,7 +14,7 @@ import {
   resolveHit,
   validateShipGeometry,
 } from "../src/game-logic";
-import { splitMorseSequence, validateMorseForCoord } from "../src/morse";
+import { coordIndicesToMorse, splitMorseSequence, validateMorseForCoord } from "../src/morse";
 import { closeWebSocketSafely } from "../src/websocket";
 
 function validFleet() {
@@ -108,12 +108,63 @@ describe("attack resolution", () => {
     expect(prepareAttack(state, "p1", target, "m1")).toEqual({ ok: true });
     expect(recordMorseSequence(state, "m1", [".", "-"])).toEqual({ ok: true });
 
-    const result = processInterceptAttempt(state, "p2", "m1", target);
+    expect(processInterceptAttempt(state, "p2", "m1", makeCoordinate(8, 8))).toBeNull();
+    expect(processInterceptAttempt(state, "p2", "m1", makeCoordinate(8, 8))).toBeNull();
+    const result = processInterceptAttempt(state, "p2", "m1", makeCoordinate(8, 8));
 
     expect(result).toEqual({ result: "miss", isGameOver: false, winnerId: null });
     expect(state.currentTurnId).toBe("p2");
     expect(state.pendingAttacks).toEqual({});
     expect(getEnemyBoard(state, "p1")[target]).toBe("miss");
+  });
+
+  test("intercepts a correctly decoded missile without damaging the board", () => {
+    const state = roomReadyForBattle();
+    const target = makeCoordinate(0, 8);
+
+    expect(prepareAttack(state, "p1", target, "m-intercept")).toEqual({ ok: true });
+    expect(recordMorseSequence(state, "m-intercept", [".", "-"])).toEqual({ ok: true });
+
+    const result = processInterceptAttempt(state, "p2", "m-intercept", target);
+
+    expect(result).toEqual({ intercepted: true, attackerId: "p1", target });
+    expect(state.pendingAttacks).toEqual({});
+    expect(state.boards.p2?.[target]).toBe("ship");
+    expect(state.shotLog).toHaveLength(0);
+    expect(state.currentTurnId).toBe("p2");
+  });
+
+
+  test("does not allow missile intercept attempts in async mode", () => {
+    const state = roomReadyForBattle();
+    state.settings.battleMode = "async";
+    const target = makeCoordinate(0, 8);
+
+    expect(prepareAttack(state, "p1", target, "m-no-intercept")).toEqual({ ok: true });
+    expect(recordMorseSequence(state, "m-no-intercept", [".", "-"]).ok).toBe(true);
+
+    expect(processInterceptAttempt(state, "p2", "m-no-intercept", target)).toBeNull();
+    expect(state.pendingAttacks.p1?.attempts).toBe(0);
+    expect(state.boards.p2?.[target]).toBe("ship");
+  });
+
+  test("starts async cooldown when the missile launches", () => {
+    const state = roomReadyForBattle();
+    state.settings.battleMode = "async";
+    state.settings.attackCooldownMs = 2_000;
+    const target = makeCoordinate(9, 9);
+
+    expect(prepareAttack(state, "p1", target, "m-async")).toEqual({ ok: true });
+    const launched = recordMorseSequence(state, "m-async", [".", "-"]);
+
+    expect(launched.ok).toBe(true);
+    if (launched.ok) {
+      expect(launched.cooldownExpiresAt).toBeGreaterThan(Date.now());
+    }
+    expect(prepareAttack(state, "p1", makeCoordinate(8, 8), "m-blocked")).toEqual({
+      ok: false,
+      reason: "ATTACK_ON_COOLDOWN",
+    });
   });
 
   test("rejects malformed targets before creating a pending attack", () => {
@@ -178,11 +229,12 @@ describe("alarm scheduling", () => {
 
 describe("worker Morse validation", () => {
   test("splits and validates coordinate Morse sequences", () => {
-    const sequence = [".", "-", "-", "-", ".", ".", "."] as const;
+    const sequence = [".", "-", ".", "-", "-", "-", "-"] as const;
 
-    expect(splitMorseSequence(sequence)).toEqual([".-", "--..."]);
-    expect(validateMorseForCoord([".", "-", "-", "-", ".", ".", "."], 0, 7)).toBe(true);
-    expect(validateMorseForCoord([".", "-", "-", "-", ".", ".", "."], 1, 7)).toBe(false);
+    expect(coordIndicesToMorse(0, 0)).toEqual([".-", ".----"]);
+    expect(splitMorseSequence(sequence)).toEqual([".-", ".----"]);
+    expect(validateMorseForCoord(sequence, 0, 0)).toBe(true);
+    expect(validateMorseForCoord(sequence, 1, 0)).toBe(false);
   });
 });
 

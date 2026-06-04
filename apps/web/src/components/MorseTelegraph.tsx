@@ -13,17 +13,36 @@
 // период несоответствия. Теперь decoder инициализируется с актуальным unitMs.
 
 import {
-  COLUMNS,
+  BOARD_COLUMN_LABELS,
+  BOARD_ROW_LABELS,
+  COLUMN_MORSE_DIGITS,
   type Coordinate,
-  morseLetterToColIndex,
   morseNotationToCoordinate,
-  ROWS,
 } from "@radioboi/game-core";
-import { FuzzyDecoder, type MorseEngine } from "@radioboi/morse-engine";
+import { FuzzyDecoder, MORSE_ALPHABET, type MorseEngine } from "@radioboi/morse-engine";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-const DISPLAY_SLOTS = 6;
+const DISPLAY_SLOTS = 2;
 const DISPLAY_SLOT_KEYS = Array.from({ length: DISPLAY_SLOTS }, (_, index) => `display-slot-${index + 1}`);
+
+const BOARD_REVERSE_MORSE: Readonly<Record<string, string>> = (() => {
+  const reverse: Record<string, string> = {};
+  for (const letter of BOARD_ROW_LABELS) {
+    const morse = MORSE_ALPHABET[letter];
+    if (morse !== undefined) reverse[morse] = letter;
+  }
+  for (const digit of COLUMN_MORSE_DIGITS) {
+    const morse = MORSE_ALPHABET[digit];
+    if (morse !== undefined) reverse[morse] = digit;
+  }
+  return reverse;
+})();
+
+function normalizeDecodedChar(char: string, slotIndex: number): string {
+  const upper = char.toUpperCase();
+  if (slotIndex !== 0) return upper;
+  return upper === "Ё" ? "Е" : upper;
+}
 
 type Props = {
   mode: "attack" | "intercept";
@@ -42,26 +61,15 @@ function toDisplayChars(decodedChars: readonly string[]): string[] {
   const display = Array.from({ length: DISPLAY_SLOTS }, () => "");
 
   if (letter) {
-    try {
-      const triplet = COLUMNS[morseLetterToColIndex(letter)];
-      if (triplet !== undefined) {
-        const chars = [...triplet];
-        for (const [index, char] of chars.entries()) {
-          display[index] = char;
-        }
-      }
-    } catch {
-      display[0] = letter;
-    }
+    display[0] = letter;
   }
 
-  if (digit && /^[0-9]$/.test(digit)) {
-    const row = ROWS[Number(digit)];
-    if (row !== undefined) {
-      const chars = [...row];
-      for (const [index, char] of chars.entries()) {
-        display[index + 3] = char;
-      }
+  if (digit) {
+    const colIndex = COLUMN_MORSE_DIGITS.indexOf(
+      digit as (typeof COLUMN_MORSE_DIGITS)[number],
+    );
+    if (colIndex >= 0) {
+      display[1] = BOARD_COLUMN_LABELS[colIndex] ?? digit;
     }
   }
 
@@ -106,18 +114,24 @@ export function MorseTelegraph({
   if (decoderRef.current === null) {
     decoderRef.current = new FuzzyDecoder({
       dotDuration: unitMsRef.current, // ← актуальный unitMs через ref
+      reverseMap: BOARD_REVERSE_MORSE,
       onChar: (char) => {
         setLiveMorse("");
         setDecodedChars((current) => {
-          const normalizedChar = char.toUpperCase();
+          const normalizedChar = normalizeDecodedChar(char, current.length);
           const next = [...current, normalizedChar];
 
-          if (next.length === 1 && !/^[A-J]$/.test(next[0] ?? "")) {
+          const row = next[0] ?? "";
+          if (
+            next.length === 1 &&
+            !BOARD_ROW_LABELS.includes(row as (typeof BOARD_ROW_LABELS)[number])
+          ) {
             return [];
           }
 
           if (next.length === 2) {
-            if (!/^[0-9]$/.test(next[1] ?? "")) {
+            const digit = next[1] ?? "";
+            if (!COLUMN_MORSE_DIGITS.includes(digit as (typeof COLUMN_MORSE_DIGITS)[number])) {
               return [];
             }
             queueMicrotask(() => completeSequence(next));
@@ -196,6 +210,33 @@ export function MorseTelegraph({
     stopSignal();
   }
 
+  function isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.code !== "Space" || event.repeat || isEditableTarget(event.target)) return;
+      event.preventDefault();
+      startSignal();
+    }
+
+    function onKeyUp(event: KeyboardEvent): void {
+      if (event.code !== "Space" || isEditableTarget(event.target)) return;
+      event.preventDefault();
+      stopSignal();
+    }
+
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    window.addEventListener("keyup", onKeyUp, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+      window.removeEventListener("keyup", onKeyUp, { capture: true });
+    };
+  });
+
   const displayChars = toDisplayChars(decodedChars);
 
   const buttonBorderClass = isWrongFlash
@@ -246,7 +287,7 @@ export function MorseTelegraph({
       </div>
 
       {/* Декодированные символы */}
-      <div className="grid grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         {DISPLAY_SLOT_KEYS.map((slotKey, index) => {
           const char = displayChars[index] ?? "";
 

@@ -43,4 +43,24 @@ describe("FuzzyDecoder", () => {
 
     expect(decoder.currentMorse).toBe("-");
   });
+
+  test("can prefer a custom reverse map for ambiguous Cyrillic screen codes", () => {
+    const decoder = new FuzzyDecoder({
+      dotDuration: 100,
+      reverseMap: {
+        ".--": "В",
+        "...-": "Ж",
+        "--..": "З",
+      },
+    });
+
+    decoder.pointerDown(0);
+    decoder.pointerUp(80);
+    decoder.pointerDown(200);
+    decoder.pointerUp(380);
+    decoder.pointerDown(500);
+    decoder.pointerUp(680);
+
+    expect(decoder.flush()).toBe("В");
+  });
 });

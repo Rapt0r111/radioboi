@@ -31,7 +31,7 @@ export type RoomSettings = {
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   battleMode: "turn-based",
-  attackCooldownMs: 20_000,
+  attackCooldownMs: 2_000,
   interceptWindowMs: 25_000,
   maxInterceptAttempts: 3,
 };

@@ -36,7 +36,9 @@ const DEFAULT_MASTER_VOLUME = 0.8;
 const DEFAULT_UNIT_MS = 60;
 
 const ATTACK_S = 0.005;
+const MANUAL_ATTACK_S = 0.001;
 const RELEASE_S = 0.005;
+const MIN_MANUAL_TONE_S = 0.035;
 const SCHEDULE_OFFSET_S = 0.025;
 
 // ── Типы ──────────────────────────────────────────────────────────────────────
@@ -53,6 +55,7 @@ export class MorseEngine {
   readonly #oscillator: OscillatorNode;
   readonly #filter: BiquadFilterNode;
   readonly #envelopeGain: GainNode;
+  readonly #effectGain: GainNode;
   readonly #masterGain: GainNode;
 
   #isPlaying: boolean = false;
@@ -60,6 +63,8 @@ export class MorseEngine {
   #unitMs: number = DEFAULT_UNIT_MS;
   #resolvePlayback: (() => void) | null = null;
   #manualToneId: number = 0;
+  #manualToneRequested: boolean = false;
+  #manualToneStartedAtS: number | null = null;
 
   constructor(options: MorseEngineOptions = {}) {
     // SSR guard — AudioContext недоступен вне браузера
@@ -79,6 +84,7 @@ export class MorseEngine {
     this.#oscillator = this.#ctx.createOscillator();
     this.#filter = this.#ctx.createBiquadFilter();
     this.#envelopeGain = this.#ctx.createGain();
+    this.#effectGain = this.#ctx.createGain();
     this.#masterGain = this.#ctx.createGain();
 
     this.#oscillator.type = "sine";
@@ -89,11 +95,14 @@ export class MorseEngine {
     this.#filter.Q.value = DEFAULT_FILTER_Q;
 
     this.#envelopeGain.gain.value = 0;
+    this.#effectGain.gain.value = 0;
     this.#masterGain.gain.value = Math.max(0, Math.min(1, volume));
 
     this.#oscillator.connect(this.#filter);
     this.#filter.connect(this.#envelopeGain);
+    this.#filter.connect(this.#effectGain);
     this.#envelopeGain.connect(this.#masterGain);
+    this.#effectGain.connect(this.#masterGain);
     this.#masterGain.connect(this.#ctx.destination);
 
     this.#oscillator.start();
@@ -142,14 +151,12 @@ export class MorseEngine {
 
   async playSequence(sequence: number[], unitMs?: number): Promise<void> {
     const resolvedUnitMs = unitMs ?? this.#unitMs;
-    this.#manualToneId++;
     await this.resume();
-    this.stop();
 
     this.#isPlaying = true;
     const id = ++this.#playbackId;
     const unitS = resolvedUnitMs / 1000;
-    const endTimeS = this.#scheduleSequence(sequence, unitS);
+    const endTimeS = this.#scheduleSequence(this.#effectGain.gain, sequence, unitS);
 
     return new Promise<void>((resolve) => {
       this.#resolvePlayback = resolve;
@@ -170,8 +177,14 @@ export class MorseEngine {
     });
   }
 
+  async playEffect(sequence: number[], unitMs?: number): Promise<void> {
+    return this.playSequence(sequence, unitMs);
+  }
+
   startTone(): void {
     const id = ++this.#manualToneId;
+    this.#manualToneRequested = true;
+    this.#manualToneStartedAtS = null;
     this.#playbackId++;
     this.#isPlaying = true;
     this.#resolvePlayback?.();
@@ -179,11 +192,19 @@ export class MorseEngine {
 
     const begin = () => {
       if (this.#manualToneId !== id) return;
+
       const gain = this.#envelopeGain.gain;
       const now = this.#ctx.currentTime;
+
+      if (!this.#manualToneRequested) {
+        this.#playPulseNow(this.#effectGain.gain, MIN_MANUAL_TONE_S);
+        return;
+      }
+
+      this.#manualToneStartedAtS = now;
       gain.cancelScheduledValues(now);
-      gain.setValueAtTime(0, now);
-      gain.linearRampToValueAtTime(1, now + ATTACK_S);
+      gain.setValueAtTime(gain.value, now);
+      gain.linearRampToValueAtTime(1, now + MANUAL_ATTACK_S);
     };
 
     if (this.#ctx.state === "suspended") {
@@ -197,13 +218,15 @@ export class MorseEngine {
   }
 
   stopTone(): void {
-    this.#manualToneId++;
-    this.stop();
+    this.#manualToneRequested = false;
+    this.#releaseManualTone();
   }
 
   stop(): void {
     this.#playbackId++;
     this.#isPlaying = false;
+    this.#manualToneRequested = false;
+    this.#manualToneStartedAtS = null;
     this.#resolvePlayback?.();
     this.#resolvePlayback = null;
 
@@ -211,6 +234,39 @@ export class MorseEngine {
     const now = this.#ctx.currentTime;
     gain.cancelScheduledValues(now);
     gain.setTargetAtTime(0, now, 0.003);
+  }
+
+  #releaseManualTone(): void {
+    this.#playbackId++;
+    this.#isPlaying = false;
+    this.#resolvePlayback?.();
+    this.#resolvePlayback = null;
+
+    const gain = this.#envelopeGain.gain;
+    const now = this.#ctx.currentTime;
+    const startedAt = this.#manualToneStartedAtS;
+
+    if (startedAt === null) {
+      return;
+    }
+
+    const releaseAt = Math.max(now, startedAt + MIN_MANUAL_TONE_S);
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(gain.value, now);
+    gain.setValueAtTime(gain.value, releaseAt);
+    gain.setTargetAtTime(0, releaseAt, 0.003);
+    this.#manualToneStartedAtS = null;
+  }
+
+  #playPulseNow(gain: AudioParam, durationS: number): void {
+    const now = this.#ctx.currentTime;
+    const releaseAt = now + durationS;
+
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(0, now);
+    gain.linearRampToValueAtTime(1, now + MANUAL_ATTACK_S);
+    gain.setValueAtTime(1, releaseAt);
+    gain.setTargetAtTime(0, releaseAt, 0.003);
   }
 
   async close(): Promise<void> {
@@ -225,8 +281,7 @@ export class MorseEngine {
 
   // ── Приватные методы ───────────────────────────────────────────────────────
 
-  #scheduleSequence(sequence: number[], unitS: number): number {
-    const gain = this.#envelopeGain.gain;
+  #scheduleSequence(gain: AudioParam, sequence: number[], unitS: number): number {
     const now = this.#ctx.currentTime;
 
     gain.cancelScheduledValues(now);

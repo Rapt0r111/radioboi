@@ -107,6 +107,17 @@ export function makeResolveHit(
   });
 }
 
+export function makeMissileIntercepted(
+  missileId: string,
+  target: string,
+  nextTurnPlayerId: string,
+): Uint8Array {
+  return encodeEvent({
+    type: "MISSILE_INTERCEPTED",
+    payload: { missileId, target, nextTurnPlayerId },
+  });
+}
+
 type ShotLogEntry = {
   by: "us" | "them";
   coord: string;

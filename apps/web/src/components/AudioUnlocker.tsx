@@ -80,9 +80,11 @@ export function AudioUnlocker({ engine, onUnlocked }: Props): null {
       document.removeEventListener("keydown", handleKeyDown, { capture: true });
     }
 
-    // passive: true важно для производительности (не блокируем scroll)
-    document.addEventListener("pointerdown", handlePointerDown, { once: true, passive: true, capture: true });
-    document.addEventListener("keydown", handleKeyDown, { once: true, passive: true, capture: true });
+    // passive: true важно для производительности (не блокируем scroll).
+    // Не используем once: true: если resume() не успел/не удался, следующий
+    // пользовательский жест должен повторить разблокировку.
+    document.addEventListener("pointerdown", handlePointerDown, { passive: true, capture: true });
+    document.addEventListener("keydown", handleKeyDown, { passive: true, capture: true });
 
     return removeListeners;
   }, [engine]);

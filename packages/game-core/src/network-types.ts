@@ -27,6 +27,7 @@ export const GameEventType = {
   GAME_STARTED: "GAME_STARTED",
   INCOMING_MISSILE: "INCOMING_MISSILE",
   RESOLVE_HIT: "RESOLVE_HIT",
+  MISSILE_INTERCEPTED: "MISSILE_INTERCEPTED",
   SYNC_STATE: "SYNC_STATE",
   ATTACK_COOLDOWN_UPDATE: "ATTACK_COOLDOWN_UPDATE",
   ERROR: "ERROR",
@@ -107,6 +108,15 @@ export type ResolveHitEvent = {
   };
 };
 
+export type MissileInterceptedEvent = {
+  type: typeof GameEventType.MISSILE_INTERCEPTED;
+  payload: {
+    missileId: string;
+    target: Coordinate;
+    nextTurnPlayerId: string;
+  };
+};
+
 export type ClientShotLogEntry = {
   by: "us" | "them";
   coord: string;
@@ -176,6 +186,7 @@ export type ServerGameEvent =
   | GameStartedEvent
   | IncomingMissileEvent
   | ResolveHitEvent
+  | MissileInterceptedEvent
   | SyncStateEvent
   | AttackCooldownUpdateEvent
   | ErrorEvent;

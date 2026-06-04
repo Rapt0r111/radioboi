@@ -29,7 +29,7 @@ const SETTINGS_PRESETS: Array<{ id: string; label: string; settings: RoomSetting
     label: "RAPID",
     settings: {
       battleMode: "turn-based",
-      attackCooldownMs: 10_000,
+      attackCooldownMs: 2_000,
       interceptWindowMs: 15_000,
       maxInterceptAttempts: 2,
     },
@@ -39,7 +39,7 @@ const SETTINGS_PRESETS: Array<{ id: string; label: string; settings: RoomSetting
     label: "ASYNC",
     settings: {
       battleMode: "async",
-      attackCooldownMs: 20_000,
+      attackCooldownMs: 2_000,
       interceptWindowMs: 25_000,
       maxInterceptAttempts: 3,
     },
@@ -273,9 +273,9 @@ export function LobbyCreateForm({ initialError }: Props) {
             <CrtSlider
               id="setting-cooldown"
               label="Перезарядка"
-              min={5}
+              min={2}
               max={60}
-              step={5}
+              step={1}
               value={cooldownMs / 1000}
               onChange={(v) => setCooldownMs(v * 1000)}
               format={(v) => `${v}с`}

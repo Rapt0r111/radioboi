@@ -13,6 +13,7 @@ type RadarRendererProxy = {
   setGridBounds(offsetX: number, offsetY: number, width: number, height: number): Promise<void>;
   updateMissile(id: string, x: number, y: number, progress: number): Promise<void>;
   removeMissile(id: string): Promise<void>;
+  triggerEffect(kind: "hit" | "miss" | "sunk" | "intercept" | "fire" | "bubble" | "rocket", x: number, y: number): Promise<void>;
 };
 
 export type RadarRef = RadarRendererProxy | null;

@@ -52,7 +52,7 @@ function clampSettings(raw: Partial<RoomSettings>): RoomSettings {
     battleMode: raw.battleMode === "async" ? "async" : "turn-based",
     attackCooldownMs: clampNumber(
       raw.attackCooldownMs,
-      5_000,
+      2_000,
       60_000,
       DEFAULT_ROOM_SETTINGS.attackCooldownMs,
     ),

@@ -30,6 +30,45 @@ export const ROWS = [
   "009", // 9
 ] as const;
 
+export const BOARD_COLUMN_LABELS = [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "10",
+] as const;
+
+export const BOARD_ROW_LABELS = [
+  "А",
+  "Б",
+  "В",
+  "Г",
+  "Д",
+  "Е",
+  "Ж",
+  "З",
+  "И",
+  "К",
+] as const;
+
+export const COLUMN_MORSE_DIGITS = [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "0",
+] as const;
+
 const COLUMN_SET = new Set<string>(COLUMNS);
 const ROW_SET = new Set<string>(ROWS);
 

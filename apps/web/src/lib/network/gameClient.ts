@@ -249,6 +249,10 @@ export class GameClient {
         }
         break;
 
+      case GameEventType.MISSILE_INTERCEPTED:
+        store.interceptMissile(event.payload.missileId);
+        break;
+
       case GameEventType.SYNC_STATE:
         store.syncFromServer(event.payload);
         break;

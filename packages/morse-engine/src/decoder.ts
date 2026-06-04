@@ -11,6 +11,8 @@ export type MorseSymbol = "." | "-";
 export type FuzzyDecoderOptions = {
   /** Базовая длительность точки в мс. По умолчанию 150. */
   dotDuration?: number;
+  /** Опциональная таблица декодирования для неоднозначных алфавитов. */
+  reverseMap?: Readonly<Record<string, string>>;
   /** Вызывается когда расшифрован полный символ (буква/цифра). */
   onChar?: (char: string) => void;
   /** Вызывается сразу после распознавания точки или тире. */
@@ -37,6 +39,7 @@ export class FuzzyDecoder {
   #dotDuration: number;
 
   // Callbacks
+  readonly #reverseMap: Readonly<Record<string, string>>;
   readonly #onChar: ((char: string) => void) | undefined;
   readonly #onSymbol: ((symbol: MorseSymbol) => void) | undefined;
   readonly #onWordBreak: (() => void) | undefined;
@@ -49,6 +52,7 @@ export class FuzzyDecoder {
 
   constructor(options: FuzzyDecoderOptions = {}) {
     this.#dotDuration = options.dotDuration ?? 150;
+    this.#reverseMap = options.reverseMap ?? MORSE_REVERSE;
     this.#onChar = options.onChar;
     this.#onSymbol = options.onSymbol;
     this.#onWordBreak = options.onWordBreak;
@@ -158,7 +162,7 @@ export class FuzzyDecoder {
 
     if (!morse) return null;
 
-    const char = MORSE_REVERSE[morse]; // string | undefined
+    const char = this.#reverseMap[morse]; // string | undefined
     if (char === undefined) return null;
 
     this.#onChar?.(char);

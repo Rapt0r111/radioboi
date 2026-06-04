@@ -9,6 +9,8 @@ import {
   GameEventType,
   type Missile,
   type MorseSymbol,
+  parseCoordinate,
+  type Coordinate,
 } from "@radioboi/game-core";
 import type { MorseEngine } from "@radioboi/morse-engine";
 import { MORSE_REVERSE } from "@radioboi/morse-engine";
@@ -82,6 +84,15 @@ function removeMissileFromStore(missileId: string): void {
   }));
 }
 
+function playEffect(morseEngine: MorseEngine | null, sequence: number[], unitMs = 45): void {
+  void morseEngine?.playEffect(sequence, unitMs);
+}
+
+function toRadarPoint(coord: Coordinate): { x: number; y: number } {
+  const { colIndex, rowIndex } = parseCoordinate(coord);
+  return { x: (colIndex + 0.5) / 10, y: (rowIndex + 0.5) / 10 };
+}
+
 export function getGameLoopRuntimeState(): GameLoopRuntimeState {
   return readRuntimeState();
 }
@@ -109,8 +120,9 @@ export function useGameLoop(
 
     // ── INCOMING_MISSILE ──────────────────────────────────────────────────
     const stopIncoming = transport.on(GameEventType.INCOMING_MISSILE, (event) => {
-      // Derive intercept window from current settings (may differ from default)
+      // Async mode has no intercept phase; stale incoming frames are ignored defensively.
       const settings = useGameStore.getState().settings;
+      if (settings.battleMode === "async") return;
       const windowMs = settings?.interceptWindowMs ?? INTERCEPT_WINDOW_MS;
 
       const playbackSequence = toPlaybackSequence(event.payload.morseSequence);
@@ -141,6 +153,12 @@ export function useGameLoop(
       const boardUpdater = isByThem ? store.applyOwnHit : store.applyEnemyShot;
 
       void radarWorker.current?.removeMissile(event.payload.missileId);
+      const point = toRadarPoint(event.payload.target);
+      void radarWorker.current?.triggerEffect(event.payload.result, point.x, point.y);
+      if (event.payload.result === "hit" || event.payload.result === "sunk") {
+        void radarWorker.current?.triggerEffect("fire", point.x, point.y);
+        void radarWorker.current?.triggerEffect("bubble", point.x, point.y);
+      }
       removeMissileFromStore(event.payload.missileId);
       boardUpdater(event.payload.target, event.payload.result);
 
@@ -156,13 +174,29 @@ export function useGameLoop(
       }
 
       if (event.payload.result === "sunk") {
-        void morseEngine?.playSequence(
-          [DOT_UNIT, ELEMENT_GAP, DOT_UNIT, ELEMENT_GAP, DOT_UNIT],
-          60,
-        );
+        playEffect(morseEngine, [DASH_UNIT, ELEMENT_GAP, DOT_UNIT, ELEMENT_GAP, DASH_UNIT], 48);
+      } else if (event.payload.result === "hit") {
+        playEffect(morseEngine, [DASH_UNIT, ELEMENT_GAP, DOT_UNIT, ELEMENT_GAP, DOT_UNIT], 42);
+      } else {
+        playEffect(morseEngine, [DOT_UNIT, ELEMENT_GAP, DOT_UNIT, ELEMENT_GAP, DOT_UNIT], 30);
       }
 
       resetGameLoopRuntimeState();
+    });
+
+    const stopIntercepted = transport.on(GameEventType.MISSILE_INTERCEPTED, (event) => {
+      const runtime = readRuntimeState();
+      const isByThem = runtime.incomingMissileId === event.payload.missileId;
+
+      void radarWorker.current?.removeMissile(event.payload.missileId);
+      const point = toRadarPoint(event.payload.target);
+      void radarWorker.current?.triggerEffect("intercept", point.x, point.y);
+      removeMissileFromStore(event.payload.missileId);
+      playEffect(morseEngine, [DOT_UNIT, ELEMENT_GAP, DASH_UNIT, ELEMENT_GAP, DOT_UNIT], 45);
+
+      if (isByThem) {
+        resetGameLoopRuntimeState();
+      }
     });
 
     // ── SYNC_STATE ────────────────────────────────────────────────────────
@@ -199,6 +233,7 @@ export function useGameLoop(
     const cleanup = () => {
       stopIncoming();
       stopResolve();
+      stopIntercepted();
       stopSync();
       stopCooldown();
       stopError();

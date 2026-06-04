@@ -1,6 +1,9 @@
 // packages/game-core/src/index.ts
 
 export {
+  BOARD_COLUMN_LABELS,
+  BOARD_ROW_LABELS,
+  COLUMN_MORSE_DIGITS,
   COLUMNS,
   getAdjacentCoordinates,
   isValidCoordinate,
@@ -22,6 +25,7 @@ export type {
   InterceptAttemptEvent,
   JoinRoomEvent,
   MissileLaunchedEvent,
+  MissileInterceptedEvent,
   MorseSequence,
   MorseSymbol,
   PlayerJoinedEvent,

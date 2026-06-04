@@ -42,8 +42,21 @@ describe("coordinate helpers", () => {
     const coord = makeCoordinate(4, 7);
     const notation = coordinateToMorseNotation(coord);
 
-    expect(notation).toEqual({ letter: "E", digit: "7" });
+    expect(notation).toEqual({ letter: "З", digit: "5" });
     expect(morseNotationToCoordinate(notation.letter, notation.digit)).toBe(coord);
+  });
+
+  test("uses 1-10 columns and Cyrillic A-K rows for Morse notation", () => {
+    expect(coordinateToMorseNotation(makeCoordinate(0, 0))).toEqual({
+      letter: "А",
+      digit: "1",
+    });
+    expect(coordinateToMorseNotation(makeCoordinate(9, 0))).toEqual({
+      letter: "А",
+      digit: "0",
+    });
+    expect(morseNotationToCoordinate("К", "0")).toBe(makeCoordinate(9, 9));
+    expect(morseNotationToCoordinate("Ж", "0")).toBe(makeCoordinate(9, 6));
   });
 });
 

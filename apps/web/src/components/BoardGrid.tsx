@@ -1,7 +1,15 @@
 // apps/web/src/components/BoardGrid.tsx
 "use client";
 
-import { type Board, type CellState, COLUMNS, type Coordinate, ROWS } from "@radioboi/game-core";
+import {
+  type Board,
+  BOARD_COLUMN_LABELS,
+  BOARD_ROW_LABELS,
+  type CellState,
+  COLUMNS,
+  type Coordinate,
+  ROWS,
+} from "@radioboi/game-core";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,9 +52,9 @@ function cellClass(
         ? `${base} bg-transparent border-[var(--color-ocean-700)]/50 enabled:cursor-crosshair enabled:hover:bg-[var(--color-radar-green)]/10`
         : `${base} bg-[var(--color-ocean-800)] border-[var(--color-radar-dim)]`;
     case "hit":
-      return `${base} bg-[var(--color-hit-red)]/20 border-[var(--color-hit-red)] text-[var(--color-hit-red)]`;
+      return `${base} bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.28)_0_9%,transparent_10_18%,rgba(255,59,59,0.28)_19_42%,transparent_43%),radial-gradient(circle_at_20%_20%,rgba(255,210,64,0.75)_0_6%,transparent_7%),radial-gradient(circle_at_80%_25%,rgba(255,210,64,0.55)_0_5%,transparent_6%),radial-gradient(circle_at_25%_78%,rgba(255,210,64,0.5)_0_5%,transparent_6%)] border-[var(--color-hit-red)] text-[var(--color-hit-red)] shadow-[0_0_14px_rgba(255,59,59,0.45)]`;
     case "sunk":
-      return `${base} bg-[var(--color-hit-red)]/40 border-[var(--color-hit-red)] text-[var(--color-hit-red)]`;
+      return `${base} bg-[radial-gradient(circle_at_center,rgba(255,59,59,0.55)_0_30%,transparent_31%),radial-gradient(circle_at_20%_20%,rgba(255,210,64,0.85)_0_7%,transparent_8%),radial-gradient(circle_at_78%_22%,rgba(255,210,64,0.75)_0_6%,transparent_7%),radial-gradient(circle_at_25%_78%,rgba(255,210,64,0.65)_0_6%,transparent_7%),radial-gradient(circle_at_76%_76%,rgba(255,210,64,0.65)_0_6%,transparent_7%)] border-[var(--color-hit-red)] text-[var(--color-hit-red)] ring-1 ring-[var(--color-hit-red)]/70 shadow-[0_0_18px_rgba(255,59,59,0.65)]`;
     case "miss":
       return `${base} bg-transparent border-[var(--color-miss-white)]/20 text-[var(--color-miss-white)]/40`;
     default:
@@ -135,13 +143,13 @@ export function BoardGrid({
       <thead>
         <tr>
           <th className="w-5" />
-          {COLUMNS.map((col) => (
+          {COLUMNS.map((col, colIndex) => (
             <th
               key={col}
               scope="col"
               className="text-center text-[9px] font-mono text-radar-dim leading-tight"
             >
-              {col}
+              {BOARD_COLUMN_LABELS[colIndex] ?? col}
             </th>
           ))}
         </tr>
@@ -155,14 +163,16 @@ export function BoardGrid({
               scope="row"
               className="w-5 shrink-0 text-center text-[9px] font-mono text-radar-dim"
             >
-              {rowIndex}
+              {BOARD_ROW_LABELS[rowIndex] ?? rowIndex}
             </th>
 
-            {COLUMNS.map((col) => {
+            {COLUMNS.map((col, colIndex) => {
               const coord = (col + row) as Coordinate;
               const state = board[coord];
               const isSelected = selectedCoord === coord;
               const isHighlighted = highlightedSet.has(coord);
+              const rowLabel = BOARD_ROW_LABELS[rowIndex] ?? String(rowIndex);
+              const colLabel = BOARD_COLUMN_LABELS[colIndex] ?? col;
               const isDisabled =
                 !isInteractive || isCellDisabled(state, isEnemy, isPlacement);
 
@@ -171,7 +181,7 @@ export function BoardGrid({
                   <button
                     type="button"
                     data-coord={coord}
-                    aria-label={`${col}${rowIndex}${isSelected ? " (цель)" : ""} — ${state ?? "пусто"}${!isInteractive && disabledMessage ? `. ${disabledMessage}` : ""}`}
+                    aria-label={`${rowLabel}${colLabel}${isSelected ? " (selected target)" : ""} ? ${state ?? "empty"}${!isInteractive && disabledMessage ? `. ${disabledMessage}` : ""}`}
                     aria-pressed={isSelected}
                     className={cellClass(state, isEnemy, isPlacement, isSelected, isHighlighted)}
                     onClick={() => onCellClick?.(coord)}
