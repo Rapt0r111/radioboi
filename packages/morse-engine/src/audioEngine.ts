@@ -28,8 +28,10 @@ const DEFAULT_UNIT_MS = 60;
 const SEQUENCE_ATTACK_S = 0.004;
 const SEQUENCE_RELEASE_S = 0.004;
 const MANUAL_RELEASE_S = 0.003;
-// Even an ultra-short tap must remain audible as a Morse dot.
-const MIN_MANUAL_TONE_S = 0.055;
+// Every ultra-short keydown gets an audible one-shot dot this long.
+const TAP_PULSE_S = 0.055;
+// Enough independent voices for rapid tapping without cancelling previous dots.
+const TAP_PULSE_VOICES = 8;
 // Only for playSequence stability. Manual keying never uses lookahead.
 const SEQUENCE_LOOKAHEAD_S = 0.004;
 
@@ -48,6 +50,7 @@ export class MorseEngine {
   readonly #filter: BiquadFilterNode;
   readonly #envelopeGain: GainNode;
   readonly #effectGain: GainNode;
+  readonly #tapPulseGains: GainNode[];
   readonly #masterGain: GainNode;
 
   #isPlaying: boolean = false;
@@ -57,6 +60,8 @@ export class MorseEngine {
   #manualToneId: number = 0;
   #manualToneRequested: boolean = false;
   #manualToneStartedAtS: number | null = null;
+  #nextTapPulseVoice: number = 0;
+  #resumePromise: Promise<void> | null = null;
 
   constructor(options: MorseEngineOptions = {}) {
     if (typeof window === "undefined") {
@@ -75,6 +80,7 @@ export class MorseEngine {
     this.#filter = this.#ctx.createBiquadFilter();
     this.#envelopeGain = this.#ctx.createGain();
     this.#effectGain = this.#ctx.createGain();
+    this.#tapPulseGains = Array.from({ length: TAP_PULSE_VOICES }, () => this.#ctx.createGain());
     this.#masterGain = this.#ctx.createGain();
 
     this.#oscillator.type = "sine";
@@ -86,6 +92,9 @@ export class MorseEngine {
 
     this.#envelopeGain.gain.value = 0;
     this.#effectGain.gain.value = 0;
+    for (const tapGain of this.#tapPulseGains) {
+      tapGain.gain.value = 0;
+    }
     this.#masterGain.gain.value = Math.max(0, Math.min(1, volume));
 
     this.#oscillator.connect(this.#filter);
@@ -93,6 +102,10 @@ export class MorseEngine {
     this.#filter.connect(this.#effectGain);
     this.#envelopeGain.connect(this.#masterGain);
     this.#effectGain.connect(this.#masterGain);
+    for (const tapGain of this.#tapPulseGains) {
+      this.#filter.connect(tapGain);
+      tapGain.connect(this.#masterGain);
+    }
     this.#masterGain.connect(this.#ctx.destination);
 
     this.#oscillator.start();
@@ -101,9 +114,13 @@ export class MorseEngine {
   // -- AudioContext -----------------------------------------------------------
 
   async resume(): Promise<void> {
-    if (this.#ctx.state === "suspended") {
-      await this.#ctx.resume();
-    }
+    if (this.#ctx.state !== "suspended") return;
+
+    this.#resumePromise ??= this.#ctx.resume().finally(() => {
+      this.#resumePromise = null;
+    });
+
+    await this.#resumePromise;
   }
 
   get state(): AudioContextState {
@@ -175,23 +192,22 @@ export class MorseEngine {
 
   startTone(): void {
     const id = ++this.#manualToneId;
+    const now = this.#ctx.currentTime;
+
     this.#manualToneRequested = true;
-    this.#manualToneStartedAtS = this.#ctx.currentTime;
-    this.#playbackId++;
+    this.#manualToneStartedAtS = now;
     this.#isPlaying = true;
-    this.#resolvePlayback?.();
-    this.#resolvePlayback = null;
 
     // Critical for Morse: do not wait for resume() and do not add lookahead.
-    // Queue the gain change synchronously inside the same user-gesture callback.
-    this.#forceManualToneOn(this.#ctx.currentTime);
+    // The held tone starts immediately; the one-shot pulse guarantees that an
+    // ultra-short tap is audible even if keyup follows almost instantly.
+    this.#forceManualToneOn(now);
+    this.#playTapPulse(now);
 
     if (this.#ctx.state !== "running") {
       void this.resume()
         .then(() => {
           if (this.#manualToneId !== id || !this.#manualToneRequested) return;
-          // If the context has just unlocked and the key is still held, pin the
-          // manual gain to 1 at the newly-current context time too.
           this.#forceManualToneOn(this.#ctx.currentTime);
         })
         .catch(() => {
@@ -214,10 +230,12 @@ export class MorseEngine {
     this.#resolvePlayback?.();
     this.#resolvePlayback = null;
 
-    const gain = this.#envelopeGain.gain;
     const now = this.#ctx.currentTime;
-    gain.cancelScheduledValues(now);
-    gain.setTargetAtTime(0, now, MANUAL_RELEASE_S);
+    this.#silenceGain(this.#envelopeGain.gain, now);
+    this.#silenceGain(this.#effectGain.gain, now);
+    for (const tapGain of this.#tapPulseGains) {
+      this.#silenceGain(tapGain.gain, now);
+    }
   }
 
   async close(): Promise<void> {
@@ -240,24 +258,34 @@ export class MorseEngine {
 
   #releaseManualTone(): void {
     this.#isPlaying = false;
-    this.#resolvePlayback?.();
-    this.#resolvePlayback = null;
+    this.#manualToneStartedAtS = null;
 
     const gain = this.#envelopeGain.gain;
     const now = this.#ctx.currentTime;
-    const startedAt = this.#manualToneStartedAtS ?? now;
-    const releaseAt = Math.max(now, startedAt + MIN_MANUAL_TONE_S);
-
-    this.#manualToneStartedAtS = null;
-
     gain.cancelScheduledValues(now);
-    // If press/release both happen before resume() resolves, this queued
-    // automation still produces an immediate audible pulse after unlock.
-    gain.setValueAtTime(1, now);
-    if (releaseAt > now) {
-      gain.setValueAtTime(1, releaseAt);
-    }
+    gain.setValueAtTime(gain.value, now);
+    gain.setTargetAtTime(0, now, MANUAL_RELEASE_S);
+  }
+
+  #playTapPulse(atS: number): void {
+    const tapGain = this.#tapPulseGains[this.#nextTapPulseVoice % this.#tapPulseGains.length];
+    this.#nextTapPulseVoice++;
+
+    if (!tapGain) return;
+
+    const gain = tapGain.gain;
+    const releaseAt = atS + TAP_PULSE_S;
+
+    gain.cancelScheduledValues(atS);
+    gain.setValueAtTime(0, atS);
+    gain.setValueAtTime(1, atS);
+    gain.setValueAtTime(1, releaseAt);
     gain.setTargetAtTime(0, releaseAt, MANUAL_RELEASE_S);
+  }
+
+  #silenceGain(gain: AudioParam, atS: number): void {
+    gain.cancelScheduledValues(atS);
+    gain.setTargetAtTime(0, atS, MANUAL_RELEASE_S);
   }
 
   #scheduleSequence(gain: AudioParam, sequence: number[], unitS: number): number {

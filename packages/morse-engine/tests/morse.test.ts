@@ -193,48 +193,129 @@ function installMockAudioContext(): void {
   });
 }
 
+function requireMockContext(): MockAudioContext {
+  const ctx = mockContexts[0];
+  if (!ctx) throw new Error("missing mock context");
+  return ctx;
+}
+
+function requireGain(ctx: MockAudioContext, index: number): MockAudioParam {
+  const gain = ctx.gainNodes[index]?.gain;
+  if (!gain) throw new Error(`missing gain node ${index}`);
+  return gain;
+}
+
 describe("MorseEngine manual tone latency", () => {
-  test("starts manual tone automation synchronously without waiting for resume", () => {
+  test("starts held tone and tap pulse synchronously without waiting for resume", () => {
     installMockAudioContext();
 
     const engine = new MorseEngine();
-    const ctx = mockContexts[0];
-    if (!ctx) throw new Error("missing mock context");
-    const manualGain = ctx.gainNodes[0]?.gain;
-    if (!manualGain) throw new Error("missing manual gain");
+    const ctx = requireMockContext();
+    const heldGain = requireGain(ctx, 0);
+    const firstTapGain = requireGain(ctx, 2);
 
     engine.startTone();
 
     expect(ctx.resumeCalls).toBe(1);
-    expect(manualGain.events).toContainEqual({
+    expect(heldGain.events).toContainEqual({
       method: "setValueAtTime",
       value: 1,
       startTime: 0,
     });
+    expect(firstTapGain.events).toContainEqual({
+      method: "setValueAtTime",
+      value: 1,
+      startTime: 0,
+    });
+    expect(firstTapGain.events).toContainEqual({
+      method: "setTargetAtTime",
+      value: 0,
+      startTime: 0.055,
+      timeConstant: 0.003,
+    });
+  });
+
+  test("uses one resume request while unlock is already pending", () => {
+    installMockAudioContext();
+
+    const engine = new MorseEngine();
+    const ctx = requireMockContext();
+
+    engine.startTone();
+    void engine.resume();
+
+    expect(ctx.resumeCalls).toBe(1);
   });
 
   test("keeps an ultra-short tap audible even when released before resume resolves", () => {
     installMockAudioContext();
 
     const engine = new MorseEngine();
-    const ctx = mockContexts[0];
-    if (!ctx) throw new Error("missing mock context");
-    const manualGain = ctx.gainNodes[0]?.gain;
-    if (!manualGain) throw new Error("missing manual gain");
+    const ctx = requireMockContext();
+    const heldGain = requireGain(ctx, 0);
+    const firstTapGain = requireGain(ctx, 2);
 
     engine.startTone();
     engine.stopTone();
 
-    expect(manualGain.events).toContainEqual({
+    expect(heldGain.events).toContainEqual({
+      method: "setTargetAtTime",
+      value: 0,
+      startTime: 0,
+      timeConstant: 0.003,
+    });
+    expect(firstTapGain.events).toContainEqual({
       method: "setValueAtTime",
       value: 1,
       startTime: 0.055,
     });
-    expect(manualGain.events).toContainEqual({
+    expect(firstTapGain.events).toContainEqual({
       method: "setTargetAtTime",
       value: 0,
       startTime: 0.055,
       timeConstant: 0.003,
     });
+  });
+
+  test("creates a separate tap pulse for each fast Space press", () => {
+    installMockAudioContext();
+
+    const engine = new MorseEngine();
+    const ctx = requireMockContext();
+    ctx.state = "running";
+
+    for (let press = 0; press < 7; press++) {
+      ctx.currentTime = press * 0.08;
+      engine.startTone();
+      ctx.currentTime += 0.015;
+      engine.stopTone();
+    }
+
+    for (let voice = 0; voice < 7; voice++) {
+      const tapGain = requireGain(ctx, 2 + voice);
+      expect(tapGain.events).toContainEqual({
+        method: "setValueAtTime",
+        value: 1,
+        startTime: voice * 0.08,
+      });
+    }
+  });
+
+  test("manual tap pulses do not cancel scheduled sequence playback", async () => {
+    installMockAudioContext();
+
+    const engine = new MorseEngine();
+    const ctx = requireMockContext();
+    ctx.state = "running";
+    const effectGain = requireGain(ctx, 1);
+
+    const playback = engine.playSequence([1], 20);
+    await Promise.resolve();
+    const effectEventCount = effectGain.events.length;
+
+    engine.startTone();
+
+    expect(effectGain.events).toHaveLength(effectEventCount);
+    await playback;
   });
 });

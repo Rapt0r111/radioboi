@@ -190,8 +190,8 @@ export function MorseTelegraph({
   function startSignal(): void {
     if (isPressedRef.current) return;
     isPressedRef.current = true;
-    decoderRef.current?.pointerDown(performance.now());
     morseEngine?.startTone();
+    decoderRef.current?.pointerDown(performance.now());
     setIsPressed(true);
   }
 
