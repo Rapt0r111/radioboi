@@ -481,14 +481,14 @@ export function GameClientWrapper({ roomId }: Props) {
             : undefined;
 
   return (
-    <div className="relative min-h-dvh bg-ocean-950 text-miss-white">
+    <div className="battle-shell relative min-h-dvh text-miss-white">
       {morseEngine ? <AudioUnlocker engine={morseEngine} /> : null}
       <ConnectionMonitor />
 
       <main className="crt-scanlines mx-auto flex min-h-dvh w-full max-w-[1600px] flex-col gap-4 px-4 py-4 lg:px-6 lg:py-6">
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
-        <header className="rounded border border-ocean-800 bg-ocean-900/80 p-3 shadow-[0_0_24px_rgba(0,255,136,0.06)]">
+        <header className="battle-panel rounded border p-3 shadow-[0_0_28px_rgba(0,255,136,0.08)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-baseline gap-4">
               <p className="font-mono text-[9px] uppercase tracking-[0.34em] text-radar-green/60">
@@ -505,7 +505,7 @@ export function GameClientWrapper({ roomId }: Props) {
             <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
 
               {/* Turn / async status */}
-              <div className={`rounded border px-3 py-1.5 transition-colors ${turnBadgeClass}`}>
+              <div className={`battle-status-chip rounded border px-3 py-1.5 transition-colors ${turnBadgeClass}`}>
                 {turnLabel}
               </div>
 
@@ -559,11 +559,11 @@ export function GameClientWrapper({ roomId }: Props) {
               )}
 
               {/* Mode badge */}
-              <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/25">
+              <div className="battle-status-chip rounded border border-ocean-800 px-3 py-1.5 text-miss-white/25">
                 {isAsync ? "ASYNC" : phase}
               </div>
 
-              <div className="rounded border border-ocean-800 px-3 py-1.5 text-miss-white/25">
+              <div className="battle-status-chip rounded border border-ocean-800 px-3 py-1.5 text-miss-white/25">
                 {playerId ? playerId.slice(0, 8) : "..."}
               </div>
             </div>
@@ -574,7 +574,7 @@ export function GameClientWrapper({ roomId }: Props) {
         <div className="grid flex-1 gap-4 xl:grid-cols-[1fr_320px_1fr]">
 
           {/* ── Enemy board ─────────────────────────────────────────────── */}
-          <section className="flex flex-col gap-3 rounded border border-ocean-800 bg-ocean-900/80 p-4">
+          <section className="battle-panel flex flex-col gap-3 rounded border p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="font-mono text-sm uppercase tracking-normal text-radar-green">
@@ -633,13 +633,13 @@ export function GameClientWrapper({ roomId }: Props) {
 
             {/* Async mode info badge */}
             {isAsync && (
-              <div className="rounded border border-morse-amber/25 bg-morse-amber/5 px-3 py-2 font-mono text-[9px] text-morse-amber/60 uppercase tracking-widest">
+              <div className="battle-status-chip rounded border border-morse-amber/30 bg-morse-amber/10 px-3 py-2 font-mono text-[9px] text-morse-amber/75 uppercase tracking-widest shadow-[0_0_18px_rgba(255,170,0,0.08)]">
                 ⚡ Асинхронный бой · оба игрока атакуют независимо
               </div>
             )}
 
             {/* Action card */}
-            <div className="rounded border border-radar-green/35 bg-radar-green/5 p-3">
+            <div className="battle-action-card rounded border p-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-mono text-[10px] uppercase tracking-normal text-radar-green/60">
@@ -676,7 +676,7 @@ export function GameClientWrapper({ roomId }: Props) {
             </div>
 
             {/* Status line */}
-            <div className="rounded border border-ocean-800 bg-ocean-900/80 p-3">
+            <div className="battle-panel rounded border p-3">
               <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-radar-green/50 mb-1">
                 Статус канала
               </p>
@@ -721,7 +721,7 @@ export function GameClientWrapper({ roomId }: Props) {
             ) : null}
 
             {/* Room settings summary */}
-            <div className="rounded border border-ocean-800/50 bg-ocean-900/40 px-3 py-2 font-mono text-[8px] text-miss-white/20 leading-relaxed">
+            <div className="battle-status-chip rounded border border-ocean-800/50 bg-ocean-900/45 px-3 py-2 font-mono text-[8px] text-miss-white/25 leading-relaxed">
               <span className="text-miss-white/30 uppercase tracking-widest">Настройки: </span>
               {isAsync ? "ASYNC" : "ПОШАГОВЫЙ"}
               {isAsync && ` · перезарядка ${settings.attackCooldownMs / 1000}с`}
@@ -732,7 +732,7 @@ export function GameClientWrapper({ roomId }: Props) {
           </section>
 
           {/* ── Own board ───────────────────────────────────────────────── */}
-          <section className="flex flex-col gap-3 rounded border border-ocean-800 bg-ocean-900/80 p-4">
+          <section className="battle-panel flex flex-col gap-3 rounded border p-4">
             <div>
               <h2 className="font-mono text-sm uppercase tracking-[0.28em] text-radar-green">
                 Собственный сектор
@@ -745,7 +745,7 @@ export function GameClientWrapper({ roomId }: Props) {
               <BoardGrid board={ownBoard} isEnemy={false} />
             </div>
 
-            <div className="mt-auto grid grid-cols-2 gap-1.5 rounded border border-ocean-800/50 p-2">
+            <div className="mt-auto grid grid-cols-2 gap-1.5 rounded border border-ocean-800/50 bg-ocean-950/35 p-2">
               {[
                 { symbol: "▪", label: "Корабль", color: "text-radar-green/70" },
                 { symbol: "✕", label: "Ранен", color: "text-morse-amber" },

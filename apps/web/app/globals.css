@@ -91,3 +91,378 @@
     box-shadow: inset 0 0 18px 2px rgba(120, 220, 255, 0.16);
   }
 }
+
+@keyframes battle-cell-glow {
+  0%,
+  100% {
+    box-shadow: inset 0 0 12px rgba(255, 59, 59, 0.2), 0 0 18px rgba(255, 59, 59, 0.35);
+  }
+  48% {
+    box-shadow: inset 0 0 20px rgba(255, 170, 0, 0.22), 0 0 28px rgba(255, 82, 24, 0.58);
+  }
+}
+
+@keyframes battle-flame-rise {
+  0% {
+    opacity: 0.72;
+    transform: translate3d(-50%, 18%, 0) scale(0.78) rotate(-8deg);
+    filter: blur(0.2px) saturate(1.15);
+  }
+  45% {
+    opacity: 1;
+    transform: translate3d(-50%, -18%, 0) scale(1.12) rotate(7deg);
+    filter: blur(0) saturate(1.65);
+  }
+  100% {
+    opacity: 0.64;
+    transform: translate3d(-50%, -45%, 0) scale(0.86) rotate(-5deg);
+    filter: blur(0.8px) saturate(1.25);
+  }
+}
+
+@keyframes battle-smoke-drift {
+  0% {
+    opacity: 0;
+    transform: translate3d(-50%, 25%, 0) scale(0.5);
+  }
+  35% {
+    opacity: 0.32;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-50%, -80%, 0) scale(1.45);
+  }
+}
+
+@keyframes battle-ember-pop {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.4);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--ember-x, 6px), -18px, 0) scale(0.9);
+  }
+}
+
+@keyframes battle-water-ring {
+  0% {
+    opacity: 0.82;
+    transform: translate(-50%, -50%) scale(0.28);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.65);
+  }
+}
+
+@keyframes battle-water-splash {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.55);
+  }
+  45% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--splash-x, 0), -14px, 0) scale(0.9);
+  }
+}
+
+@keyframes battle-sunk-cross {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: translate(-50%, -50%) rotate(0deg) scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(8deg) scale(1.08);
+  }
+}
+
+@keyframes battle-target-lock {
+  0%,
+  100% {
+    background-position: 0 0, 50% 50%;
+    box-shadow: inset 0 0 12px rgba(255, 170, 0, 0.22), 0 0 20px rgba(255, 170, 0, 0.28);
+  }
+  50% {
+    background-position: 10px 0, 50% 50%;
+    box-shadow: inset 0 0 18px rgba(255, 210, 64, 0.34), 0 0 30px rgba(255, 170, 0, 0.42);
+  }
+}
+
+@keyframes battle-panel-scan {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@layer components {
+  .battle-shell {
+    background:
+      radial-gradient(circle at 20% 8%, rgba(0, 255, 136, 0.12), transparent 34rem),
+      radial-gradient(circle at 82% 12%, rgba(255, 59, 59, 0.1), transparent 28rem),
+      radial-gradient(circle at 52% 94%, rgba(255, 170, 0, 0.07), transparent 30rem),
+      var(--color-ocean-950);
+  }
+
+  .battle-panel {
+    position: relative;
+    overflow: hidden;
+    border-color: rgba(0, 255, 136, 0.16);
+    background:
+      linear-gradient(135deg, rgba(4, 21, 40, 0.94), rgba(2, 13, 26, 0.84)),
+      radial-gradient(circle at 20% 0%, rgba(0, 255, 136, 0.08), transparent 22rem);
+    box-shadow:
+      inset 0 1px 0 rgba(224, 232, 240, 0.06),
+      0 18px 44px rgba(0, 0, 0, 0.28),
+      0 0 34px rgba(0, 255, 136, 0.05);
+  }
+
+  .battle-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(0, 255, 136, 0.08), transparent);
+    transform: translateX(-120%);
+    animation: battle-panel-scan 5.8s ease-in-out infinite;
+  }
+
+  .battle-action-card {
+    position: relative;
+    overflow: hidden;
+    border-color: rgba(0, 255, 136, 0.32);
+    background:
+      linear-gradient(145deg, rgba(0, 255, 136, 0.1), rgba(255, 170, 0, 0.045)),
+      rgba(4, 21, 40, 0.84);
+    box-shadow: inset 0 0 32px rgba(0, 255, 136, 0.05), 0 0 28px rgba(0, 255, 136, 0.08);
+  }
+
+  .battle-status-chip {
+    background: linear-gradient(180deg, rgba(224, 232, 240, 0.04), rgba(224, 232, 240, 0.015));
+    box-shadow: inset 0 1px 0 rgba(224, 232, 240, 0.07);
+  }
+
+  .battle-cell {
+    isolation: isolate;
+    contain: paint;
+  }
+
+  .battle-cell--selected {
+    background-image:
+      linear-gradient(90deg, rgba(255, 170, 0, 0.08) 50%, transparent 50%),
+      radial-gradient(circle at center, rgba(255, 170, 0, 0.28), transparent 62%);
+    background-size: 10px 100%, 100% 100%;
+    animation: battle-target-lock 1.4s ease-in-out infinite;
+  }
+
+  .battle-cell--ship {
+    box-shadow: inset 0 0 14px rgba(0, 255, 136, 0.12);
+  }
+
+  .battle-cell--hit,
+  .battle-cell--sunk {
+    animation: battle-cell-glow 1.2s ease-in-out infinite;
+  }
+
+  .battle-cell--miss {
+    box-shadow: inset 0 0 12px rgba(120, 220, 255, 0.08);
+  }
+
+  .battle-cell-vfx,
+  .battle-cell-vfx > span {
+    pointer-events: none;
+    position: absolute;
+  }
+
+  .battle-cell-vfx {
+    inset: 0;
+    z-index: 1;
+  }
+
+  .battle-flame {
+    bottom: 20%;
+    left: 50%;
+    width: 36%;
+    height: 58%;
+    border-radius: 50% 50% 46% 46%;
+    background:
+      radial-gradient(circle at 50% 72%, rgba(255, 250, 186, 0.95) 0 13%, rgba(255, 170, 0, 0.86) 14% 32%, rgba(255, 59, 20, 0.68) 33% 62%, transparent 63%),
+      linear-gradient(180deg, rgba(255, 210, 64, 0.92), rgba(255, 59, 20, 0.12));
+    mix-blend-mode: screen;
+    transform-origin: 50% 90%;
+    animation: battle-flame-rise 0.92s ease-in-out infinite;
+  }
+
+  .battle-flame--left {
+    left: 34%;
+    width: 26%;
+    height: 46%;
+    animation-delay: -0.24s;
+  }
+
+  .battle-flame--mid {
+    animation-duration: 0.78s;
+  }
+
+  .battle-flame--right {
+    left: 66%;
+    width: 28%;
+    height: 50%;
+    animation-delay: -0.48s;
+  }
+
+  .battle-flame--deep {
+    left: 51%;
+    width: 48%;
+    height: 70%;
+    animation-duration: 0.68s;
+    animation-delay: -0.12s;
+  }
+
+  .battle-smoke {
+    bottom: 24%;
+    left: 50%;
+    width: 42%;
+    height: 34%;
+    border-radius: 999px;
+    background: radial-gradient(circle, rgba(88, 94, 92, 0.36), transparent 66%);
+    filter: blur(1px);
+    animation: battle-smoke-drift 2.35s ease-out infinite;
+  }
+
+  .battle-smoke--two {
+    left: 62%;
+    animation-delay: -1.15s;
+  }
+
+  .battle-ember {
+    bottom: 32%;
+    left: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255, 218, 92, 0.96);
+    box-shadow: 0 0 8px rgba(255, 120, 36, 0.9);
+    animation: battle-ember-pop 1.1s ease-out infinite;
+  }
+
+  .battle-ember--one {
+    --ember-x: -7px;
+    left: 42%;
+  }
+
+  .battle-ember--two {
+    --ember-x: 8px;
+    left: 60%;
+    animation-delay: -0.56s;
+  }
+
+  .battle-water-ring {
+    top: 50%;
+    left: 50%;
+    width: 78%;
+    height: 48%;
+    border: 1px solid rgba(196, 244, 255, 0.72);
+    border-radius: 999px;
+    box-shadow: 0 0 14px rgba(120, 220, 255, 0.22);
+    animation: battle-water-ring 1.8s ease-out infinite;
+  }
+
+  .battle-water-ring--two {
+    animation-delay: -0.9s;
+  }
+
+  .battle-splash {
+    bottom: 42%;
+    left: 50%;
+    width: 4px;
+    height: 10px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(230, 250, 255, 0.9), rgba(88, 198, 255, 0));
+    animation: battle-water-splash 1.35s ease-out infinite;
+  }
+
+  .battle-splash--one {
+    --splash-x: -8px;
+    left: 39%;
+  }
+
+  .battle-splash--two {
+    --splash-x: 0;
+    animation-delay: -0.46s;
+  }
+
+  .battle-splash--three {
+    --splash-x: 8px;
+    left: 61%;
+    animation-delay: -0.88s;
+  }
+
+  .battle-sunk-cross {
+    top: 50%;
+    left: 50%;
+    width: 72%;
+    height: 72%;
+    transform: translate(-50%, -50%);
+    animation: battle-sunk-cross 1.15s ease-in-out infinite;
+  }
+
+  .battle-sunk-cross::before,
+  .battle-sunk-cross::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(180deg, transparent, rgba(255, 236, 156, 0.9), transparent);
+    box-shadow: 0 0 10px rgba(255, 170, 0, 0.85);
+  }
+
+  .battle-sunk-cross::before {
+    transform: rotate(45deg);
+  }
+
+  .battle-sunk-cross::after {
+    transform: rotate(-45deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .battle-panel::before,
+  .battle-cell--selected,
+  .battle-cell--hit,
+  .battle-cell--sunk,
+  .battle-flame,
+  .battle-smoke,
+  .battle-ember,
+  .battle-water-ring,
+  .battle-splash,
+  .battle-sunk-cross {
+    animation: none;
+  }
+
+  .battle-flame,
+  .battle-smoke,
+  .battle-ember,
+  .battle-water-ring,
+  .battle-splash {
+    opacity: 0.75;
+  }
+}
