@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 // apps/web/src/components/GameClientWrapper.tsx
 //
 // ASYNC MODE additions:
@@ -131,7 +131,7 @@ function formatMorseForCoord(coord: Coordinate | null): string {
   const { digit, letter } = coordinateToMorseNotation(coord);
   const letterToken = MORSE_ALPHABET[letter] ?? "?";
   const digitToken = MORSE_ALPHABET[digit] ?? "?";
-  return `${letter} ${letterToken} · ${digit} ${digitToken}`;
+  return `${letter} ${letterToken}  ${digit} ${digitToken}`;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────

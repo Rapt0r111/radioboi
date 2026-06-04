@@ -50,6 +50,8 @@ function cellClass(
       return `${base} battle-cell--sunk bg-[radial-gradient(circle_at_center,rgba(255,59,59,0.62)_0_28%,rgba(255,170,0,0.28)_29_46%,transparent_47%)] border-[var(--color-hit-red)] text-[var(--color-hit-red)] ring-1 ring-[var(--color-hit-red)]/75 shadow-[0_0_24px_rgba(255,59,59,0.78)]`;
     case "miss":
       return `${base} battle-cell--miss bg-transparent border-[var(--color-miss-white)]/25 text-[var(--color-miss-white)]/55`;
+    case "blocked":
+      return `${base} battle-cell--blocked bg-transparent border-[var(--color-miss-white)]/15 text-[var(--color-miss-white)]/35`;
     default:
       return isEnemy
         ? `${base} bg-transparent border-[var(--color-ocean-700)]/50 enabled:cursor-crosshair enabled:hover:bg-[var(--color-radar-green)]/10 enabled:hover:border-[var(--color-radar-green)]/45`
@@ -64,6 +66,7 @@ function cellSymbol(state: CellState | undefined, isEnemy: boolean, isPlacement:
     case "sunk":
       return "\u2715";
     case "miss":
+    case "blocked":
       return "\u00b7";
     case "ship":
       return isEnemy ? "" : "\u25aa";
@@ -109,6 +112,8 @@ function cellVfx(state: CellState | undefined): ReactNode {
           <span className="battle-splash battle-splash--three" />
         </span>
       );
+    case "blocked":
+      return <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--blocked" />;
     default:
       return null;
   }
@@ -121,7 +126,7 @@ function isCellDisabled(
 ): boolean {
   if (isPlacement) return false;
   if (!isEnemy) return true;
-  return state === "hit" || state === "miss" || state === "sunk";
+  return state === "hit" || state === "miss" || state === "sunk" || state === "blocked";
 }
 
 type Props = {

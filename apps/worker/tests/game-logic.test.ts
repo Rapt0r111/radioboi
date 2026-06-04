@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { makeCoordinate } from "@radioboi/game-core";
+import { BOARD_COLUMN_LABELS, BOARD_ROW_LABELS, makeCoordinate } from "@radioboi/game-core";
 import {
   addInterceptAlarm,
   addPlayer,
   applyShipsPlaced,
   createRoomState,
+  formatCoordForShotLog,
   getEnemyBoard,
   getOpponentId,
   prepareAttack,
@@ -228,6 +229,38 @@ describe("attack resolution", () => {
     expect(state.currentTurnId).toBe("p1");
     expect(state.boards.p2?.[target]).toBe("sunk");
     expect(state.shotLog.at(-1)?.target).toBe(target);
+  });
+
+  test("marks and blocks all legal exclusion cells around a sunk ship", () => {
+    const state = roomReadyForBattle();
+    const target = makeCoordinate(0, 8);
+    const blockedAroundTarget = [
+      makeCoordinate(0, 7),
+      makeCoordinate(1, 7),
+      makeCoordinate(1, 8),
+      makeCoordinate(0, 9),
+      makeCoordinate(1, 9),
+    ];
+
+    expect(resolveHit(state, "p1", target, "m-sunk-ring").result).toBe("sunk");
+
+    for (const coord of blockedAroundTarget) {
+      expect(state.boards.p2?.[coord]).toBe("blocked");
+      expect(getEnemyBoard(state, "p1")[coord]).toBe("blocked");
+      expect(prepareAttack(state, "p1", coord, `m-blocked-${coord}`)).toEqual({
+        ok: false,
+        reason: "CELL_ALREADY_SHOT",
+      });
+    }
+  });
+
+  test("formats shot log coordinates as visible board labels", () => {
+    const coord = makeCoordinate(0, 0);
+
+    expect(formatCoordForShotLog(coord)).toBe(
+      `${BOARD_ROW_LABELS[0]}${BOARD_COLUMN_LABELS[0]}`,
+    );
+    expect(formatCoordForShotLog(coord)).not.toContain("-");
   });
 });
 

@@ -6,7 +6,12 @@
 // настройки комнаты и cooldown для async-режима.
 
 import type { Board, Coordinate, GamePhase, Missile, RoomSettings } from "@radioboi/game-core";
-import { DEFAULT_ROOM_SETTINGS } from "@radioboi/game-core";
+import {
+  BOARD_COLUMN_LABELS,
+  BOARD_ROW_LABELS,
+  DEFAULT_ROOM_SETTINGS,
+  parseCoordinate,
+} from "@radioboi/game-core";
 import { create } from "zustand";
 
 // ── Типы ──────────────────────────────────────────────────────────────────────
@@ -166,7 +171,8 @@ export const selectCooldownExpiresAt = (s: GameStore) => s.attackCooldownExpires
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function formatCoordForLog(coord: Coordinate): string {
-  const col = coord.slice(0, 3);
-  const rowNum = Number(coord.slice(3, 6));
-  return `${col}-${rowNum}`;
+  const { colIndex, rowIndex } = parseCoordinate(coord);
+  const rowLabel = BOARD_ROW_LABELS[rowIndex] ?? String(rowIndex + 1);
+  const colLabel = BOARD_COLUMN_LABELS[colIndex] ?? String(colIndex + 1);
+  return `${rowLabel}${colLabel}`;
 }

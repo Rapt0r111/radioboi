@@ -9,11 +9,19 @@
 //   - processInterceptAttempt finds attack across all pending attacks
 //   - pendingAlarms[] array replaces single ALARM_TYPE_KEY storage
 
-import { COLUMNS, isValidCoordinate, parseCoordinate as parseCoordCore, ROWS, type Coordinate } from "@radioboi/game-core";
+import {
+  BOARD_COLUMN_LABELS,
+  BOARD_ROW_LABELS,
+  COLUMNS,
+  isValidCoordinate,
+  parseCoordinate as parseCoordCore,
+  ROWS,
+  type Coordinate,
+} from "@radioboi/game-core";
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
-export type CellState = "ship" | "hit" | "miss" | "sunk";
+export type CellState = "ship" | "hit" | "miss" | "sunk" | "blocked";
 export type Coord = string;
 export type BoardMap = Record<Coord, CellState>;
 
@@ -145,6 +153,41 @@ function secureRandomIndex(maxExclusive: number): number {
 function parseCoord(coord: string): { colIndex: number; rowIndex: number } | null {
   if (!isValidCoordinate(coord)) return null;
   return parseCoordCore(coord as Coordinate);
+}
+
+function coordFromIndices(colIndex: number, rowIndex: number): Coord | null {
+  const col = COLUMNS[colIndex];
+  const row = ROWS[rowIndex];
+  return col && row ? col + row : null;
+}
+
+function getShipExclusionCoords(shipCoords: readonly Coord[]): Coord[] {
+  const shipSet = new Set(shipCoords);
+  const exclusion = new Set<Coord>();
+
+  for (const coord of shipCoords) {
+    const parsed = parseCoord(coord);
+    if (!parsed) continue;
+
+    for (let dc = -1; dc <= 1; dc++) {
+      for (let dr = -1; dr <= 1; dr++) {
+        if (dc === 0 && dr === 0) continue;
+        const nc = parsed.colIndex + dc;
+        const nr = parsed.rowIndex + dr;
+        if (nc < 0 || nc > 9 || nr < 0 || nr > 9) continue;
+        const adjacent = coordFromIndices(nc, nr);
+        if (adjacent && !shipSet.has(adjacent)) exclusion.add(adjacent);
+      }
+    }
+  }
+
+  return [...exclusion];
+}
+
+function markBlockedAroundSunkShip(board: BoardMap, shipCoords: readonly Coord[]): void {
+  for (const coord of getShipExclusionCoords(shipCoords)) {
+    if (board[coord] === undefined) board[coord] = "blocked";
+  }
 }
 
 export function validateShipGeometry(
@@ -392,7 +435,12 @@ export function prepareAttack(
 
   const opponentBoard = state.boards[opponentId] ?? {};
   const cellState = opponentBoard[target];
-  if (cellState === "hit" || cellState === "miss" || cellState === "sunk") {
+  if (
+    cellState === "hit" ||
+    cellState === "miss" ||
+    cellState === "sunk" ||
+    cellState === "blocked"
+  ) {
     return { ok: false, reason: "CELL_ALREADY_SHOT" };
   }
 
@@ -515,6 +563,7 @@ export function resolveHit(
       );
       if (allHit) {
         for (const c of ship.coords) opponentBoard[c] = "sunk";
+        markBlockedAroundSunkShip(opponentBoard, ship.coords);
         ship.isSunk = true;
         result = "sunk";
       } else {
@@ -613,15 +662,19 @@ export function getEnemyBoard(state: RoomState, viewerId: string): BoardMap {
   const full = state.boards[opponentId] ?? {};
   const masked: BoardMap = {};
   for (const [coord, cell] of Object.entries(full)) {
-    if (cell === "hit" || cell === "miss" || cell === "sunk") masked[coord] = cell;
+    if (cell === "hit" || cell === "miss" || cell === "sunk" || cell === "blocked") {
+      masked[coord] = cell;
+    }
   }
   return masked;
 }
 
 export function formatCoordForShotLog(coord: string): string {
-  const col = coord.slice(0, 3);
-  const rowNum = Number(coord.slice(3, 6));
-  return `${col}-${rowNum}`;
+  const parsed = parseCoord(coord);
+  if (!parsed) return coord;
+  const rowLabel = BOARD_ROW_LABELS[parsed.rowIndex] ?? String(parsed.rowIndex + 1);
+  const colLabel = BOARD_COLUMN_LABELS[parsed.colIndex] ?? String(parsed.colIndex + 1);
+  return `${rowLabel}${colLabel}`;
 }
 
 // Re-export for GameRoomArbitrator

@@ -4,7 +4,7 @@ export type Coordinate = string & { readonly __brand: "Coordinate" };
 
 export type GamePhase = "lobby" | "placement" | "battle" | "gameOver";
 
-export type CellState = "empty" | "ship" | "hit" | "miss" | "sunk";
+export type CellState = "empty" | "ship" | "hit" | "miss" | "sunk" | "blocked";
 
 export type Board = Record<Coordinate, CellState>;
 
