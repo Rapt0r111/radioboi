@@ -152,6 +152,7 @@ describe("attack resolution", () => {
     const state = roomReadyForBattle();
     state.settings.battleMode = "async";
     state.settings.attackCooldownMs = 2_000;
+    state.currentTurnId = null;
     const target = makeCoordinate(9, 9);
 
     expect(prepareAttack(state, "p1", target, "m-async")).toEqual({ ok: true });
@@ -165,6 +166,24 @@ describe("attack resolution", () => {
       ok: false,
       reason: "ATTACK_ON_COOLDOWN",
     });
+  });
+
+  test("allows the opponent to fire independently during async cooldown", () => {
+    const state = roomReadyForBattle();
+    state.settings.battleMode = "async";
+    state.settings.attackCooldownMs = 2_000;
+    state.currentTurnId = null;
+
+    const p1Target = makeCoordinate(9, 9);
+    const p2Target = makeCoordinate(8, 8);
+
+    expect(prepareAttack(state, "p1", p1Target, "m-p1")).toEqual({ ok: true });
+    expect(recordMorseSequence(state, "m-p1", [".", "-"]).ok).toBe(true);
+    expect(resolveHit(state, "p1", p1Target, "m-p1").result).toBe("miss");
+
+    expect(prepareAttack(state, "p2", p2Target, "m-p2")).toEqual({ ok: true });
+    expect(state.currentTurnId).toBeNull();
+    expect(state.pendingAlarms).toEqual([]);
   });
 
   test("rejects malformed targets before creating a pending attack", () => {

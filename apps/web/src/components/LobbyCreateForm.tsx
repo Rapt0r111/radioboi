@@ -265,7 +265,7 @@ export function LobbyCreateForm({ initialError }: Props) {
 
             {isAsync && (
               <p className="font-mono text-[9px] leading-relaxed text-miss-white/35 -mt-2">
-                Оба игрока атакуют независимо — без ходов. После выстрела игрок ждёт перезарядку.
+                Оба игрока атакуют независимо — без ходов и без перехвата. После выстрела игрок ждёт перезарядку.
               </p>
             )}
 
@@ -282,31 +282,39 @@ export function LobbyCreateForm({ initialError }: Props) {
               disabled={!isAsync}
             />
 
-            {/* Intercept window */}
-            <CrtSlider
-              id="setting-intercept"
-              label="Окно перехвата"
-              min={10}
-              max={60}
-              step={5}
-              value={interceptMs / 1000}
-              onChange={(v) => setInterceptMs(v * 1000)}
-              format={(v) => `${v}с`}
-            />
+            {!isAsync ? (
+              <>
+                {/* Intercept window */}
+                <CrtSlider
+                  id="setting-intercept"
+                  label="Окно перехвата"
+                  min={10}
+                  max={60}
+                  step={5}
+                  value={interceptMs / 1000}
+                  onChange={(v) => setInterceptMs(v * 1000)}
+                  format={(v) => `${v}с`}
+                />
 
-            {/* Max intercept attempts */}
-            <CrtSegment
-              id="setting-attempts"
-              label="Попыток перехвата"
-              options={[
-                { value: 1, label: "1" },
-                { value: 2, label: "2" },
-                { value: 3, label: "3" },
-                { value: 5, label: "5" },
-              ]}
-              value={maxAttempts}
-              onChange={setMaxAttempts}
-            />
+                {/* Max intercept attempts */}
+                <CrtSegment
+                  id="setting-attempts"
+                  label="Попыток перехвата"
+                  options={[
+                    { value: 1, label: "1" },
+                    { value: 2, label: "2" },
+                    { value: 3, label: "3" },
+                    { value: 5, label: "5" },
+                  ]}
+                  value={maxAttempts}
+                  onChange={setMaxAttempts}
+                />
+              </>
+            ) : (
+              <div className="rounded border border-hit-red/25 bg-hit-red/5 px-3 py-2 font-mono text-[9px] uppercase tracking-widest text-hit-red/55">
+                Перехват отключён: попадание считается сразу после валидного запуска ракеты.
+              </div>
+            )}
 
             {/* Summary */}
             <div className="rounded border border-ocean-800/60 bg-ocean-950/50 px-3 py-2 font-mono text-[9px] text-miss-white/30 leading-relaxed">
@@ -318,8 +326,9 @@ export function LobbyCreateForm({ initialError }: Props) {
                   <span className="text-morse-amber/60">Перезарядка {cooldownMs / 1000}с</span>
                 </>
               )}
-              {" · "}
-              Перехват {interceptMs / 1000}с / {maxAttempts} поп.
+              {isAsync
+                ? " · Перехват отключён"
+                : ` · Перехват ${interceptMs / 1000}с / ${maxAttempts} поп.`}
             </div>
 
             <button

@@ -6,7 +6,7 @@
 //   - canSelectEnemyTarget logic differs: async uses !isOnCooldown instead of isMyTurn
 //   - Cooldown countdown shown in header badge
 //   - "Reload" indicator replaces "Your turn" in async mode
-//   - Both incoming intercept AND own attack can be active simultaneously in async
+//   - Async has no intercept phase: both players fire independently after reload
 
 import {
   type Coordinate,
@@ -229,9 +229,9 @@ export function GameClientWrapper({ roomId }: Props) {
     return () => window.clearInterval(id);
   }, [incomingMissileDeadline, attackerTurnStart, isMyTurn, isOnCooldown]);
 
-  // Auto-resolve intercept on deadline
+  // Auto-resolve intercept on deadline (turn-based only)
   useEffect(() => {
-    if (!transport || incomingMissileId === null || incomingMissileDeadline === null) {
+    if (isAsync || !transport || incomingMissileId === null || incomingMissileDeadline === null) {
       autoResolveMissileIdRef.current = null;
       return;
     }
@@ -249,7 +249,7 @@ export function GameClientWrapper({ roomId }: Props) {
       },
     });
     setStatusLine("Время перехвата истекло. Ракета ушла на расчет результата.");
-  }, [incomingMissileDeadline, incomingMissileId, incomingMissileMaxAttempts, now, transport]);
+  }, [incomingMissileDeadline, incomingMissileId, incomingMissileMaxAttempts, isAsync, now, transport]);
 
   const activeMissilesCount = useGameStore((s) => s.activeMissiles.length);
 
@@ -372,7 +372,7 @@ export function GameClientWrapper({ roomId }: Props) {
   // ── Battle phase ──────────────────────────────────────────────────────────
 
   const interceptSecondsLeft =
-    incomingMissileDeadline === null
+    isAsync || incomingMissileDeadline === null
       ? null
       : Math.max(0, Math.ceil((incomingMissileDeadline - now) / 1000));
 
@@ -383,13 +383,14 @@ export function GameClientWrapper({ roomId }: Props) {
 
   const isAttackerWarning = attackerSecondsLeft !== null && attackerSecondsLeft <= 15;
 
-  const telegraphMode = incomingMissileId === null ? "attack" : "intercept";
+  const hasTurnBasedIncomingMissile = !isAsync && incomingMissileId !== null;
+  const telegraphMode = hasTurnBasedIncomingMissile ? "intercept" : "attack";
 
   // Async: can attack whenever not on cooldown and no missile in flight
   // Turn-based: only on our turn
   const canSelectEnemyTarget =
     phase === "battle" &&
-    incomingMissileId === null &&
+    !hasTurnBasedIncomingMissile &&
     (isAsync ? !isOnCooldown : isMyTurn) &&
     !missileInFlightUI;
 
@@ -413,7 +414,7 @@ export function GameClientWrapper({ roomId }: Props) {
   const targetMorseLabel = formatMorseForCoord(selectedTarget);
 
   const actionTitle =
-    incomingMissileId !== null
+    hasTurnBasedIncomingMissile
       ? "Перехват входящей ракеты"
       : isAsync
         ? isOnCooldown
@@ -428,11 +429,11 @@ export function GameClientWrapper({ roomId }: Props) {
           : "Ожидайте ход противника";
 
   const actionDetail =
-    incomingMissileId !== null
+    hasTurnBasedIncomingMissile
       ? `Примите сигнал и введите координату. Попытка ${Math.min(incomingMissileAttempts + 1, incomingMissileMaxAttempts)}/${incomingMissileMaxAttempts}.`
       : isAsync
         ? isOnCooldown
-          ? `Орудие перезаряжается. Осталось ${cooldownSecondsLeft ?? "?"}с. Перехватывайте входящие ракеты пока ждёте.`
+          ? `Орудие перезаряжается. Осталось ${cooldownSecondsLeft ?? "?"}с. В ASYNC нет перехвата — следите за полем и готовьте следующий выстрел.`
           : selectedTarget === null
             ? "Кликните по клетке противника. Оба игрока атакуют независимо."
             : `Зажмите ключ и передайте: ${targetMorseLabel}.`
@@ -443,7 +444,7 @@ export function GameClientWrapper({ roomId }: Props) {
           : "Пока соперник атакует, следите за своим полем.";
 
   const enemyBoardDisabledMessage =
-    incomingMissileId !== null
+    hasTurnBasedIncomingMissile
       ? "Сначала завершите перехват входящей ракеты."
       : isAsync
         ? isOnCooldown
@@ -580,7 +581,7 @@ export function GameClientWrapper({ roomId }: Props) {
                 disabledMessage={enemyBoardDisabledMessage}
                 onCellClick={(coord) => {
                   if (phase !== "battle") return;
-                  if (incomingMissileId !== null) {
+                  if (hasTurnBasedIncomingMissile) {
                     setStatusLine("Сначала завершите перехват.");
                     return;
                   }
@@ -702,8 +703,9 @@ export function GameClientWrapper({ roomId }: Props) {
               <span className="text-miss-white/30 uppercase tracking-widest">Настройки: </span>
               {isAsync ? "ASYNC" : "ПОШАГОВЫЙ"}
               {isAsync && ` · перезарядка ${settings.attackCooldownMs / 1000}с`}
-              {` · перехват ${settings.interceptWindowMs / 1000}с`}
-              {` · ${settings.maxInterceptAttempts} поп.`}
+              {isAsync
+                ? " · перехват отключён"
+                : ` · перехват ${settings.interceptWindowMs / 1000}с · ${settings.maxInterceptAttempts} поп.`}
             </div>
           </section>
 

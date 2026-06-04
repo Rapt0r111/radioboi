@@ -21,7 +21,7 @@ function cellClass(
   isHighlighted: boolean,
 ): string {
   const base =
-    "relative flex h-8 w-8 items-center justify-center text-[11px] font-mono sm:h-9 sm:w-9 lg:h-10 lg:w-10 " +
+    "relative flex h-8 w-8 items-center justify-center overflow-hidden text-[11px] font-mono sm:h-9 sm:w-9 lg:h-10 lg:w-10 " +
     "border transition-colors duration-150 " +
     "select-none disabled:cursor-not-allowed disabled:opacity-55";
 
@@ -52,11 +52,11 @@ function cellClass(
         ? `${base} bg-transparent border-[var(--color-ocean-700)]/50 enabled:cursor-crosshair enabled:hover:bg-[var(--color-radar-green)]/10`
         : `${base} bg-[var(--color-ocean-800)] border-[var(--color-radar-dim)]`;
     case "hit":
-      return `${base} bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.28)_0_9%,transparent_10_18%,rgba(255,59,59,0.28)_19_42%,transparent_43%),radial-gradient(circle_at_20%_20%,rgba(255,210,64,0.75)_0_6%,transparent_7%),radial-gradient(circle_at_80%_25%,rgba(255,210,64,0.55)_0_5%,transparent_6%),radial-gradient(circle_at_25%_78%,rgba(255,210,64,0.5)_0_5%,transparent_6%)] border-[var(--color-hit-red)] text-[var(--color-hit-red)] shadow-[0_0_14px_rgba(255,59,59,0.45)]`;
+      return `${base} bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.28)_0_9%,transparent_10_18%,rgba(255,59,59,0.28)_19_42%,transparent_43%),radial-gradient(circle_at_20%_20%,rgba(255,210,64,0.75)_0_6%,transparent_7%),radial-gradient(circle_at_80%_25%,rgba(255,210,64,0.55)_0_5%,transparent_6%),radial-gradient(circle_at_25%_78%,rgba(255,210,64,0.5)_0_5%,transparent_6%)] border-[var(--color-hit-red)] text-[var(--color-hit-red)] shadow-[0_0_14px_rgba(255,59,59,0.45)] [animation:battle-fire-flicker_1.35s_ease-in-out_infinite]`;
     case "sunk":
-      return `${base} bg-[radial-gradient(circle_at_center,rgba(255,59,59,0.55)_0_30%,transparent_31%),radial-gradient(circle_at_20%_20%,rgba(255,210,64,0.85)_0_7%,transparent_8%),radial-gradient(circle_at_78%_22%,rgba(255,210,64,0.75)_0_6%,transparent_7%),radial-gradient(circle_at_25%_78%,rgba(255,210,64,0.65)_0_6%,transparent_7%),radial-gradient(circle_at_76%_76%,rgba(255,210,64,0.65)_0_6%,transparent_7%)] border-[var(--color-hit-red)] text-[var(--color-hit-red)] ring-1 ring-[var(--color-hit-red)]/70 shadow-[0_0_18px_rgba(255,59,59,0.65)]`;
+      return `${base} bg-[radial-gradient(circle_at_center,rgba(255,59,59,0.55)_0_30%,transparent_31%),radial-gradient(circle_at_20%_20%,rgba(255,210,64,0.85)_0_7%,transparent_8%),radial-gradient(circle_at_78%_22%,rgba(255,210,64,0.75)_0_6%,transparent_7%),radial-gradient(circle_at_25%_78%,rgba(255,210,64,0.65)_0_6%,transparent_7%),radial-gradient(circle_at_76%_76%,rgba(255,210,64,0.65)_0_6%,transparent_7%)] border-[var(--color-hit-red)] text-[var(--color-hit-red)] ring-1 ring-[var(--color-hit-red)]/70 shadow-[0_0_18px_rgba(255,59,59,0.65)] [animation:battle-fire-flicker_1.05s_ease-in-out_infinite]`;
     case "miss":
-      return `${base} bg-transparent border-[var(--color-miss-white)]/20 text-[var(--color-miss-white)]/40`;
+      return `${base} bg-transparent border-[var(--color-miss-white)]/20 text-[var(--color-miss-white)]/40 [animation:battle-miss-ripple_2.2s_ease-in-out_infinite]`;
     default:
       // Пустые ячейки врага: прозрачный фон, видимая граница, зелёный hover
       // ИСПРАВЛЕНИЕ: было bg-ocean-900 с ocean-800 бордером — почти невидимо.
