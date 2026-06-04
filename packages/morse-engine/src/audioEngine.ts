@@ -1,11 +1,7 @@
 // packages/morse-engine/src/audioEngine.ts
-// Аудио-движок на нативном Web Audio API.
-//
-// FIX (LOW): Добавлена поддержка Safari webkitAudioContext.
-// Safari до версии 14.1 использует prefixed AudioContext.
-// Без этого fix MorseEngine падает с "AudioContext is not defined" на iOS Safari.
+// Native Web Audio engine for Morse playback and manual key feedback.
 
-// ── Safari webkitAudioContext shim ────────────────────────────────────────────
+// -- Safari webkitAudioContext shim ------------------------------------------
 
 declare global {
   interface Window {
@@ -14,41 +10,37 @@ declare global {
 }
 
 function createAudioContext(): AudioContext {
-  // Стандартный AudioContext доступен в Chrome, Firefox, Safari 14.1+
-  // webkitAudioContext — Safari < 14.1, старые iOS
   const Ctx = window.AudioContext ?? window.webkitAudioContext;
   if (!Ctx) {
-    throw new Error(
-      "MorseEngine: Web Audio API не поддерживается этим браузером.",
-    );
+    throw new Error("MorseEngine: Web Audio API is not supported by this browser.");
   }
   return new Ctx();
 }
 
-// ── Константы ─────────────────────────────────────────────────────────────────
+// -- Constants ----------------------------------------------------------------
 
 const DEFAULT_FREQUENCY_HZ = 600;
 const DEFAULT_FILTER_Q = 10;
 const DEFAULT_MASTER_VOLUME = 0.8;
-// FIX: DEFAULT_UNIT_MS снижен с 100 до 60 (= 20 WPM стандарт PARIS).
-// Это согласуется с WPM_DEFAULT=20 в GameControls и unitMs=60 в MorseTelegraph,
-// устраняя рассинхронизацию скорости воспроизведения и отображаемого WPM.
+// 60 ms = 20 WPM by the PARIS standard; matches the UI default.
 const DEFAULT_UNIT_MS = 60;
 
-const ATTACK_S = 0.005;
-const MANUAL_ATTACK_S = 0.001;
-const RELEASE_S = 0.005;
-const MIN_MANUAL_TONE_S = 0.035;
-const SCHEDULE_OFFSET_S = 0.025;
+const SEQUENCE_ATTACK_S = 0.004;
+const SEQUENCE_RELEASE_S = 0.004;
+const MANUAL_RELEASE_S = 0.003;
+// Even an ultra-short tap must remain audible as a Morse dot.
+const MIN_MANUAL_TONE_S = 0.055;
+// Only for playSequence stability. Manual keying never uses lookahead.
+const SEQUENCE_LOOKAHEAD_S = 0.004;
 
-// ── Типы ──────────────────────────────────────────────────────────────────────
+// -- Types --------------------------------------------------------------------
 
 export type MorseEngineOptions = {
   frequency?: number;
   volume?: number;
 };
 
-// ── Класс ─────────────────────────────────────────────────────────────────────
+// -- Class --------------------------------------------------------------------
 
 export class MorseEngine {
   readonly #ctx: AudioContext;
@@ -67,7 +59,6 @@ export class MorseEngine {
   #manualToneStartedAtS: number | null = null;
 
   constructor(options: MorseEngineOptions = {}) {
-    // SSR guard — AudioContext недоступен вне браузера
     if (typeof window === "undefined") {
       throw new Error(
         "MorseEngine: can only be instantiated in a browser environment. " +
@@ -78,7 +69,6 @@ export class MorseEngine {
     const frequency = options.frequency ?? DEFAULT_FREQUENCY_HZ;
     const volume = options.volume ?? DEFAULT_MASTER_VOLUME;
 
-    // FIX: используем createAudioContext() с webkitAudioContext fallback
     this.#ctx = createAudioContext();
 
     this.#oscillator = this.#ctx.createOscillator();
@@ -108,7 +98,7 @@ export class MorseEngine {
     this.#oscillator.start();
   }
 
-  // ── Управление контекстом ─────────────────────────────────────────────────
+  // -- AudioContext -----------------------------------------------------------
 
   async resume(): Promise<void> {
     if (this.#ctx.state === "suspended") {
@@ -120,7 +110,7 @@ export class MorseEngine {
     return this.#ctx.state;
   }
 
-  // ── Настройки ─────────────────────────────────────────────────────────────
+  // -- Settings ---------------------------------------------------------------
 
   setFrequency(hz: number): void {
     this.#oscillator.frequency.value = hz;
@@ -147,7 +137,7 @@ export class MorseEngine {
     return this.#isPlaying;
   }
 
-  // ── Воспроизведение ───────────────────────────────────────────────────────
+  // -- Scheduled sequence playback ------------------------------------------
 
   async playSequence(sequence: number[], unitMs?: number): Promise<void> {
     const resolvedUnitMs = unitMs ?? this.#unitMs;
@@ -181,43 +171,37 @@ export class MorseEngine {
     return this.playSequence(sequence, unitMs);
   }
 
+  // -- Manual telegraph key ---------------------------------------------------
+
   startTone(): void {
     const id = ++this.#manualToneId;
     this.#manualToneRequested = true;
-    this.#manualToneStartedAtS = null;
+    this.#manualToneStartedAtS = this.#ctx.currentTime;
     this.#playbackId++;
     this.#isPlaying = true;
     this.#resolvePlayback?.();
     this.#resolvePlayback = null;
 
-    const begin = () => {
-      if (this.#manualToneId !== id) return;
+    // Critical for Morse: do not wait for resume() and do not add lookahead.
+    // Queue the gain change synchronously inside the same user-gesture callback.
+    this.#forceManualToneOn(this.#ctx.currentTime);
 
-      const gain = this.#envelopeGain.gain;
-      const now = this.#ctx.currentTime;
-
-      if (!this.#manualToneRequested) {
-        this.#playPulseNow(this.#effectGain.gain, MIN_MANUAL_TONE_S);
-        return;
-      }
-
-      this.#manualToneStartedAtS = now;
-      gain.cancelScheduledValues(now);
-      gain.setValueAtTime(gain.value, now);
-      gain.linearRampToValueAtTime(1, now + MANUAL_ATTACK_S);
-    };
-
-    if (this.#ctx.state === "suspended") {
-      void this.resume().then(begin).catch(() => {
-        if (this.#manualToneId === id) this.stop();
-      });
-      return;
+    if (this.#ctx.state !== "running") {
+      void this.resume()
+        .then(() => {
+          if (this.#manualToneId !== id || !this.#manualToneRequested) return;
+          // If the context has just unlocked and the key is still held, pin the
+          // manual gain to 1 at the newly-current context time too.
+          this.#forceManualToneOn(this.#ctx.currentTime);
+        })
+        .catch(() => {
+          if (this.#manualToneId === id) this.stop();
+        });
     }
-
-    begin();
   }
 
   stopTone(): void {
+    if (!this.#manualToneRequested && this.#manualToneStartedAtS === null) return;
     this.#manualToneRequested = false;
     this.#releaseManualTone();
   }
@@ -233,40 +217,7 @@ export class MorseEngine {
     const gain = this.#envelopeGain.gain;
     const now = this.#ctx.currentTime;
     gain.cancelScheduledValues(now);
-    gain.setTargetAtTime(0, now, 0.003);
-  }
-
-  #releaseManualTone(): void {
-    this.#playbackId++;
-    this.#isPlaying = false;
-    this.#resolvePlayback?.();
-    this.#resolvePlayback = null;
-
-    const gain = this.#envelopeGain.gain;
-    const now = this.#ctx.currentTime;
-    const startedAt = this.#manualToneStartedAtS;
-
-    if (startedAt === null) {
-      return;
-    }
-
-    const releaseAt = Math.max(now, startedAt + MIN_MANUAL_TONE_S);
-    gain.cancelScheduledValues(now);
-    gain.setValueAtTime(gain.value, now);
-    gain.setValueAtTime(gain.value, releaseAt);
-    gain.setTargetAtTime(0, releaseAt, 0.003);
-    this.#manualToneStartedAtS = null;
-  }
-
-  #playPulseNow(gain: AudioParam, durationS: number): void {
-    const now = this.#ctx.currentTime;
-    const releaseAt = now + durationS;
-
-    gain.cancelScheduledValues(now);
-    gain.setValueAtTime(0, now);
-    gain.linearRampToValueAtTime(1, now + MANUAL_ATTACK_S);
-    gain.setValueAtTime(1, releaseAt);
-    gain.setTargetAtTime(0, releaseAt, 0.003);
+    gain.setTargetAtTime(0, now, MANUAL_RELEASE_S);
   }
 
   async close(): Promise<void> {
@@ -274,12 +225,40 @@ export class MorseEngine {
     try {
       this.#oscillator.stop();
     } catch {
-      // Осциллятор уже мог быть остановлен
+      // Oscillator can already be stopped.
     }
     await this.#ctx.close();
   }
 
-  // ── Приватные методы ───────────────────────────────────────────────────────
+  // -- Private ----------------------------------------------------------------
+
+  #forceManualToneOn(atS: number): void {
+    const gain = this.#envelopeGain.gain;
+    gain.cancelScheduledValues(atS);
+    gain.setValueAtTime(1, atS);
+  }
+
+  #releaseManualTone(): void {
+    this.#isPlaying = false;
+    this.#resolvePlayback?.();
+    this.#resolvePlayback = null;
+
+    const gain = this.#envelopeGain.gain;
+    const now = this.#ctx.currentTime;
+    const startedAt = this.#manualToneStartedAtS ?? now;
+    const releaseAt = Math.max(now, startedAt + MIN_MANUAL_TONE_S);
+
+    this.#manualToneStartedAtS = null;
+
+    gain.cancelScheduledValues(now);
+    // If press/release both happen before resume() resolves, this queued
+    // automation still produces an immediate audible pulse after unlock.
+    gain.setValueAtTime(1, now);
+    if (releaseAt > now) {
+      gain.setValueAtTime(1, releaseAt);
+    }
+    gain.setTargetAtTime(0, releaseAt, MANUAL_RELEASE_S);
+  }
 
   #scheduleSequence(gain: AudioParam, sequence: number[], unitS: number): number {
     const now = this.#ctx.currentTime;
@@ -287,22 +266,24 @@ export class MorseEngine {
     gain.cancelScheduledValues(now);
     gain.setValueAtTime(0, now);
 
-    let t = now + SCHEDULE_OFFSET_S;
+    let t = now + SEQUENCE_LOOKAHEAD_S;
 
     for (const dur of sequence) {
       if (dur > 0) {
         const soundS = dur * unitS;
-        const attackEnd = t + ATTACK_S;
-        const releaseStart = t + soundS - RELEASE_S;
+        const attackEnd = t + SEQUENCE_ATTACK_S;
+        const releaseStart = t + soundS - SEQUENCE_RELEASE_S;
 
         gain.setValueAtTime(0, t);
         gain.linearRampToValueAtTime(1, attackEnd);
 
         if (releaseStart > attackEnd) {
           gain.setValueAtTime(1, releaseStart);
+          gain.linearRampToValueAtTime(0, t + soundS);
+        } else {
+          gain.setTargetAtTime(0, attackEnd, MANUAL_RELEASE_S);
         }
 
-        gain.linearRampToValueAtTime(0, t + soundS);
         t += soundS;
       } else {
         const silenceS = Math.abs(dur) * unitS;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { encodeToMorse, FuzzyDecoder, MORSE_ALPHABET } from "../src";
+import { encodeToMorse, FuzzyDecoder, MORSE_ALPHABET, MorseEngine } from "../src";
 
 describe("Morse alphabet and timing encoder", () => {
   test("encodes latin letters and digits with standard timing gaps", () => {
@@ -62,5 +62,179 @@ describe("FuzzyDecoder", () => {
     decoder.pointerUp(680);
 
     expect(decoder.flush()).toBe("В");
+  });
+});
+
+type AutomationEvent = {
+  method:
+    | "cancelScheduledValues"
+    | "setValueAtTime"
+    | "linearRampToValueAtTime"
+    | "setTargetAtTime";
+  value?: number;
+  startTime: number;
+  timeConstant?: number;
+};
+
+class MockAudioParam {
+  value = 0;
+  readonly events: AutomationEvent[] = [];
+
+  cancelScheduledValues(startTime: number): MockAudioParam {
+    this.events.push({ method: "cancelScheduledValues", startTime });
+    return this;
+  }
+
+  setValueAtTime(value: number, startTime: number): MockAudioParam {
+    this.value = value;
+    this.events.push({ method: "setValueAtTime", value, startTime });
+    return this;
+  }
+
+  linearRampToValueAtTime(value: number, startTime: number): MockAudioParam {
+    this.value = value;
+    this.events.push({ method: "linearRampToValueAtTime", value, startTime });
+    return this;
+  }
+
+  setTargetAtTime(value: number, startTime: number, timeConstant: number): MockAudioParam {
+    this.value = value;
+    this.events.push({ method: "setTargetAtTime", value, startTime, timeConstant });
+    return this;
+  }
+}
+
+class MockGainNode {
+  readonly gain = new MockAudioParam();
+
+  connect(): void {
+    // no-op
+  }
+}
+
+class MockOscillatorNode {
+  type: OscillatorType = "sine";
+  readonly frequency = new MockAudioParam();
+
+  connect(): void {
+    // no-op
+  }
+
+  start(): void {
+    // no-op
+  }
+
+  stop(): void {
+    // no-op
+  }
+}
+
+class MockBiquadFilterNode {
+  type: BiquadFilterType = "bandpass";
+  readonly frequency = new MockAudioParam();
+  readonly Q = new MockAudioParam();
+
+  connect(): void {
+    // no-op
+  }
+}
+
+const mockContexts: MockAudioContext[] = [];
+
+class MockAudioContext {
+  state: AudioContextState = "suspended";
+  currentTime = 0;
+  readonly destination = {};
+  readonly gainNodes: MockGainNode[] = [];
+  resumeCalls = 0;
+  resolveResume: (() => void) | null = null;
+
+  constructor() {
+    mockContexts.push(this);
+  }
+
+  createOscillator(): MockOscillatorNode {
+    return new MockOscillatorNode();
+  }
+
+  createBiquadFilter(): MockBiquadFilterNode {
+    return new MockBiquadFilterNode();
+  }
+
+  createGain(): MockGainNode {
+    const node = new MockGainNode();
+    this.gainNodes.push(node);
+    return node;
+  }
+
+  resume(): Promise<void> {
+    this.resumeCalls++;
+    return new Promise((resolve) => {
+      this.resolveResume = () => {
+        this.state = "running";
+        resolve();
+      };
+    });
+  }
+
+  close(): Promise<void> {
+    this.state = "closed";
+    return Promise.resolve();
+  }
+}
+
+function installMockAudioContext(): void {
+  mockContexts.length = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      AudioContext: MockAudioContext,
+    },
+  });
+}
+
+describe("MorseEngine manual tone latency", () => {
+  test("starts manual tone automation synchronously without waiting for resume", () => {
+    installMockAudioContext();
+
+    const engine = new MorseEngine();
+    const ctx = mockContexts[0];
+    if (!ctx) throw new Error("missing mock context");
+    const manualGain = ctx.gainNodes[0]?.gain;
+    if (!manualGain) throw new Error("missing manual gain");
+
+    engine.startTone();
+
+    expect(ctx.resumeCalls).toBe(1);
+    expect(manualGain.events).toContainEqual({
+      method: "setValueAtTime",
+      value: 1,
+      startTime: 0,
+    });
+  });
+
+  test("keeps an ultra-short tap audible even when released before resume resolves", () => {
+    installMockAudioContext();
+
+    const engine = new MorseEngine();
+    const ctx = mockContexts[0];
+    if (!ctx) throw new Error("missing mock context");
+    const manualGain = ctx.gainNodes[0]?.gain;
+    if (!manualGain) throw new Error("missing manual gain");
+
+    engine.startTone();
+    engine.stopTone();
+
+    expect(manualGain.events).toContainEqual({
+      method: "setValueAtTime",
+      value: 1,
+      startTime: 0.055,
+    });
+    expect(manualGain.events).toContainEqual({
+      method: "setTargetAtTime",
+      value: 0,
+      startTime: 0.055,
+      timeConstant: 0.003,
+    });
   });
 });
