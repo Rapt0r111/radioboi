@@ -37,6 +37,7 @@ import {
 } from "@/src/hooks/useGameLoop";
 import type { GameClient } from "@/src/lib/network/gameClient";
 import { destroyGameClient, getGameClient } from "@/src/lib/network/gameClient";
+import { useNow } from "@/src/hooks/useNow";
 import {
   selectCooldownExpiresAt,
   selectEnemyBoard,
@@ -168,7 +169,6 @@ export function GameClientWrapper({ roomId }: Props) {
   );
 
   const [morseEngine, setMorseEngine] = useState<MorseEngine | null>(null);
-  const [now, setNow] = useState(() => Date.now());
   const [selectedTarget, setSelectedTarget] = useState<Coordinate | null>(null);
   const [statusLine, setStatusLine] = useState(
     isAsync
@@ -191,6 +191,11 @@ export function GameClientWrapper({ roomId }: Props) {
   useGameLoop(transport, radarRef, morseEngine);
 
   // ── Derived: cooldown ───────────────────────────────────────────────────────
+  const needsTick =
+    incomingMissileDeadline !== null ||       // intercept timer running
+    (attackerTurnStart !== null && isMyTurn) || // attacker turn timer
+    (isAsync && cooldownExpiresAt !== null);    // cooldown timer
+  const now = useNow(needsTick);
   const isOnCooldown = isAsync && cooldownExpiresAt !== null && now < cooldownExpiresAt;
   const cooldownSecondsLeft = isOnCooldown && cooldownExpiresAt !== null
     ? Math.ceil((cooldownExpiresAt - now) / 1000)
@@ -241,15 +246,7 @@ export function GameClientWrapper({ roomId }: Props) {
   }, [roomId, setSession]);
 
   // Tick timer — runs when any countdown is active
-  useEffect(() => {
-    const needsTick =
-      incomingMissileDeadline !== null ||
-      (attackerTurnStart !== null && isMyTurn) ||
-      isOnCooldown;
-    if (!needsTick) { setNow(Date.now()); return; }
-    const id = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(id);
-  }, [incomingMissileDeadline, attackerTurnStart, isMyTurn, isOnCooldown]);
+
 
   // Auto-resolve intercept on deadline (turn-based only)
   useEffect(() => {

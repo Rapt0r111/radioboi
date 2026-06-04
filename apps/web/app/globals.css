@@ -42,183 +42,92 @@
   }
 }
 
-/* ── Анимации (используются в будущих компонентах) ─────────────────────── */
+/* ── Анимации ────────────────────────────────────────────────────────────────
+   PERF: ALL animations use ONLY transform and opacity.
+   
+   Removed from keyframes:
+     - box-shadow (triggers paint on every frame on no-GPU paths)
+     - filter / saturate / brightness (triggers compositing layer recreation)
+     - background-position (triggers paint)
+     - Any property that causes layout or paint
+   
+   Static box-shadows remain on the CSS rules (painted once at layout time).
+   Dynamic glow is handled by the RadarCanvas worker overlay.
+*/
 
 @keyframes radar-pulse {
-  0%,
-  100% {
-    opacity: 0.2;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.05);
-  }
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50%       { opacity: 1;   transform: scale(1.05); }
 }
 
 @keyframes morse-blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0;
-  }
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
 }
 
-@keyframes battle-fire-flicker {
-  0%,
-  100% {
-    filter: saturate(1.05) brightness(1);
-    transform: translateY(0) scale(1);
-  }
-  35% {
-    filter: saturate(1.45) brightness(1.2);
-    transform: translateY(-1px) scale(1.025);
-  }
-  62% {
-    filter: saturate(1.2) brightness(0.94);
-    transform: translateY(0) scale(0.99);
-  }
-}
-
-@keyframes battle-miss-ripple {
-  0%,
-  100% {
-    box-shadow: inset 0 0 0 0 rgba(224, 232, 240, 0.08);
-  }
-  50% {
-    box-shadow: inset 0 0 18px 2px rgba(120, 220, 255, 0.16);
-  }
-}
-
+/* PERF: battle-cell-glow now only animates opacity — GPU composited */
 @keyframes battle-cell-glow {
-  0%,
-  100% {
-    box-shadow: inset 0 0 14px rgba(255, 59, 59, 0.28), 0 0 22px rgba(255, 59, 59, 0.48);
-  }
-  48% {
-    box-shadow: inset 0 0 24px rgba(255, 210, 64, 0.35), 0 0 34px rgba(255, 82, 24, 0.72), 0 0 10px rgba(255, 245, 180, 0.35);
-  }
+  0%, 100% { opacity: 0.82; }
+  50%       { opacity: 1; }
 }
 
-@keyframes battle-flame-rise {
-  0% {
-    opacity: 0.72;
-    transform: translate3d(-50%, 18%, 0) scale(0.78) rotate(-8deg);
-    filter: blur(0.2px) saturate(1.15);
-  }
-  45% {
-    opacity: 1;
-    transform: translate3d(-50%, -22%, 0) scale(1.18) rotate(7deg);
-    filter: blur(0) saturate(2) brightness(1.18);
-  }
-  100% {
-    opacity: 0.72;
-    transform: translate3d(-50%, -50%, 0) scale(0.92) rotate(-5deg);
-    filter: blur(0.7px) saturate(1.55);
-  }
-}
-
-@keyframes battle-smoke-drift {
-  0% {
-    opacity: 0;
-    transform: translate3d(-50%, 25%, 0) scale(0.5);
-  }
-  35% {
-    opacity: 0.32;
-  }
-  100% {
-    opacity: 0;
-    transform: translate3d(-50%, -80%, 0) scale(1.45);
-  }
-}
-
-@keyframes battle-ember-pop {
-  0% {
-    opacity: 0;
-    transform: translate3d(0, 12px, 0) scale(0.4);
-  }
-  35% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate3d(var(--ember-x, 6px), -18px, 0) scale(0.9);
-  }
-}
-
-@keyframes battle-water-ring {
-  0% {
-    opacity: 0.82;
-    transform: translate(-50%, -50%) scale(0.28);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(1.65);
-  }
-}
-
-@keyframes battle-water-splash {
-  0% {
-    opacity: 0;
-    transform: translate3d(0, 10px, 0) scale(0.48) rotate(-6deg);
-  }
-  45% {
-    opacity: 1;
-    filter: saturate(1.8) brightness(1.18);
-  }
-  100% {
-    opacity: 0;
-    transform: translate3d(var(--splash-x, 0), -20px, 0) scale(1.08) rotate(8deg);
-  }
-}
-
-@keyframes battle-bubble-rise {
-  0% {
-    opacity: 0;
-    transform: translate3d(-50%, 14px, 0) scale(0.35);
-  }
-  28% {
-    opacity: 0.9;
-  }
-  100% {
-    opacity: 0;
-    transform: translate3d(calc(-50% + var(--bubble-x, 0px)), -24px, 0) scale(1.1);
-  }
-}
-
-@keyframes battle-sunk-cross {
-  0%,
-  100% {
-    opacity: 0.5;
-    transform: translate(-50%, -50%) rotate(0deg) scale(0.92);
-  }
-  50% {
-    opacity: 1;
-    transform: translate(-50%, -50%) rotate(8deg) scale(1.08);
-  }
-}
-
-@keyframes battle-target-lock {
-  0%,
-  100% {
-    background-position: 0 0, 50% 50%;
-    box-shadow: inset 0 0 12px rgba(255, 170, 0, 0.22), 0 0 20px rgba(255, 170, 0, 0.28);
-  }
-  50% {
-    background-position: 10px 0, 50% 50%;
-    box-shadow: inset 0 0 18px rgba(255, 210, 64, 0.34), 0 0 30px rgba(255, 170, 0, 0.42);
-  }
-}
-
+/* PERF: Panel scan — transform only */
 @keyframes battle-panel-scan {
-  from {
-    transform: translateX(-120%);
-  }
-  to {
-    transform: translateX(120%);
-  }
+  from { transform: translateX(-120%); }
+  to   { transform: translateX(120%); }
+}
+
+/* PERF: Flame — transform + opacity only (removed filter/saturate/brightness) */
+@keyframes battle-flame-rise {
+  0%   { opacity: 0.65; transform: translate3d(-50%, 14%, 0) scale(0.80) rotate(-7deg); }
+  48%  { opacity: 1;    transform: translate3d(-50%, -18%, 0) scale(1.12) rotate(6deg); }
+  100% { opacity: 0.65; transform: translate3d(-50%, -46%, 0) scale(0.88) rotate(-4deg); }
+}
+
+/* PERF: Smoke — transform + opacity only */
+@keyframes battle-smoke-drift {
+  0%   { opacity: 0;    transform: translate3d(-50%, 20%, 0) scale(0.5); }
+  35%  { opacity: 0.28; }
+  100% { opacity: 0;    transform: translate3d(-50%, -68%, 0) scale(1.32); }
+}
+
+/* PERF: Ember — transform + opacity only */
+@keyframes battle-ember-pop {
+  0%   { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.4); }
+  35%  { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(var(--ember-x, 6px), -15px, 0) scale(0.82); }
+}
+
+/* PERF: Water ring — transform + opacity only */
+@keyframes battle-water-ring {
+  0%   { opacity: 0.75; transform: translate(-50%, -50%) scale(0.28); }
+  100% { opacity: 0;    transform: translate(-50%, -50%) scale(1.5); }
+}
+
+/* PERF: Water splash — transform + opacity only */
+@keyframes battle-water-splash {
+  0%   { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.5) rotate(-5deg); }
+  45%  { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(var(--splash-x, 0), -17px, 0) scale(1.04) rotate(7deg); }
+}
+
+/* PERF: Bubble — transform + opacity only */
+@keyframes battle-bubble-rise {
+  0%   { opacity: 0; transform: translate3d(-50%, 11px, 0) scale(0.35); }
+  28%  { opacity: 0.82; }
+  100% { opacity: 0; transform: translate3d(calc(-50% + var(--bubble-x, 0px)), -21px, 0) scale(1.04); }
+}
+
+/* PERF: Sunk cross — transform + opacity only */
+@keyframes battle-sunk-cross {
+  0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) rotate(0deg) scale(0.9); }
+  50%       { opacity: 1;   transform: translate(-50%, -50%) rotate(7deg) scale(1.06); }
+}
+
+/* PERF: Target lock — opacity only (removed background-position animation) */
+@keyframes battle-target-lock {
+  0%, 100% { opacity: 0.88; }
+  50%       { opacity: 1; }
 }
 
 @layer components {
@@ -248,6 +157,8 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
+    /* PERF: will-change tells browser to promote this to its own layer */
+    will-change: transform;
     background: linear-gradient(90deg, transparent, rgba(0, 255, 136, 0.08), transparent);
     transform: translateX(-120%);
     animation: battle-panel-scan 5.8s ease-in-out infinite;
@@ -268,26 +179,32 @@
     box-shadow: inset 0 1px 0 rgba(224, 232, 240, 0.07);
   }
 
+  /* PERF: contain:strict isolates layout/paint/composite to this cell */
   .battle-cell {
     isolation: isolate;
-    contain: paint;
+    contain: strict;
+    /* PERF: explicit size so browser doesn't recalculate during animation */
+    position: relative;
   }
 
+  /* PERF: target-lock uses opacity animation only (not background-position) */
   .battle-cell--selected {
-    background-image:
-      linear-gradient(90deg, rgba(255, 170, 0, 0.08) 50%, transparent 50%),
-      radial-gradient(circle at center, rgba(255, 170, 0, 0.28), transparent 62%);
-    background-size: 10px 100%, 100% 100%;
+    background-image: radial-gradient(circle at center, rgba(255, 170, 0, 0.28), transparent 62%);
+    box-shadow: 0 0 14px rgba(255, 170, 0, 0.5);
     animation: battle-target-lock 1.4s ease-in-out infinite;
+    will-change: opacity;
   }
 
   .battle-cell--ship {
     box-shadow: inset 0 0 14px rgba(0, 255, 136, 0.12);
   }
 
+  /* PERF: glow uses opacity only — static box-shadow stays painted but doesn't repaint */
   .battle-cell--hit,
   .battle-cell--sunk {
+    box-shadow: inset 0 0 14px rgba(255, 59, 59, 0.28), 0 0 22px rgba(255, 59, 59, 0.48);
     animation: battle-cell-glow 1.2s ease-in-out infinite;
+    will-change: opacity;
   }
 
   .battle-cell--miss {
@@ -303,6 +220,8 @@
   .battle-cell-vfx > span {
     pointer-events: none;
     position: absolute;
+    /* PERF: will-change on VFX container promotes to GPU layer once */
+    will-change: transform, opacity;
   }
 
   .battle-cell-vfx {
@@ -310,19 +229,24 @@
     z-index: 1;
   }
 
+  /* PERF: All flame/smoke/ember/water animations use transform+opacity only */
+
   .battle-flame {
     bottom: 16%;
     left: 50%;
     width: 40%;
     height: 66%;
     border-radius: 50% 50% 46% 46%;
+    /* Static background — painted once, not animated */
     background:
       radial-gradient(circle at 48% 76%, rgba(255, 255, 224, 0.98) 0 12%, rgba(255, 214, 71, 0.94) 13% 30%, rgba(255, 96, 18, 0.82) 31% 58%, rgba(180, 8, 0, 0.42) 59% 72%, transparent 73%),
       linear-gradient(180deg, rgba(255, 232, 88, 0.95), rgba(255, 59, 20, 0.18));
     mix-blend-mode: screen;
-    box-shadow: 0 0 12px rgba(255, 92, 0, 0.55), 0 0 4px rgba(255, 245, 190, 0.85) inset;
+    /* Static box-shadow — painted once */
+    box-shadow: 0 0 10px rgba(255, 92, 0, 0.5), 0 0 4px rgba(255, 245, 190, 0.8) inset;
     transform-origin: 50% 90%;
     animation: battle-flame-rise 0.74s ease-in-out infinite;
+    will-change: transform, opacity;
   }
 
   .battle-flame--left {
@@ -360,6 +284,7 @@
     background: radial-gradient(circle, rgba(88, 94, 92, 0.36), transparent 66%);
     filter: blur(1px);
     animation: battle-smoke-drift 2.35s ease-out infinite;
+    will-change: transform, opacity;
   }
 
   .battle-smoke--two {
@@ -374,55 +299,31 @@
     height: 4px;
     border-radius: 999px;
     background: rgba(255, 218, 92, 0.96);
-    box-shadow: 0 0 8px rgba(255, 120, 36, 0.9);
+    /* Static shadow — painted once */
+    box-shadow: 0 0 6px rgba(255, 120, 36, 0.85);
     animation: battle-ember-pop 1.1s ease-out infinite;
+    will-change: transform, opacity;
   }
 
-  .battle-ember--one {
-    --ember-x: -7px;
-    left: 42%;
-  }
-
-  .battle-ember--two {
-    --ember-x: 8px;
-    left: 60%;
-    animation-delay: -0.56s;
-  }
-
-  .battle-ember--three {
-    --ember-x: -2px;
-    left: 50%;
-    bottom: 46%;
-    width: 3px;
-    height: 3px;
-    animation-delay: -0.28s;
-    animation-duration: 0.86s;
-  }
-
-  .battle-ember--four {
-    --ember-x: 12px;
-    left: 72%;
-    bottom: 38%;
-    width: 3px;
-    height: 3px;
-    animation-delay: -0.76s;
-    animation-duration: 0.98s;
-  }
+  .battle-ember--one { --ember-x: -7px; left: 42%; }
+  .battle-ember--two { --ember-x: 8px; left: 60%; animation-delay: -0.56s; }
+  .battle-ember--three { --ember-x: -2px; left: 50%; bottom: 46%; width: 3px; height: 3px; animation-delay: -0.28s; animation-duration: 0.86s; }
+  .battle-ember--four { --ember-x: 12px; left: 72%; bottom: 38%; width: 3px; height: 3px; animation-delay: -0.76s; animation-duration: 0.98s; }
 
   .battle-water-ring {
     top: 50%;
     left: 50%;
     width: 78%;
     height: 48%;
-    border: 1px solid rgba(216, 250, 255, 0.86);
+    border: 1px solid rgba(216, 250, 255, 0.84);
     border-radius: 999px;
-    box-shadow: 0 0 16px rgba(120, 220, 255, 0.38), inset 0 0 8px rgba(230, 250, 255, 0.2);
+    /* Static shadow */
+    box-shadow: 0 0 14px rgba(120, 220, 255, 0.35), inset 0 0 7px rgba(230, 250, 255, 0.18);
     animation: battle-water-ring 1.45s ease-out infinite;
+    will-change: transform, opacity;
   }
 
-  .battle-water-ring--two {
-    animation-delay: -0.9s;
-  }
+  .battle-water-ring--two { animation-delay: -0.9s; }
 
   .battle-splash {
     bottom: 38%;
@@ -431,8 +332,9 @@
     height: 16px;
     border-radius: 999px;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(127, 225, 255, 0.74) 46%, rgba(88, 198, 255, 0));
-    box-shadow: 0 0 10px rgba(120, 220, 255, 0.55);
+    box-shadow: 0 0 8px rgba(120, 220, 255, 0.5);
     animation: battle-water-splash 1.05s ease-out infinite;
+    will-change: transform, opacity;
   }
 
   .battle-bubble {
@@ -443,50 +345,18 @@
     border: 1px solid rgba(210, 248, 255, 0.8);
     border-radius: 999px;
     background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.85) 0 16%, rgba(125, 225, 255, 0.22) 28% 62%, transparent 70%);
-    box-shadow: 0 0 9px rgba(120, 220, 255, 0.42);
+    box-shadow: 0 0 7px rgba(120, 220, 255, 0.38);
     animation: battle-bubble-rise 1.4s ease-out infinite;
+    will-change: transform, opacity;
   }
 
-  .battle-bubble--one {
-    --bubble-x: -8px;
-    left: 38%;
-    animation-delay: -0.18s;
-  }
+  .battle-bubble--one  { --bubble-x: -8px;  left: 38%; animation-delay: -0.18s; }
+  .battle-bubble--two  { --bubble-x: 4px;   left: 58%; width: 5px; height: 5px; animation-delay: -0.72s; animation-duration: 1.12s; }
+  .battle-bubble--three { --bubble-x: 12px; left: 68%; bottom: 12%; width: 6px; height: 6px; animation-delay: -1.04s; animation-duration: 1.7s; }
 
-  .battle-bubble--two {
-    --bubble-x: 4px;
-    left: 58%;
-    width: 5px;
-    height: 5px;
-    animation-delay: -0.72s;
-    animation-duration: 1.12s;
-  }
-
-  .battle-bubble--three {
-    --bubble-x: 12px;
-    left: 68%;
-    bottom: 12%;
-    width: 6px;
-    height: 6px;
-    animation-delay: -1.04s;
-    animation-duration: 1.7s;
-  }
-
-  .battle-splash--one {
-    --splash-x: -8px;
-    left: 39%;
-  }
-
-  .battle-splash--two {
-    --splash-x: 0;
-    animation-delay: -0.46s;
-  }
-
-  .battle-splash--three {
-    --splash-x: 8px;
-    left: 61%;
-    animation-delay: -0.88s;
-  }
+  .battle-splash--one   { --splash-x: -8px; left: 39%; }
+  .battle-splash--two   { --splash-x: 0;    animation-delay: -0.46s; }
+  .battle-splash--three { --splash-x: 8px;  left: 61%; animation-delay: -0.88s; }
 
   .battle-sunk-cross {
     top: 50%;
@@ -495,6 +365,7 @@
     height: 72%;
     transform: translate(-50%, -50%);
     animation: battle-sunk-cross 1.15s ease-in-out infinite;
+    will-change: transform, opacity;
   }
 
   .battle-sunk-cross::before,
@@ -507,22 +378,16 @@
     height: 100%;
     border-radius: 999px;
     background: linear-gradient(180deg, transparent, rgba(255, 236, 156, 0.9), transparent);
-    box-shadow: 0 0 10px rgba(255, 170, 0, 0.85);
+    box-shadow: 0 0 8px rgba(255, 170, 0, 0.8);
   }
 
-  .battle-sunk-cross::before {
-    transform: rotate(45deg);
-  }
-
-  .battle-sunk-cross::after {
-    transform: rotate(-45deg);
-  }
+  .battle-sunk-cross::before { transform: rotate(45deg); }
+  .battle-sunk-cross::after  { transform: rotate(-45deg); }
 }
 
+/* ── Reduced motion — remove all animations safely ───────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
+  html { scroll-behavior: auto; }
 
   .battle-panel::before,
   .battle-cell--selected,
@@ -544,6 +409,6 @@
   .battle-bubble,
   .battle-water-ring,
   .battle-splash {
-    opacity: 0.75;
+    opacity: 0.7;
   }
 }
