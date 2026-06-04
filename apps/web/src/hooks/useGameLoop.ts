@@ -146,10 +146,9 @@ export function useGameLoop(
 
     // ── RESOLVE_HIT ───────────────────────────────────────────────────────
     const stopResolve = transport.on(GameEventType.RESOLVE_HIT, (event) => {
-      const runtime = readRuntimeState();
       const store   = useGameStore.getState();
 
-      const isByThem = runtime.incomingMissileId === event.payload.missileId;
+      const isByThem = event.payload.attackerId !== store.playerId;
       const boardUpdater = isByThem ? store.applyOwnHit : store.applyEnemyShot;
 
       void radarWorker.current?.removeMissile(event.payload.missileId);

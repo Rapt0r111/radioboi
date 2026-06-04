@@ -10,6 +10,7 @@ declare global {
   interface Window {
     __radioboiFakeServer: {
       sent: unknown[];
+      urls: string[];
       emit(bytes: number[]): void;
       socketCount(): number;
     };
@@ -81,6 +82,7 @@ export async function installFakeGameServer(page: Page): Promise<void> {
     const NativeWebSocket = window.WebSocket;
     const sockets: FakeWebSocket[] = [];
     const sent: unknown[] = [];
+    const urls: string[] = [];
 
     class FakeWebSocket {
       static CONNECTING = 0;
@@ -102,6 +104,7 @@ export async function installFakeGameServer(page: Page): Promise<void> {
           return new NativeWebSocket(url, protocols) as unknown as FakeWebSocket;
         }
         this.url = String(url);
+        urls.push(this.url);
         sockets.push(this);
         setTimeout(() => {
           this.readyState = FakeWebSocket.OPEN;
@@ -176,6 +179,7 @@ export async function installFakeGameServer(page: Page): Promise<void> {
 
     window.__radioboiFakeServer = {
       sent,
+      urls,
       emit(bytes: number[]) {
         const socket = sockets.at(-1);
         if (!socket) throw new Error("No fake WebSocket is connected");

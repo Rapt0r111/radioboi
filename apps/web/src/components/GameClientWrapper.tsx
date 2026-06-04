@@ -15,6 +15,7 @@ import {
   makeCoordinate,
   type MorseSymbol,
   parseCoordinate,
+  type RoomSettings,
 } from "@radioboi/game-core";
 import { MORSE_ALPHABET, MorseEngine } from "@radioboi/morse-engine";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -50,6 +51,7 @@ const PLAYER_ID_KEY = "radioboi:playerId";
 const TAB_ID_KEY = "radioboi:tabId";
 const TAB_NAME_PREFIX = "radioboi-tab:";
 const PLACED_KEY_PREFIX = "radioboi:placed:";
+const ROOM_SETTINGS_KEY_PREFIX = "radioboi:settings:";
 const ATTACKER_TURN_TIMEOUT_S = 60;
 const ATTEMPT_DOT_KEYS = ["attempt-1", "attempt-2", "attempt-3", "attempt-4", "attempt-5"] as const;
 
@@ -82,6 +84,22 @@ function getOrCreatePlayerId(): string {
   sessionStorage.setItem(TAB_ID_KEY, tabId);
   sessionStorage.setItem(PLAYER_ID_KEY, next);
   return next;
+}
+
+function readStoredRoomSettings(roomId: string): RoomSettings | undefined {
+  try {
+    const raw = sessionStorage.getItem(`${ROOM_SETTINGS_KEY_PREFIX}${roomId}`);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<RoomSettings>;
+    return {
+      battleMode: parsed.battleMode === "async" ? "async" : "turn-based",
+      attackCooldownMs: typeof parsed.attackCooldownMs === "number" ? parsed.attackCooldownMs : 2_000,
+      interceptWindowMs: typeof parsed.interceptWindowMs === "number" ? parsed.interceptWindowMs : 25_000,
+      maxInterceptAttempts: typeof parsed.maxInterceptAttempts === "number" ? parsed.maxInterceptAttempts : 3,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function toMorseSequence(coord: Coordinate): MorseSymbol[] {
@@ -200,11 +218,15 @@ export function GameClientWrapper({ roomId }: Props) {
     const nextPlayerId = getOrCreatePlayerId();
     const client = getGameClient();
     const engine = new MorseEngine();
+    const storedRoomSettings = readStoredRoomSettings(roomId);
 
     setSession(nextPlayerId, roomId);
+    if (storedRoomSettings !== undefined) {
+      useGameStore.setState({ settings: storedRoomSettings });
+    }
     setTransport(client);
     setMorseEngine(engine);
-    client.connect(roomId, nextPlayerId, `Player-${nextPlayerId.slice(0, 4)}`);
+    client.connect(roomId, nextPlayerId, `Player-${nextPlayerId.slice(0, 4)}`, storedRoomSettings);
 
     return () => {
       resetGameLoopRuntimeState();
@@ -660,7 +682,7 @@ export function GameClientWrapper({ roomId }: Props) {
               </p>
               <p className="font-mono text-xs leading-relaxed text-miss-white/70">{statusLine}</p>
 
-              {incomingMissileId !== null && (
+              {hasTurnBasedIncomingMissile && (
                 <div className="mt-2 flex items-center gap-2">
                   <span className="font-mono text-[9px] uppercase tracking-widest text-miss-white/30">
                     Попытки:
@@ -691,8 +713,8 @@ export function GameClientWrapper({ roomId }: Props) {
 
             {morseEngine ? (
               <GameControls
-                currentIncomingSequence={incomingMissileSequence}
-                currentMissileId={incomingMissileId}
+                currentIncomingSequence={hasTurnBasedIncomingMissile ? incomingMissileSequence : null}
+                currentMissileId={hasTurnBasedIncomingMissile ? incomingMissileId : null}
                 engine={morseEngine}
                 onSpeedChange={setUnitMs}
               />

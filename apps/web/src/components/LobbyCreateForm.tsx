@@ -13,6 +13,7 @@ import { useState, useTransition } from "react";
 import { createRoomAction, joinRoomAction } from "../../app/actions";
 
 const ROOM_CODE_RE = /^[A-Z0-9]{6}$/;
+const ROOM_SETTINGS_KEY_PREFIX = "radioboi:settings:";
 
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
@@ -197,7 +198,11 @@ export function LobbyCreateForm({ initialError }: Props) {
   function handleCreate() {
     startTransition(async () => {
       try {
-        const roomId = await createRoomAction(buildSettings());
+        const settings = buildSettings();
+        const roomId = await createRoomAction(settings);
+        try {
+          sessionStorage.setItem(`${ROOM_SETTINGS_KEY_PREFIX}${roomId}`, JSON.stringify(settings));
+        } catch { /* ignore storage failures */ }
         router.push(`/game/${roomId}`);
       } catch (err) {
         setJoinError(err instanceof Error ? err.message : "Failed to create room");

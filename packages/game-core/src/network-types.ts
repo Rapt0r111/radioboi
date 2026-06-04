@@ -99,6 +99,7 @@ export type ResolveHitEvent = {
   type: typeof GameEventType.RESOLVE_HIT;
   payload: {
     missileId: string;
+    attackerId: string;
     target: Coordinate;
     result: HitResult;
     nextTurnPlayerId: string;

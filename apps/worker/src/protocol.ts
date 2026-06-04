@@ -86,6 +86,7 @@ export function makeIncomingMissile(
 
 export function makeResolveHit(
   missileId: string,
+  attackerId: string,
   target: string,
   result: "hit" | "miss" | "sunk",
   nextTurnPlayerId: string,
@@ -97,6 +98,7 @@ export function makeResolveHit(
     type: "RESOLVE_HIT",
     payload: {
       missileId,
+      attackerId,
       target,
       result,
       nextTurnPlayerId,

@@ -53,6 +53,33 @@ const STATE_KEY = "room:state";
 const WS_TAG_PREFIX = "player:";
 const ATTACKER_TURN_TIMEOUT_MS = 90_000;
 
+function parseEncodedRoomSettings(encodedSettings?: string | null): RoomSettings | null {
+  if (!encodedSettings) return null;
+  try {
+    return clampRoomSettings(JSON.parse(encodedSettings));
+  } catch {
+    return null;
+  }
+}
+
+function canReconcileStoredSettings(state: RoomState): boolean {
+  return (
+    state.phase !== "gameOver" &&
+    state.shotLog.length === 0 &&
+    state.activeMissiles.length === 0 &&
+    Object.keys(state.pendingAttacks).length === 0
+  );
+}
+
+function roomSettingsDiffer(left: RoomSettings, right: RoomSettings): boolean {
+  return (
+    left.battleMode !== right.battleMode ||
+    left.attackCooldownMs !== right.attackCooldownMs ||
+    left.interceptWindowMs !== right.interceptWindowMs ||
+    left.maxInterceptAttempts !== right.maxInterceptAttempts
+  );
+}
+
 export class GameRoomArbitrator extends DurableObject<Env> {
 
   // ── HTTP upgrade → WebSocket ───────────────────────────────────────────────
@@ -66,6 +93,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     const roomId = url.pathname.split("/").pop() ?? "unknown";
     const playerId     = url.searchParams.get("playerId");
     const playerName   = url.searchParams.get("playerName") ?? "Player";
+    const roomSettings = url.searchParams.get("settings");
 
     if (!playerId) {
       return new Response("Missing playerId query param", { status: 400 });
@@ -74,7 +102,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, [`${WS_TAG_PREFIX}${playerId}`]);
 
-    const roomState = await this.#loadState(roomId);
+    const roomState = await this.#loadState(roomId, roomSettings);
     const isReconnect = roomState.players.some((p) => p.id === playerId);
     const playerRecord = {
       id: playerId,
@@ -218,6 +246,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     this.#broadcast(
       makeResolveHit(
         attack.missileId,
+        attack.attackerId,
         attack.target,
         result.result,
         state.currentTurnId ?? attack.attackerId,
@@ -416,6 +445,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       this.#broadcast(
         makeResolveHit(
           missileId,
+          playerId,
           target,
           result.result,
           state.currentTurnId ?? playerId,
@@ -525,6 +555,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     this.#broadcast(
       makeResolveHit(
         missileId,
+        lastShot?.attackerId ?? playerId,
         shotTarget,
         resolveResult.result,
         state.currentTurnId ?? lastShot?.attackerId ?? playerId,
@@ -666,20 +697,40 @@ export class GameRoomArbitrator extends DurableObject<Env> {
 
   // ── Storage ────────────────────────────────────────────────────────────────
 
-  async #loadState(roomId?: string): Promise<RoomState> {
+  async #loadState(roomId?: string, encodedSettings?: string | null): Promise<RoomState> {
     const stored = await this.ctx.storage.get<RoomState>(STATE_KEY);
     if (stored) {
       // Back-compat: older state without pendingAlarms / pendingAttacks
       if (!stored.pendingAlarms) stored.pendingAlarms = [];
       if (!stored.pendingAttacks) stored.pendingAttacks = {};
+      if (!stored.activeMissiles) stored.activeMissiles = [];
+      if (!stored.shotLog) stored.shotLog = [];
       if (!stored.attackCooldowns) stored.attackCooldowns = {};
       if (!stored.settings) stored.settings = DEFAULT_SETTINGS;
+      const incomingSettings = parseEncodedRoomSettings(encodedSettings);
+      if (
+        incomingSettings &&
+        canReconcileStoredSettings(stored) &&
+        roomSettingsDiffer(stored.settings, incomingSettings)
+      ) {
+        stored.settings = incomingSettings;
+        if (incomingSettings.battleMode === "async") {
+          stored.currentTurnId = null;
+          stored.pendingAlarms = [];
+        }
+        await this.ctx.storage.put(STATE_KEY, stored);
+      }
       return stored;
     }
 
-    // First time: try to load settings from KV (set by room creator via lobby action)
+    // First time: use creator-provided settings from the WebSocket URL when present.
+    // This keeps `bun dev` reliable even when the web and worker dev processes do
+    // not share the same local KV view quickly enough.
     let settings: RoomSettings = DEFAULT_SETTINGS;
-    if (roomId) {
+    const incomingSettings = parseEncodedRoomSettings(encodedSettings);
+    if (incomingSettings) {
+      settings = incomingSettings;
+    } else if (roomId) {
       try {
         const raw = await this.env.ROOM_STATE.get(`settings:${roomId}`);
         if (raw) settings = clampRoomSettings(JSON.parse(raw));

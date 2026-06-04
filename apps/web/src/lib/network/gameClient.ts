@@ -5,6 +5,7 @@ import {
   type ClientGameEvent,
   type Coordinate,
   GameEventType,
+  type RoomSettings,
   type ServerGameEvent,
 } from "@radioboi/game-core";
 import { useGameStore } from "@/src/store/gameStore";
@@ -47,11 +48,18 @@ export class GameClient {
 
   // ── Connection lifecycle ──────────────────────────────────────────────────
 
-  connect(roomId: string, playerId: string, playerName: string): void {
+  connect(roomId: string, playerId: string, playerName: string, roomSettings?: RoomSettings): void {
     if (this.#destroyed) throw new Error("GameClient has been destroyed");
     this.#playerId = playerId;
     this.#playerName = playerName;
-    this.#url = `${DEFAULT_WS_URL}/room/${roomId}?playerId=${encodeURIComponent(playerId)}&playerName=${encodeURIComponent(playerName)}`;
+    const params = new URLSearchParams({
+      playerId,
+      playerName,
+    });
+    if (roomSettings !== undefined) {
+      params.set("settings", JSON.stringify(roomSettings));
+    }
+    this.#url = `${DEFAULT_WS_URL}/room/${roomId}?${params.toString()}`;
     this.#openSocket();
   }
 
@@ -231,6 +239,12 @@ export class GameClient {
       case GameEventType.GAME_STARTED:
         // Async mode sends firstTurnPlayerId="" — only advance phase, don't set turn
         store.setPhase("battle");
+        if (event.payload.firstTurnPlayerId === "") {
+          useGameStore.setState((state) => ({
+            isMyTurn: false,
+            settings: { ...state.settings, battleMode: "async" },
+          }));
+        }
         break;
 
       case GameEventType.INCOMING_MISSILE:

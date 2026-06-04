@@ -126,11 +126,8 @@ export const useGameStore = create<GameStore>((set) => ({
       enemyBoard,
       isMyTurn,
       winnerId: winnerId ?? null,
-      // Merge shotLog: keep server's if longer (reconnect restore)
-      shotLog:
-        shotLog !== undefined && shotLog.length > state.shotLog.length
-          ? shotLog
-          : state.shotLog,
+      // Server snapshot is perspective-correct for this player; replace local optimistic log.
+      shotLog: shotLog ?? state.shotLog,
       // Always update settings when server sends them
       settings: settings ?? state.settings,
       // attackCooldownExpiresAt: 0 from server means "not on cooldown"
