@@ -95,10 +95,10 @@
 @keyframes battle-cell-glow {
   0%,
   100% {
-    box-shadow: inset 0 0 12px rgba(255, 59, 59, 0.2), 0 0 18px rgba(255, 59, 59, 0.35);
+    box-shadow: inset 0 0 14px rgba(255, 59, 59, 0.28), 0 0 22px rgba(255, 59, 59, 0.48);
   }
   48% {
-    box-shadow: inset 0 0 20px rgba(255, 170, 0, 0.22), 0 0 28px rgba(255, 82, 24, 0.58);
+    box-shadow: inset 0 0 24px rgba(255, 210, 64, 0.35), 0 0 34px rgba(255, 82, 24, 0.72), 0 0 10px rgba(255, 245, 180, 0.35);
   }
 }
 
@@ -110,13 +110,13 @@
   }
   45% {
     opacity: 1;
-    transform: translate3d(-50%, -18%, 0) scale(1.12) rotate(7deg);
-    filter: blur(0) saturate(1.65);
+    transform: translate3d(-50%, -22%, 0) scale(1.18) rotate(7deg);
+    filter: blur(0) saturate(2) brightness(1.18);
   }
   100% {
-    opacity: 0.64;
-    transform: translate3d(-50%, -45%, 0) scale(0.86) rotate(-5deg);
-    filter: blur(0.8px) saturate(1.25);
+    opacity: 0.72;
+    transform: translate3d(-50%, -50%, 0) scale(0.92) rotate(-5deg);
+    filter: blur(0.7px) saturate(1.55);
   }
 }
 
@@ -162,14 +162,29 @@
 @keyframes battle-water-splash {
   0% {
     opacity: 0;
-    transform: translate3d(0, 8px, 0) scale(0.55);
+    transform: translate3d(0, 10px, 0) scale(0.48) rotate(-6deg);
   }
   45% {
     opacity: 1;
+    filter: saturate(1.8) brightness(1.18);
   }
   100% {
     opacity: 0;
-    transform: translate3d(var(--splash-x, 0), -14px, 0) scale(0.9);
+    transform: translate3d(var(--splash-x, 0), -20px, 0) scale(1.08) rotate(8deg);
+  }
+}
+
+@keyframes battle-bubble-rise {
+  0% {
+    opacity: 0;
+    transform: translate3d(-50%, 14px, 0) scale(0.35);
+  }
+  28% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(-50% + var(--bubble-x, 0px)), -24px, 0) scale(1.1);
   }
 }
 
@@ -296,17 +311,18 @@
   }
 
   .battle-flame {
-    bottom: 20%;
+    bottom: 16%;
     left: 50%;
-    width: 36%;
-    height: 58%;
+    width: 40%;
+    height: 66%;
     border-radius: 50% 50% 46% 46%;
     background:
-      radial-gradient(circle at 50% 72%, rgba(255, 250, 186, 0.95) 0 13%, rgba(255, 170, 0, 0.86) 14% 32%, rgba(255, 59, 20, 0.68) 33% 62%, transparent 63%),
-      linear-gradient(180deg, rgba(255, 210, 64, 0.92), rgba(255, 59, 20, 0.12));
+      radial-gradient(circle at 48% 76%, rgba(255, 255, 224, 0.98) 0 12%, rgba(255, 214, 71, 0.94) 13% 30%, rgba(255, 96, 18, 0.82) 31% 58%, rgba(180, 8, 0, 0.42) 59% 72%, transparent 73%),
+      linear-gradient(180deg, rgba(255, 232, 88, 0.95), rgba(255, 59, 20, 0.18));
     mix-blend-mode: screen;
+    box-shadow: 0 0 12px rgba(255, 92, 0, 0.55), 0 0 4px rgba(255, 245, 190, 0.85) inset;
     transform-origin: 50% 90%;
-    animation: battle-flame-rise 0.92s ease-in-out infinite;
+    animation: battle-flame-rise 0.74s ease-in-out infinite;
   }
 
   .battle-flame--left {
@@ -317,7 +333,7 @@
   }
 
   .battle-flame--mid {
-    animation-duration: 0.78s;
+    animation-duration: 0.62s;
   }
 
   .battle-flame--right {
@@ -329,9 +345,9 @@
 
   .battle-flame--deep {
     left: 51%;
-    width: 48%;
-    height: 70%;
-    animation-duration: 0.68s;
+    width: 58%;
+    height: 80%;
+    animation-duration: 0.58s;
     animation-delay: -0.12s;
   }
 
@@ -373,15 +389,35 @@
     animation-delay: -0.56s;
   }
 
+  .battle-ember--three {
+    --ember-x: -2px;
+    left: 50%;
+    bottom: 46%;
+    width: 3px;
+    height: 3px;
+    animation-delay: -0.28s;
+    animation-duration: 0.86s;
+  }
+
+  .battle-ember--four {
+    --ember-x: 12px;
+    left: 72%;
+    bottom: 38%;
+    width: 3px;
+    height: 3px;
+    animation-delay: -0.76s;
+    animation-duration: 0.98s;
+  }
+
   .battle-water-ring {
     top: 50%;
     left: 50%;
     width: 78%;
     height: 48%;
-    border: 1px solid rgba(196, 244, 255, 0.72);
+    border: 1px solid rgba(216, 250, 255, 0.86);
     border-radius: 999px;
-    box-shadow: 0 0 14px rgba(120, 220, 255, 0.22);
-    animation: battle-water-ring 1.8s ease-out infinite;
+    box-shadow: 0 0 16px rgba(120, 220, 255, 0.38), inset 0 0 8px rgba(230, 250, 255, 0.2);
+    animation: battle-water-ring 1.45s ease-out infinite;
   }
 
   .battle-water-ring--two {
@@ -389,13 +425,51 @@
   }
 
   .battle-splash {
-    bottom: 42%;
+    bottom: 38%;
     left: 50%;
-    width: 4px;
-    height: 10px;
+    width: 5px;
+    height: 16px;
     border-radius: 999px;
-    background: linear-gradient(180deg, rgba(230, 250, 255, 0.9), rgba(88, 198, 255, 0));
-    animation: battle-water-splash 1.35s ease-out infinite;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(127, 225, 255, 0.74) 46%, rgba(88, 198, 255, 0));
+    box-shadow: 0 0 10px rgba(120, 220, 255, 0.55);
+    animation: battle-water-splash 1.05s ease-out infinite;
+  }
+
+  .battle-bubble {
+    bottom: 18%;
+    left: 50%;
+    width: 7px;
+    height: 7px;
+    border: 1px solid rgba(210, 248, 255, 0.8);
+    border-radius: 999px;
+    background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.85) 0 16%, rgba(125, 225, 255, 0.22) 28% 62%, transparent 70%);
+    box-shadow: 0 0 9px rgba(120, 220, 255, 0.42);
+    animation: battle-bubble-rise 1.4s ease-out infinite;
+  }
+
+  .battle-bubble--one {
+    --bubble-x: -8px;
+    left: 38%;
+    animation-delay: -0.18s;
+  }
+
+  .battle-bubble--two {
+    --bubble-x: 4px;
+    left: 58%;
+    width: 5px;
+    height: 5px;
+    animation-delay: -0.72s;
+    animation-duration: 1.12s;
+  }
+
+  .battle-bubble--three {
+    --bubble-x: 12px;
+    left: 68%;
+    bottom: 12%;
+    width: 6px;
+    height: 6px;
+    animation-delay: -1.04s;
+    animation-duration: 1.7s;
   }
 
   .battle-splash--one {
@@ -457,6 +531,7 @@
   .battle-flame,
   .battle-smoke,
   .battle-ember,
+  .battle-bubble,
   .battle-water-ring,
   .battle-splash,
   .battle-sunk-cross {
@@ -466,6 +541,7 @@
   .battle-flame,
   .battle-smoke,
   .battle-ember,
+  .battle-bubble,
   .battle-water-ring,
   .battle-splash {
     opacity: 0.75;

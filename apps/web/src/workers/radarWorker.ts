@@ -11,6 +11,7 @@ type MissileEntry = {
   x: number;
   y: number;
   progress: number; // 0.0 → 1.0
+  startedAt: number;
 };
 
 
@@ -44,13 +45,13 @@ function seededRange(seed: number, min: number, max: number): number {
 function effectDuration(kind: EffectKind): number {
   switch (kind) {
     case "sunk":
-      return 1_650;
+      return 2_050;
     case "fire":
-      return 1_450;
+      return 1_900;
     case "bubble":
-      return 1_250;
+      return 1_750;
     case "miss":
-      return 1_150;
+      return 1_550;
     case "hit":
       return 1_050;
     case "rocket":
@@ -126,7 +127,13 @@ class RadarRenderer {
 
   /** Обновляет или добавляет ракету по id. */
   updateMissile(id: string, x: number, y: number, progress: number): void {
-    this.#missiles.set(id, { x, y, progress });
+    const existing = this.#missiles.get(id);
+    this.#missiles.set(id, {
+      x,
+      y,
+      progress,
+      startedAt: existing?.startedAt ?? performance.now(),
+    });
   }
 
   /** Удаляет ракету по id. */
@@ -210,43 +217,96 @@ class RadarRenderer {
     // ── 7. Ракеты (красные точки) ─────────────────────────────────────────
     for (const [, missile] of this.#missiles) {
       // missile.x / missile.y are normalized [0,1] coordinates inside the grid
-      const px = offsetX + missile.x * gw;
-      const py = offsetY + missile.y * gh;
-      const trail = Math.max(0, Math.min(1, missile.progress));
-
-      const angle = Math.atan2(py - cy, px - cx);
-      const tailX = cx + (px - cx) * Math.max(0, trail - 0.18);
-      const tailY = cy + (py - cy) * Math.max(0, trail - 0.18);
+      const targetX = offsetX + missile.x * gw;
+      const targetY = offsetY + missile.y * gh;
+      const travel = Math.max(
+        clamp01(missile.progress),
+        clamp01((performance.now() - missile.startedAt) / 900),
+      );
+      const launch = easeOutCubic(travel);
+      const px = cx + (targetX - cx) * launch;
+      const py = cy + (targetY - cy) * launch;
+      const angle = Math.atan2(targetY - cy, targetX - cx);
+      const tailProgress = Math.max(0, launch - 0.24);
+      const tailX = cx + (targetX - cx) * tailProgress;
+      const tailY = cy + (targetY - cy) * tailProgress;
+      const pulse = 0.72 + Math.sin(performance.now() / 72) * 0.28;
 
       ctx.save();
-      ctx.shadowColor = "#ff3b3b";
-      ctx.shadowBlur = 10;
-      ctx.strokeStyle = "rgba(255, 92, 0, 0.55)";
-      ctx.lineWidth = 4;
+      ctx.globalCompositeOperation = "lighter";
+      ctx.shadowColor = "#ff5c00";
+      ctx.shadowBlur = 18 + 12 * pulse;
+
+      const plume = ctx.createLinearGradient(tailX, tailY, px, py);
+      plume.addColorStop(0, "rgba(255, 38, 10, 0)");
+      plume.addColorStop(0.24, "rgba(255, 80, 12, 0.34)");
+      plume.addColorStop(0.62, "rgba(255, 184, 36, 0.74)");
+      plume.addColorStop(1, "rgba(255, 255, 210, 0.95)");
+      ctx.strokeStyle = plume;
+      ctx.lineWidth = 7;
+      ctx.lineCap = "round";
       ctx.beginPath();
       ctx.moveTo(tailX, tailY);
-      ctx.lineTo(px - Math.cos(angle) * 6, py - Math.sin(angle) * 6);
+      ctx.quadraticCurveTo(
+        (tailX + px) / 2 + Math.sin(performance.now() / 95) * 4,
+        (tailY + py) / 2 - Math.cos(performance.now() / 120) * 4,
+        px - Math.cos(angle) * 8,
+        py - Math.sin(angle) * 8,
+      );
       ctx.stroke();
 
-      ctx.strokeStyle = "rgba(255, 210, 64, 0.65)";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(255, 245, 160, 0.9)";
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(tailX, tailY);
       ctx.lineTo(px, py);
       ctx.stroke();
 
+      for (let i = 0; i < 9; i++) {
+        const sparkT = seededRange(i + missile.startedAt, 0.05, 0.95);
+        const sparkX = tailX + (px - tailX) * sparkT + seededRange(i * 11 + missile.startedAt, -5, 5);
+        const sparkY = tailY + (py - tailY) * sparkT + seededRange(i * 17 + missile.startedAt, -5, 5);
+        const sparkAlpha = seededRange(i * 23 + missile.startedAt, 0.35, 0.95) * (1 - sparkT * 0.55);
+        ctx.fillStyle = `rgba(255, ${Math.round(seededRange(i * 31 + missile.startedAt, 130, 245))}, 56, ${sparkAlpha})`;
+        ctx.beginPath();
+        ctx.arc(sparkX, sparkY, seededRange(i * 37 + missile.startedAt, 1.1, 2.8), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.strokeStyle = `rgba(255, 210, 64, ${0.38 * (1 - travel)})`;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(targetX, targetY, 8 + 20 * launch, 0, Math.PI * 2);
+      ctx.stroke();
+
       ctx.translate(px, py);
       ctx.rotate(angle);
-      ctx.fillStyle = "#ff3b3b";
+      ctx.shadowColor = "#fff0a8";
+      ctx.shadowBlur = 22;
+      const body = ctx.createLinearGradient(-7, -5, 10, 5);
+      body.addColorStop(0, "#7a0b08");
+      body.addColorStop(0.35, "#ff3b3b");
+      body.addColorStop(0.72, "#ffb22e");
+      body.addColorStop(1, "#fff4b8");
+      ctx.fillStyle = body;
       ctx.beginPath();
-      ctx.moveTo(8, 0);
-      ctx.lineTo(-5, -4);
-      ctx.lineTo(-3, 0);
-      ctx.lineTo(-5, 4);
+      ctx.moveTo(11, 0);
+      ctx.lineTo(-7, -5);
+      ctx.lineTo(-4, 0);
+      ctx.lineTo(-7, 5);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = "rgba(255, 240, 180, 0.95)";
-      ctx.fillRect(-2, -1, 4, 2);
+
+      ctx.fillStyle = "rgba(255, 245, 190, 0.98)";
+      ctx.fillRect(-2, -1.2, 5, 2.4);
+      ctx.fillStyle = `rgba(255, 104, 20, ${0.78 + 0.22 * pulse})`;
+      ctx.beginPath();
+      ctx.moveTo(-7, 0);
+      ctx.lineTo(-15 - 4 * pulse, -3.5);
+      ctx.lineTo(-12 - 7 * pulse, 0);
+      ctx.lineTo(-15 - 4 * pulse, 3.5);
+      ctx.closePath();
+      ctx.fill();
       ctx.restore();
     }
 
@@ -269,16 +329,28 @@ class RadarRenderer {
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
       ctx.shadowColor = `rgba(${color}, ${alpha})`;
-      ctx.shadowBlur = 22 * alpha;
-      ctx.lineWidth = effect.kind === "miss" ? 1.8 : 2.6;
+      ctx.shadowBlur = 30 * alpha;
+      ctx.lineWidth = effect.kind === "miss" ? 2.2 : 3.2;
 
-      const shockwaveRadius = baseRadius + cellSize * (effect.kind === "sunk" ? 1.65 : 1.05) * eased;
+      const shockwaveRadius = baseRadius + cellSize * (effect.kind === "sunk" ? 1.9 : 1.24) * eased;
       ctx.strokeStyle = `rgba(${color}, ${0.78 * alpha})`;
       ctx.fillStyle = `rgba(${color}, ${0.12 * alpha})`;
       ctx.beginPath();
       ctx.arc(px, py, shockwaveRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+
+      if (effect.kind === "hit" || effect.kind === "sunk" || effect.kind === "fire") {
+        const core = ctx.createRadialGradient(px, py, 0, px, py, cellSize * 0.72);
+        core.addColorStop(0, `rgba(255, 255, 220, ${0.9 * alpha})`);
+        core.addColorStop(0.24, `rgba(255, 206, 64, ${0.66 * alpha})`);
+        core.addColorStop(0.58, `rgba(255, 72, 18, ${0.32 * alpha})`);
+        core.addColorStop(1, "rgba(255, 28, 8, 0)");
+        ctx.fillStyle = core;
+        ctx.beginPath();
+        ctx.arc(px, py, cellSize * (0.32 + 0.34 * Math.sin(t * Math.PI)), 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       if (effect.kind === "rocket") {
         const flash = ctx.createRadialGradient(px, py, 0, px, py, cellSize * 0.9);
@@ -294,31 +366,47 @@ class RadarRenderer {
       if (effect.kind === "miss") {
         ctx.strokeStyle = `rgba(210, 245, 255, ${0.72 * alpha})`;
         ctx.fillStyle = `rgba(210, 245, 255, ${0.18 * alpha})`;
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 4; i++) {
           ctx.beginPath();
-          ctx.ellipse(px, py, cellSize * (0.26 + i * 0.2 + eased * 0.75), cellSize * (0.12 + i * 0.08 + eased * 0.32), 0, 0, Math.PI * 2);
+          ctx.ellipse(
+            px,
+            py,
+            cellSize * (0.24 + i * 0.2 + eased * 0.84),
+            cellSize * (0.1 + i * 0.08 + eased * 0.38),
+            seededRange(seedBase + i * 5, -0.18, 0.18),
+            0,
+            Math.PI * 2,
+          );
           ctx.stroke();
         }
-        for (let i = 0; i < 12; i++) {
+        for (let i = 0; i < 18; i++) {
           const angle = -Math.PI / 2 + seededRange(seedBase + i, -0.82, 0.82);
-          const distance = cellSize * seededRange(seedBase + i * 3, 0.3, 1.2) * eased;
+          const distance = cellSize * seededRange(seedBase + i * 3, 0.28, 1.45) * eased;
           const dropX = px + Math.cos(angle) * distance;
-          const dropY = py + Math.sin(angle) * distance + cellSize * 0.45 * t;
+          const dropY = py + Math.sin(angle) * distance + cellSize * 0.56 * t;
           const dropAlpha = alpha * seededRange(seedBase + i * 7, 0.45, 0.95);
           ctx.fillStyle = `rgba(220, 250, 255, ${dropAlpha})`;
           ctx.beginPath();
           ctx.arc(dropX, dropY, seededRange(seedBase + i * 11, 1.3, 3.2), 0, Math.PI * 2);
           ctx.fill();
         }
+        for (let i = 0; i < 9; i++) {
+          const foamX = px + seededRange(seedBase + i * 61, -0.8, 0.8) * cellSize * eased;
+          const foamY = py + seededRange(seedBase + i * 67, -0.18, 0.45) * cellSize;
+          ctx.strokeStyle = `rgba(235, 252, 255, ${0.52 * alpha})`;
+          ctx.beginPath();
+          ctx.arc(foamX, foamY, seededRange(seedBase + i * 71, 1.4, 3.8), 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
 
       if (effect.kind === "hit" || effect.kind === "sunk" || effect.kind === "fire") {
-        const flameCount = effect.kind === "sunk" ? 13 : 9;
+        const flameCount = effect.kind === "sunk" ? 22 : 15;
         for (let i = 0; i < flameCount; i++) {
-          const sway = Math.sin(t * Math.PI * 5 + i) * 0.16;
+          const sway = Math.sin(t * Math.PI * 7 + i) * 0.22;
           const angle = -Math.PI / 2 + seededRange(seedBase + i * 5, -0.72, 0.72) + sway;
-          const flameLength = cellSize * seededRange(seedBase + i * 9, 0.55, effect.kind === "sunk" ? 1.8 : 1.25) * (0.45 + eased);
-          const width = seededRange(seedBase + i * 13, 2.4, 5.6) * alpha;
+          const flameLength = cellSize * seededRange(seedBase + i * 9, 0.7, effect.kind === "sunk" ? 2.1 : 1.45) * (0.5 + eased);
+          const width = seededRange(seedBase + i * 13, 2.8, 7.2) * alpha;
           const tipX = px + Math.cos(angle) * flameLength;
           const tipY = py + Math.sin(angle) * flameLength;
           const flame = ctx.createLinearGradient(px, py, tipX, tipY);
@@ -338,7 +426,7 @@ class RadarRenderer {
           ctx.stroke();
         }
 
-        const sparkCount = effect.kind === "sunk" ? 24 : 16;
+        const sparkCount = effect.kind === "sunk" ? 36 : 24;
         for (let i = 0; i < sparkCount; i++) {
           const angle = (Math.PI * 2 * i) / sparkCount + seededRange(seedBase + i * 17, -0.18, 0.18);
           const distance = cellSize * seededRange(seedBase + i * 19, 0.28, effect.kind === "sunk" ? 1.55 : 1.15) * eased;
@@ -352,7 +440,7 @@ class RadarRenderer {
 
         ctx.globalCompositeOperation = "source-over";
         ctx.fillStyle = `rgba(20, 24, 22, ${0.22 * alpha})`;
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 10; i++) {
           const angle = seededRange(seedBase + i * 31, -Math.PI, Math.PI);
           const smokeX = px + Math.cos(angle) * cellSize * 0.42 * eased;
           const smokeY = py - cellSize * (0.15 + 0.8 * t) + Math.sin(angle) * cellSize * 0.25;
@@ -366,7 +454,7 @@ class RadarRenderer {
       if (effect.kind === "bubble") {
         ctx.strokeStyle = `rgba(${color}, ${0.75 * alpha})`;
         ctx.fillStyle = `rgba(${color}, ${0.08 * alpha})`;
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 16; i++) {
           const angle = seededRange(seedBase + i * 41, 0, Math.PI * 2);
           const lift = cellSize * seededRange(seedBase + i * 43, 0.25, 1.25) * eased;
           const bubbleX = px + Math.cos(angle) * cellSize * seededRange(seedBase + i * 47, 0.12, 0.72) * eased;
@@ -376,6 +464,11 @@ class RadarRenderer {
           ctx.arc(bubbleX, bubbleY, radiusBubble, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.48 * alpha})`;
+          ctx.beginPath();
+          ctx.arc(bubbleX - radiusBubble * 0.28, bubbleY - radiusBubble * 0.28, radiusBubble * 0.22, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = `rgba(${color}, ${0.08 * alpha})`;
         }
       }
 

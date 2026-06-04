@@ -86,6 +86,8 @@ function cellVfx(state: CellState | undefined): ReactNode {
           <span className="battle-smoke battle-smoke--one" />
           <span className="battle-ember battle-ember--one" />
           <span className="battle-ember battle-ember--two" />
+          <span className="battle-ember battle-ember--three" />
+          <span className="battle-bubble battle-bubble--one" />
         </span>
       );
     case "sunk":
@@ -99,6 +101,11 @@ function cellVfx(state: CellState | undefined): ReactNode {
           <span className="battle-smoke battle-smoke--two" />
           <span className="battle-ember battle-ember--one" />
           <span className="battle-ember battle-ember--two" />
+          <span className="battle-ember battle-ember--three" />
+          <span className="battle-ember battle-ember--four" />
+          <span className="battle-bubble battle-bubble--one" />
+          <span className="battle-bubble battle-bubble--two" />
+          <span className="battle-bubble battle-bubble--three" />
           <span className="battle-sunk-cross" />
         </span>
       );
@@ -110,6 +117,8 @@ function cellVfx(state: CellState | undefined): ReactNode {
           <span className="battle-splash battle-splash--one" />
           <span className="battle-splash battle-splash--two" />
           <span className="battle-splash battle-splash--three" />
+          <span className="battle-bubble battle-bubble--one" />
+          <span className="battle-bubble battle-bubble--two" />
         </span>
       );
     case "blocked":
