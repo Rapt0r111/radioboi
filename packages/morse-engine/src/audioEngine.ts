@@ -42,6 +42,64 @@ export type MorseEngineOptions = {
   volume?: number;
 };
 
+export type BattleSoundEffect =
+  | "missileLaunch"
+  | "incomingMissile"
+  | "hit"
+  | "miss"
+  | "sunk"
+  | "intercept"
+  | "wrong";
+
+type BattleEffectVoice = {
+  frequencyHz: number;
+  endFrequencyHz?: number;
+  gain: number;
+  startOffsetS: number;
+  durationS: number;
+  attackS?: number;
+  releaseS?: number;
+  type?: OscillatorType;
+};
+
+const BATTLE_EFFECTS: Record<BattleSoundEffect, BattleEffectVoice[]> = {
+  missileLaunch: [
+    { type: "triangle", frequencyHz: 180, endFrequencyHz: 760, gain: 0.18, startOffsetS: 0, durationS: 0.34, releaseS: 0.045 },
+    { type: "sawtooth", frequencyHz: 92, endFrequencyHz: 150, gain: 0.08, startOffsetS: 0, durationS: 0.2, releaseS: 0.05 },
+    { type: "sine", frequencyHz: 940, endFrequencyHz: 1180, gain: 0.12, startOffsetS: 0.2, durationS: 0.075, releaseS: 0.018 },
+  ],
+  incomingMissile: [
+    { type: "sine", frequencyHz: 700, gain: 0.16, startOffsetS: 0, durationS: 0.08, releaseS: 0.018 },
+    { type: "sine", frequencyHz: 930, gain: 0.14, startOffsetS: 0.14, durationS: 0.08, releaseS: 0.018 },
+    { type: "triangle", frequencyHz: 260, endFrequencyHz: 420, gain: 0.08, startOffsetS: 0, durationS: 0.32, releaseS: 0.05 },
+  ],
+  hit: [
+    { type: "triangle", frequencyHz: 230, endFrequencyHz: 88, gain: 0.24, startOffsetS: 0, durationS: 0.18, attackS: 0.002, releaseS: 0.055 },
+    { type: "square", frequencyHz: 620, endFrequencyHz: 280, gain: 0.1, startOffsetS: 0.015, durationS: 0.12, attackS: 0.002, releaseS: 0.03 },
+    { type: "sine", frequencyHz: 1040, gain: 0.07, startOffsetS: 0.055, durationS: 0.055, releaseS: 0.015 },
+  ],
+  miss: [
+    { type: "sine", frequencyHz: 220, endFrequencyHz: 125, gain: 0.12, startOffsetS: 0, durationS: 0.16, releaseS: 0.04 },
+    { type: "triangle", frequencyHz: 135, endFrequencyHz: 76, gain: 0.14, startOffsetS: 0.095, durationS: 0.22, releaseS: 0.055 },
+    { type: "sine", frequencyHz: 92, gain: 0.08, startOffsetS: 0.25, durationS: 0.09, releaseS: 0.03 },
+  ],
+  sunk: [
+    { type: "triangle", frequencyHz: 165, endFrequencyHz: 52, gain: 0.27, startOffsetS: 0, durationS: 0.58, attackS: 0.004, releaseS: 0.11 },
+    { type: "sawtooth", frequencyHz: 82, endFrequencyHz: 48, gain: 0.13, startOffsetS: 0.12, durationS: 0.42, releaseS: 0.1 },
+    { type: "sine", frequencyHz: 620, endFrequencyHz: 240, gain: 0.11, startOffsetS: 0.06, durationS: 0.34, releaseS: 0.08 },
+    { type: "sine", frequencyHz: 120, endFrequencyHz: 72, gain: 0.08, startOffsetS: 0.47, durationS: 0.2, releaseS: 0.06 },
+  ],
+  intercept: [
+    { type: "square", frequencyHz: 980, gain: 0.11, startOffsetS: 0, durationS: 0.055, releaseS: 0.012 },
+    { type: "square", frequencyHz: 1240, gain: 0.1, startOffsetS: 0.075, durationS: 0.055, releaseS: 0.012 },
+    { type: "triangle", frequencyHz: 520, endFrequencyHz: 260, gain: 0.1, startOffsetS: 0.13, durationS: 0.12, releaseS: 0.035 },
+  ],
+  wrong: [
+    { type: "sawtooth", frequencyHz: 185, endFrequencyHz: 150, gain: 0.1, startOffsetS: 0, durationS: 0.095, releaseS: 0.025 },
+    { type: "sawtooth", frequencyHz: 155, endFrequencyHz: 125, gain: 0.1, startOffsetS: 0.12, durationS: 0.12, releaseS: 0.035 },
+  ],
+};
+
 // -- Class --------------------------------------------------------------------
 
 export class MorseEngine {
@@ -52,6 +110,7 @@ export class MorseEngine {
   readonly #effectGain: GainNode;
   readonly #tapPulseGains: GainNode[];
   readonly #masterGain: GainNode;
+  readonly #battleEffectGains = new Set<GainNode>();
 
   #isPlaying: boolean = false;
   #playbackId: number = 0;
@@ -188,6 +247,21 @@ export class MorseEngine {
     return this.playSequence(sequence, unitMs);
   }
 
+  playBattleEffect(effect: BattleSoundEffect): void {
+    const voices = BATTLE_EFFECTS[effect];
+    const now = this.#ctx.currentTime;
+
+    for (const voice of voices) {
+      this.#playEffectVoice(voice, now);
+    }
+
+    if (this.#ctx.state !== "running") {
+      void this.resume().catch(() => {
+        // The effect was already scheduled for the next successful unlock.
+      });
+    }
+  }
+
   // -- Manual telegraph key ---------------------------------------------------
 
   startTone(): void {
@@ -235,6 +309,9 @@ export class MorseEngine {
     this.#silenceGain(this.#effectGain.gain, now);
     for (const tapGain of this.#tapPulseGains) {
       this.#silenceGain(tapGain.gain, now);
+    }
+    for (const effectGain of this.#battleEffectGains) {
+      this.#silenceGain(effectGain.gain, now);
     }
   }
 
@@ -286,6 +363,51 @@ export class MorseEngine {
   #silenceGain(gain: AudioParam, atS: number): void {
     gain.cancelScheduledValues(atS);
     gain.setTargetAtTime(0, atS, MANUAL_RELEASE_S);
+  }
+
+  #playEffectVoice(voice: BattleEffectVoice, baseS: number): void {
+    const atS = baseS + voice.startOffsetS;
+    const durationS = Math.max(0.02, voice.durationS);
+    const endS = atS + durationS;
+    const attackS = voice.attackS ?? 0.004;
+    const releaseS = Math.min(durationS * 0.7, voice.releaseS ?? 0.03);
+    const releaseStartS = Math.max(atS + attackS, endS - releaseS);
+
+    const oscillator = this.#ctx.createOscillator();
+    const gainNode = this.#ctx.createGain();
+    const gain = gainNode.gain;
+
+    oscillator.type = voice.type ?? "sine";
+    oscillator.frequency.setValueAtTime(voice.frequencyHz, atS);
+    if (voice.endFrequencyHz !== undefined) {
+      oscillator.frequency.linearRampToValueAtTime(voice.endFrequencyHz, endS);
+    }
+
+    gain.cancelScheduledValues(atS);
+    gain.setValueAtTime(0, atS);
+    gain.linearRampToValueAtTime(voice.gain, atS + attackS);
+    gain.setValueAtTime(voice.gain, releaseStartS);
+    gain.linearRampToValueAtTime(0, endS);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(this.#masterGain);
+    this.#battleEffectGains.add(gainNode);
+
+    oscillator.start(atS);
+    oscillator.stop(endS + 0.02);
+
+    setTimeout(
+      () => {
+        try {
+          oscillator.disconnect();
+          gainNode.disconnect();
+        } catch {
+          // Nodes can already be detached or the context can be closed.
+        }
+        this.#battleEffectGains.delete(gainNode);
+      },
+      Math.max(0, (endS + 0.08 - this.#ctx.currentTime) * 1000),
+    );
   }
 
   #scheduleSequence(gain: AudioParam, sequence: number[], unitS: number): number {

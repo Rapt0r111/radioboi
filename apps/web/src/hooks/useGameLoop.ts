@@ -12,8 +12,7 @@ import {
   parseCoordinate,
   type Coordinate,
 } from "@radioboi/game-core";
-import type { MorseEngine } from "@radioboi/morse-engine";
-import { MORSE_REVERSE } from "@radioboi/morse-engine";
+import { MORSE_REVERSE, type BattleSoundEffect, type MorseEngine } from "@radioboi/morse-engine";
 import { type RefObject, useEffect, useRef } from "react";
 import type { RadarRef } from "@/src/components/RadarCanvas";
 import type { GameClient } from "@/src/lib/network/gameClient";
@@ -84,8 +83,8 @@ function removeMissileFromStore(missileId: string): void {
   }));
 }
 
-function playEffect(morseEngine: MorseEngine | null, sequence: number[], unitMs = 45): void {
-  void morseEngine?.playEffect(sequence, unitMs);
+function playBattleEffect(morseEngine: MorseEngine | null, effect: BattleSoundEffect): void {
+  morseEngine?.playBattleEffect(effect);
 }
 
 function toRadarPoint(coord: Coordinate): { x: number; y: number } {
@@ -141,6 +140,7 @@ export function useGameLoop(
         lastInterceptWrong: false,
       });
 
+      morseEngine?.playBattleEffect("incomingMissile");
       void morseEngine?.playSequence(playbackSequence);
     });
 
@@ -173,11 +173,11 @@ export function useGameLoop(
       }
 
       if (event.payload.result === "sunk") {
-        playEffect(morseEngine, [DASH_UNIT, ELEMENT_GAP, DOT_UNIT, ELEMENT_GAP, DASH_UNIT], 48);
+        playBattleEffect(morseEngine, "sunk");
       } else if (event.payload.result === "hit") {
-        playEffect(morseEngine, [DASH_UNIT, ELEMENT_GAP, DOT_UNIT, ELEMENT_GAP, DOT_UNIT], 42);
+        playBattleEffect(morseEngine, "hit");
       } else {
-        playEffect(morseEngine, [DOT_UNIT, ELEMENT_GAP, DOT_UNIT, ELEMENT_GAP, DOT_UNIT], 30);
+        playBattleEffect(morseEngine, "miss");
       }
 
       resetGameLoopRuntimeState();
@@ -191,7 +191,7 @@ export function useGameLoop(
       const point = toRadarPoint(event.payload.target);
       void radarWorker.current?.triggerEffect("intercept", point.x, point.y);
       removeMissileFromStore(event.payload.missileId);
-      playEffect(morseEngine, [DOT_UNIT, ELEMENT_GAP, DASH_UNIT, ELEMENT_GAP, DOT_UNIT], 45);
+      playBattleEffect(morseEngine, "intercept");
 
       if (isByThem) {
         resetGameLoopRuntimeState();
@@ -221,6 +221,7 @@ export function useGameLoop(
       if (event.payload.code === "MORSE_MISMATCH") {
         const runtime = readRuntimeState();
         if (runtime.incomingMissileId !== null) {
+          playBattleEffect(morseEngine, "wrong");
           patchGameLoopRuntimeState({ lastInterceptWrong: true });
           setTimeout(() => {
             patchGameLoopRuntimeState({ lastInterceptWrong: false });

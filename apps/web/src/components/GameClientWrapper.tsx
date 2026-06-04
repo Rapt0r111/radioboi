@@ -336,7 +336,7 @@ export function GameClientWrapper({ roomId }: Props) {
 
     missileInFlightRef.current = true;
     setMissileInFlightUI(true);
-    void morseEngine?.playEffect([3, -1, 3, -1, 1, -1, 1], 34);
+    morseEngine?.playBattleEffect("missileLaunch");
     void radarRef.current?.triggerEffect("rocket", radarPoint.x, radarPoint.y);
     if (isAsync) {
       useGameStore.getState().setAttackCooldown(timestamp + settings.attackCooldownMs);

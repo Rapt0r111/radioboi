@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { encodeToMorse, FuzzyDecoder, MORSE_ALPHABET, MorseEngine } from "../src";
+import type { BattleSoundEffect } from "../src";
 
 describe("Morse alphabet and timing encoder", () => {
   test("encodes latin letters and digits with standard timing gaps", () => {
@@ -106,26 +107,40 @@ class MockAudioParam {
 
 class MockGainNode {
   readonly gain = new MockAudioParam();
+  connectCalls = 0;
+  disconnectCalls = 0;
 
   connect(): void {
-    // no-op
+    this.connectCalls++;
+  }
+
+  disconnect(): void {
+    this.disconnectCalls++;
   }
 }
 
 class MockOscillatorNode {
   type: OscillatorType = "sine";
   readonly frequency = new MockAudioParam();
+  readonly startCalls: number[] = [];
+  readonly stopCalls: number[] = [];
+  connectCalls = 0;
+  disconnectCalls = 0;
 
   connect(): void {
-    // no-op
+    this.connectCalls++;
   }
 
-  start(): void {
-    // no-op
+  disconnect(): void {
+    this.disconnectCalls++;
   }
 
-  stop(): void {
-    // no-op
+  start(when = 0): void {
+    this.startCalls.push(when);
+  }
+
+  stop(when = 0): void {
+    this.stopCalls.push(when);
   }
 }
 
@@ -146,6 +161,7 @@ class MockAudioContext {
   currentTime = 0;
   readonly destination = {};
   readonly gainNodes: MockGainNode[] = [];
+  readonly oscillators: MockOscillatorNode[] = [];
   resumeCalls = 0;
   resolveResume: (() => void) | null = null;
 
@@ -154,7 +170,9 @@ class MockAudioContext {
   }
 
   createOscillator(): MockOscillatorNode {
-    return new MockOscillatorNode();
+    const node = new MockOscillatorNode();
+    this.oscillators.push(node);
+    return node;
   }
 
   createBiquadFilter(): MockBiquadFilterNode {
@@ -317,5 +335,54 @@ describe("MorseEngine manual tone latency", () => {
 
     expect(effectGain.events).toHaveLength(effectEventCount);
     await playback;
+  });
+});
+
+describe("MorseEngine battle sound effects", () => {
+  test("schedules distinct one-shot voices for every battle effect", () => {
+    installMockAudioContext();
+
+    const engine = new MorseEngine();
+    const ctx = requireMockContext();
+    ctx.state = "running";
+    const effects: BattleSoundEffect[] = [
+      "missileLaunch",
+      "incomingMissile",
+      "hit",
+      "miss",
+      "sunk",
+      "intercept",
+      "wrong",
+    ];
+
+    const persistentOscillators = ctx.oscillators.length;
+    for (const effect of effects) {
+      const before = ctx.oscillators.length;
+      engine.playBattleEffect(effect);
+
+      expect(ctx.oscillators.length).toBeGreaterThan(before);
+      const created = ctx.oscillators.slice(before);
+      expect(created.some((oscillator) => oscillator.startCalls.length > 0)).toBe(true);
+      expect(created.every((oscillator) => oscillator.stopCalls.length > 0)).toBe(true);
+    }
+
+    expect(ctx.oscillators.length).toBeGreaterThan(persistentOscillators + effects.length);
+  });
+
+  test("battle effects request unlock but do not cancel Morse sequence playback", async () => {
+    installMockAudioContext();
+
+    const engine = new MorseEngine();
+    const ctx = requireMockContext();
+    const effectGain = requireGain(ctx, 1);
+
+    engine.playBattleEffect("miss");
+
+    expect(ctx.resumeCalls).toBe(1);
+    expect(effectGain.events).toHaveLength(0);
+    expect(ctx.oscillators.length).toBeGreaterThan(1);
+
+    ctx.resolveResume?.();
+    await Promise.resolve();
   });
 });
