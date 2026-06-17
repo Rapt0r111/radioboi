@@ -127,12 +127,12 @@ function formatCoord(coord: Coordinate | null): string {
   return `${letter}${columnLabel}`;
 }
 
-function formatMorseForCoord(coord: Coordinate | null): string {
-  if (coord === null) return "—";
+function formatMorseForCoord(coord: Coordinate | null): { letter: string; digit: string } | null {
+  if (coord === null) return null;
   const { digit, letter } = coordinateToMorseNotation(coord);
   const letterToken = MORSE_ALPHABET[letter] ?? "?";
   const digitToken = MORSE_ALPHABET[digit] ?? "?";
-  return `${letter} ${letterToken}  ${digit} ${digitToken}`;
+  return { letter: letterToken, digit: digitToken };
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -187,6 +187,7 @@ export function GameClientWrapper({ roomId }: Props) {
   const [missileInFlightUI, setMissileInFlightUI] = useState(false);
   const radarRef = useRef<RadarRef>(null);
   const autoResolveMissileIdRef = useRef<string | null>(null);
+  const wasOnCooldownRef = useRef(false);
 
   useGameLoop(transport, radarRef, morseEngine);
 
@@ -286,12 +287,17 @@ export function GameClientWrapper({ roomId }: Props) {
     }
   }, [incomingMissileId, isAsync, isMyTurn, phase]);
 
-  // After cooldown expires, clear selected target so player can pick again
+  // Async reload has a short distinct ready signal after cooldown expires.
   useEffect(() => {
-    if (isAsync && !isOnCooldown && phase === "battle") {
-      // Don't clear — let the player keep their selection through a cooldown
+    if (!isAsync || phase !== "battle") {
+      wasOnCooldownRef.current = false;
+      return;
     }
-  }, [isAsync, isOnCooldown, phase]);
+    if (wasOnCooldownRef.current && !isOnCooldown) {
+      morseEngine?.playBattleEffect("reloadReady");
+    }
+    wasOnCooldownRef.current = isOnCooldown;
+  }, [isAsync, isOnCooldown, morseEngine, phase]);
 
   // ── Morse sequence complete callback ─────────────────────────────────────────
 
@@ -323,6 +329,7 @@ export function GameClientWrapper({ roomId }: Props) {
 
     if (selectedTarget === null) { setStatusLine("Сначала отметьте цель на вражеской сетке."); return; }
     if (coord !== selectedTarget) {
+      morseEngine?.playBattleEffect("wrong");
       setStatusLine(`Передача не совпала. Ожидали ${formatCoord(selectedTarget)}.`);
       return;
     }
@@ -429,8 +436,9 @@ export function GameClientWrapper({ roomId }: Props) {
       ? "border-radar-green/50 text-radar-green"
       : "border-ocean-800 text-miss-white/40";
 
+  const targetMorse = formatMorseForCoord(selectedTarget);
+  const targetMorseLabel = targetMorse ? `${targetMorse.letter}  ${targetMorse.digit}` : "—";
   const targetLabel = formatCoord(selectedTarget);
-  const targetMorseLabel = formatMorseForCoord(selectedTarget);
 
   const actionTitle =
     hasTurnBasedIncomingMissile
@@ -455,7 +463,7 @@ export function GameClientWrapper({ roomId }: Props) {
           ? `Орудие перезаряжается. Осталось ${cooldownSecondsLeft ?? "?"}с. В ASYNC нет перехвата — следите за полем и готовьте следующий выстрел.`
           : selectedTarget === null
             ? "Кликните по клетке противника. Оба игрока атакуют независимо."
-            : `Зажмите ключ и передайте: ${targetMorseLabel}.`
+            : `Зажмите ключ и передайте: ${targetMorse ? `${targetMorse.letter} / ${targetMorse.digit}` : "—"}`
         : isMyTurn
           ? selectedTarget === null
             ? "Кликните по свободной клетке. После выбора появится код Морзе."
@@ -613,6 +621,7 @@ export function GameClientWrapper({ roomId }: Props) {
                     setStatusLine("Ракета в полёте.");
                     return;
                   }
+                  morseEngine?.playBattleEffect("targetLock");
                   setSelectedTarget(coord);
                   setStatusLine(`Цель захвачена: ${formatCoord(coord)}. Передайте по Морзе.`);
                 }}
@@ -667,7 +676,24 @@ export function GameClientWrapper({ roomId }: Props) {
                 </div>
                 <div className="rounded border border-ocean-800/70 bg-ocean-950/50 px-3 py-2">
                   <p className="font-mono text-[9px] uppercase tracking-normal text-miss-white/35">Морзе</p>
-                  <p className="mt-1 break-words font-mono text-lg text-radar-green">{targetMorseLabel}</p>
+                  <div className="mt-1 flex flex-col gap-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono text-[14px] w-3 text-miss-white/40">
+                        {selectedTarget ? coordinateToMorseNotation(selectedTarget).letter : ""}
+                      </span>
+                      <p className="font-mono text-base leading-tight text-radar-green">
+                        {targetMorse?.letter ?? "—"}
+                      </p>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono text-[14px] w-3 text-miss-white/40">
+                        {selectedTarget ? (() => { const d = coordinateToMorseNotation(selectedTarget).digit; return d === "0" ? "10" : d; })() : ""}
+                      </span>
+                      <p className="font-mono text-base leading-tight text-radar-green">
+                        {targetMorse?.digit ?? ""}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

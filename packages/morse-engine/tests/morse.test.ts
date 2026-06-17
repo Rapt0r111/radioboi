@@ -144,13 +144,61 @@ class MockOscillatorNode {
   }
 }
 
+class MockAudioBuffer {
+  readonly channelData: Float32Array[];
+
+  constructor(
+    numberOfChannels: number,
+    length: number,
+    readonly sampleRate: number,
+  ) {
+    this.channelData = Array.from({ length: numberOfChannels }, () => new Float32Array(length));
+  }
+
+  getChannelData(channel: number): Float32Array {
+    const data = this.channelData[channel];
+    if (!data) throw new Error(`missing channel ${channel}`);
+    return data;
+  }
+}
+
+class MockAudioBufferSourceNode {
+  buffer: MockAudioBuffer | null = null;
+  readonly playbackRate = new MockAudioParam();
+  readonly startCalls: Array<{ when: number; offset?: number; duration?: number }> = [];
+  readonly stopCalls: number[] = [];
+  connectCalls = 0;
+  disconnectCalls = 0;
+
+  connect(): void {
+    this.connectCalls++;
+  }
+
+  disconnect(): void {
+    this.disconnectCalls++;
+  }
+
+  start(when = 0, offset?: number, duration?: number): void {
+    this.startCalls.push({ when, offset, duration });
+  }
+
+  stop(when = 0): void {
+    this.stopCalls.push(when);
+  }
+}
+
 class MockBiquadFilterNode {
   type: BiquadFilterType = "bandpass";
   readonly frequency = new MockAudioParam();
   readonly Q = new MockAudioParam();
+  disconnectCalls = 0;
 
   connect(): void {
     // no-op
+  }
+
+  disconnect(): void {
+    this.disconnectCalls++;
   }
 }
 
@@ -159,9 +207,12 @@ const mockContexts: MockAudioContext[] = [];
 class MockAudioContext {
   state: AudioContextState = "suspended";
   currentTime = 0;
+  sampleRate = 44_100;
   readonly destination = {};
   readonly gainNodes: MockGainNode[] = [];
   readonly oscillators: MockOscillatorNode[] = [];
+  readonly bufferSources: MockAudioBufferSourceNode[] = [];
+  readonly buffers: MockAudioBuffer[] = [];
   resumeCalls = 0;
   resolveResume: (() => void) | null = null;
 
@@ -172,6 +223,18 @@ class MockAudioContext {
   createOscillator(): MockOscillatorNode {
     const node = new MockOscillatorNode();
     this.oscillators.push(node);
+    return node;
+  }
+
+  createBuffer(numberOfChannels: number, length: number, sampleRate: number): MockAudioBuffer {
+    const buffer = new MockAudioBuffer(numberOfChannels, length, sampleRate);
+    this.buffers.push(buffer);
+    return buffer;
+  }
+
+  createBufferSource(): MockAudioBufferSourceNode {
+    const node = new MockAudioBufferSourceNode();
+    this.bufferSources.push(node);
     return node;
   }
 
@@ -353,20 +416,55 @@ describe("MorseEngine battle sound effects", () => {
       "sunk",
       "intercept",
       "wrong",
+      "targetLock",
+      "reloadReady",
     ];
 
     const persistentOscillators = ctx.oscillators.length;
     for (const effect of effects) {
       const before = ctx.oscillators.length;
+      const beforeSources = ctx.bufferSources.length;
       engine.playBattleEffect(effect);
 
-      expect(ctx.oscillators.length).toBeGreaterThan(before);
+      expect(ctx.oscillators.length + ctx.bufferSources.length).toBeGreaterThan(
+        before + beforeSources,
+      );
       const created = ctx.oscillators.slice(before);
-      expect(created.some((oscillator) => oscillator.startCalls.length > 0)).toBe(true);
+      const createdSources = ctx.bufferSources.slice(beforeSources);
+      expect(
+        created.some((oscillator) => oscillator.startCalls.length > 0) ||
+          createdSources.some((source) => source.startCalls.length > 0),
+      ).toBe(true);
       expect(created.every((oscillator) => oscillator.stopCalls.length > 0)).toBe(true);
+      expect(createdSources.every((source) => source.stopCalls.length > 0)).toBe(true);
     }
 
     expect(ctx.oscillators.length).toBeGreaterThan(persistentOscillators + effects.length);
+  });
+
+  test("realistic battle presets add noise layers for explosions, water, rocket, and intercept", () => {
+    installMockAudioContext();
+
+    const engine = new MorseEngine();
+    const ctx = requireMockContext();
+    ctx.state = "running";
+    const noisyEffects: BattleSoundEffect[] = [
+      "missileLaunch",
+      "hit",
+      "miss",
+      "sunk",
+      "intercept",
+    ];
+
+    for (const effect of noisyEffects) {
+      const beforeSources = ctx.bufferSources.length;
+      engine.playBattleEffect(effect);
+
+      expect(ctx.bufferSources.length).toBeGreaterThan(beforeSources);
+      expect(ctx.bufferSources.at(-1)?.buffer).not.toBeNull();
+    }
+
+    expect(ctx.buffers).toHaveLength(1);
   });
 
   test("battle effects request unlock but do not cancel Morse sequence playback", async () => {

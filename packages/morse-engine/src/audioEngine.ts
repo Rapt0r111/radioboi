@@ -49,9 +49,11 @@ export type BattleSoundEffect =
   | "miss"
   | "sunk"
   | "intercept"
-  | "wrong";
+  | "wrong"
+  | "targetLock"
+  | "reloadReady";
 
-type BattleEffectVoice = {
+type ToneLayer = {
   frequencyHz: number;
   endFrequencyHz?: number;
   gain: number;
@@ -62,42 +64,305 @@ type BattleEffectVoice = {
   type?: OscillatorType;
 };
 
-const BATTLE_EFFECTS: Record<BattleSoundEffect, BattleEffectVoice[]> = {
-  missileLaunch: [
-    { type: "triangle", frequencyHz: 180, endFrequencyHz: 760, gain: 0.18, startOffsetS: 0, durationS: 0.34, releaseS: 0.045 },
-    { type: "sawtooth", frequencyHz: 92, endFrequencyHz: 150, gain: 0.08, startOffsetS: 0, durationS: 0.2, releaseS: 0.05 },
-    { type: "sine", frequencyHz: 940, endFrequencyHz: 1180, gain: 0.12, startOffsetS: 0.2, durationS: 0.075, releaseS: 0.018 },
-  ],
-  incomingMissile: [
-    { type: "sine", frequencyHz: 700, gain: 0.16, startOffsetS: 0, durationS: 0.08, releaseS: 0.018 },
-    { type: "sine", frequencyHz: 930, gain: 0.14, startOffsetS: 0.14, durationS: 0.08, releaseS: 0.018 },
-    { type: "triangle", frequencyHz: 260, endFrequencyHz: 420, gain: 0.08, startOffsetS: 0, durationS: 0.32, releaseS: 0.05 },
-  ],
-  hit: [
-    { type: "triangle", frequencyHz: 230, endFrequencyHz: 88, gain: 0.24, startOffsetS: 0, durationS: 0.18, attackS: 0.002, releaseS: 0.055 },
-    { type: "square", frequencyHz: 620, endFrequencyHz: 280, gain: 0.1, startOffsetS: 0.015, durationS: 0.12, attackS: 0.002, releaseS: 0.03 },
-    { type: "sine", frequencyHz: 1040, gain: 0.07, startOffsetS: 0.055, durationS: 0.055, releaseS: 0.015 },
-  ],
-  miss: [
-    { type: "sine", frequencyHz: 220, endFrequencyHz: 125, gain: 0.12, startOffsetS: 0, durationS: 0.16, releaseS: 0.04 },
-    { type: "triangle", frequencyHz: 135, endFrequencyHz: 76, gain: 0.14, startOffsetS: 0.095, durationS: 0.22, releaseS: 0.055 },
-    { type: "sine", frequencyHz: 92, gain: 0.08, startOffsetS: 0.25, durationS: 0.09, releaseS: 0.03 },
-  ],
-  sunk: [
-    { type: "triangle", frequencyHz: 165, endFrequencyHz: 52, gain: 0.27, startOffsetS: 0, durationS: 0.58, attackS: 0.004, releaseS: 0.11 },
-    { type: "sawtooth", frequencyHz: 82, endFrequencyHz: 48, gain: 0.13, startOffsetS: 0.12, durationS: 0.42, releaseS: 0.1 },
-    { type: "sine", frequencyHz: 620, endFrequencyHz: 240, gain: 0.11, startOffsetS: 0.06, durationS: 0.34, releaseS: 0.08 },
-    { type: "sine", frequencyHz: 120, endFrequencyHz: 72, gain: 0.08, startOffsetS: 0.47, durationS: 0.2, releaseS: 0.06 },
-  ],
-  intercept: [
-    { type: "square", frequencyHz: 980, gain: 0.11, startOffsetS: 0, durationS: 0.055, releaseS: 0.012 },
-    { type: "square", frequencyHz: 1240, gain: 0.1, startOffsetS: 0.075, durationS: 0.055, releaseS: 0.012 },
-    { type: "triangle", frequencyHz: 520, endFrequencyHz: 260, gain: 0.1, startOffsetS: 0.13, durationS: 0.12, releaseS: 0.035 },
-  ],
-  wrong: [
-    { type: "sawtooth", frequencyHz: 185, endFrequencyHz: 150, gain: 0.1, startOffsetS: 0, durationS: 0.095, releaseS: 0.025 },
-    { type: "sawtooth", frequencyHz: 155, endFrequencyHz: 125, gain: 0.1, startOffsetS: 0.12, durationS: 0.12, releaseS: 0.035 },
-  ],
+type NoiseLayer = {
+  gain: number;
+  startOffsetS: number;
+  durationS: number;
+  attackS?: number;
+  releaseS?: number;
+  filterFrequencyHz?: number;
+  endFilterFrequencyHz?: number;
+  filterQ?: number;
+  filterType?: BiquadFilterType;
+  playbackRate?: number;
+};
+
+type BattleEffectPreset = {
+  tones?: ToneLayer[];
+  noises?: NoiseLayer[];
+};
+
+const BATTLE_EFFECTS: Record<BattleSoundEffect, BattleEffectPreset> = {
+  missileLaunch: {
+    tones: [
+      {
+        type: "sawtooth",
+        frequencyHz: 95,
+        endFrequencyHz: 740,
+        gain: 0.2,
+        startOffsetS: 0,
+        durationS: 0.42,
+        releaseS: 0.055,
+      },
+      {
+        type: "triangle",
+        frequencyHz: 42,
+        endFrequencyHz: 86,
+        gain: 0.13,
+        startOffsetS: 0,
+        durationS: 0.34,
+        releaseS: 0.09,
+      },
+      {
+        type: "sine",
+        frequencyHz: 1280,
+        endFrequencyHz: 1540,
+        gain: 0.08,
+        startOffsetS: 0.28,
+        durationS: 0.08,
+        releaseS: 0.014,
+      },
+    ],
+    noises: [
+      {
+        gain: 0.18,
+        startOffsetS: 0,
+        durationS: 0.38,
+        releaseS: 0.08,
+        filterType: "bandpass",
+        filterFrequencyHz: 820,
+        endFilterFrequencyHz: 2100,
+        filterQ: 1.15,
+        playbackRate: 1.25,
+      },
+    ],
+  },
+  incomingMissile: {
+    tones: [
+      { type: "sine", frequencyHz: 720, gain: 0.16, startOffsetS: 0, durationS: 0.075 },
+      { type: "sine", frequencyHz: 980, gain: 0.15, startOffsetS: 0.13, durationS: 0.075 },
+      { type: "sine", frequencyHz: 1220, gain: 0.14, startOffsetS: 0.26, durationS: 0.075 },
+      {
+        type: "triangle",
+        frequencyHz: 360,
+        endFrequencyHz: 780,
+        gain: 0.07,
+        startOffsetS: 0,
+        durationS: 0.38,
+        releaseS: 0.06,
+      },
+    ],
+  },
+  hit: {
+    tones: [
+      {
+        type: "triangle",
+        frequencyHz: 210,
+        endFrequencyHz: 54,
+        gain: 0.28,
+        startOffsetS: 0,
+        durationS: 0.24,
+        attackS: 0.0015,
+        releaseS: 0.08,
+      },
+      {
+        type: "square",
+        frequencyHz: 680,
+        endFrequencyHz: 240,
+        gain: 0.08,
+        startOffsetS: 0.02,
+        durationS: 0.11,
+        attackS: 0.001,
+        releaseS: 0.025,
+      },
+    ],
+    noises: [
+      {
+        gain: 0.26,
+        startOffsetS: 0,
+        durationS: 0.2,
+        attackS: 0.001,
+        releaseS: 0.09,
+        filterType: "lowpass",
+        filterFrequencyHz: 2300,
+        endFilterFrequencyHz: 520,
+        filterQ: 0.8,
+      },
+      {
+        gain: 0.08,
+        startOffsetS: 0.045,
+        durationS: 0.12,
+        releaseS: 0.04,
+        filterType: "highpass",
+        filterFrequencyHz: 2600,
+        filterQ: 0.7,
+        playbackRate: 1.7,
+      },
+    ],
+  },
+  miss: {
+    tones: [
+      {
+        type: "sine",
+        frequencyHz: 210,
+        endFrequencyHz: 118,
+        gain: 0.11,
+        startOffsetS: 0.03,
+        durationS: 0.18,
+        releaseS: 0.055,
+      },
+      {
+        type: "triangle",
+        frequencyHz: 135,
+        endFrequencyHz: 70,
+        gain: 0.13,
+        startOffsetS: 0.17,
+        durationS: 0.24,
+        releaseS: 0.08,
+      },
+      { type: "sine", frequencyHz: 78, gain: 0.08, startOffsetS: 0.38, durationS: 0.1 },
+    ],
+    noises: [
+      {
+        gain: 0.2,
+        startOffsetS: 0,
+        durationS: 0.3,
+        attackS: 0.002,
+        releaseS: 0.12,
+        filterType: "bandpass",
+        filterFrequencyHz: 540,
+        endFilterFrequencyHz: 170,
+        filterQ: 1.7,
+        playbackRate: 0.85,
+      },
+    ],
+  },
+  sunk: {
+    tones: [
+      {
+        type: "triangle",
+        frequencyHz: 120,
+        endFrequencyHz: 36,
+        gain: 0.3,
+        startOffsetS: 0,
+        durationS: 0.72,
+        attackS: 0.003,
+        releaseS: 0.15,
+      },
+      {
+        type: "sine",
+        frequencyHz: 420,
+        endFrequencyHz: 155,
+        gain: 0.12,
+        startOffsetS: 0.12,
+        durationS: 0.54,
+        releaseS: 0.12,
+      },
+      {
+        type: "sawtooth",
+        frequencyHz: 76,
+        endFrequencyHz: 44,
+        gain: 0.1,
+        startOffsetS: 0.28,
+        durationS: 0.64,
+        releaseS: 0.16,
+      },
+      {
+        type: "sine",
+        frequencyHz: 220,
+        endFrequencyHz: 132,
+        gain: 0.07,
+        startOffsetS: 0.72,
+        durationS: 0.24,
+        releaseS: 0.09,
+      },
+    ],
+    noises: [
+      {
+        gain: 0.3,
+        startOffsetS: 0,
+        durationS: 0.34,
+        attackS: 0.001,
+        releaseS: 0.13,
+        filterType: "lowpass",
+        filterFrequencyHz: 1500,
+        endFilterFrequencyHz: 280,
+        filterQ: 0.8,
+        playbackRate: 0.75,
+      },
+      {
+        gain: 0.15,
+        startOffsetS: 0.34,
+        durationS: 0.68,
+        releaseS: 0.2,
+        filterType: "bandpass",
+        filterFrequencyHz: 260,
+        endFilterFrequencyHz: 120,
+        filterQ: 1.4,
+        playbackRate: 0.55,
+      },
+    ],
+  },
+  intercept: {
+    tones: [
+      { type: "square", frequencyHz: 1120, gain: 0.12, startOffsetS: 0, durationS: 0.045 },
+      { type: "square", frequencyHz: 1480, gain: 0.11, startOffsetS: 0.06, durationS: 0.045 },
+      {
+        type: "triangle",
+        frequencyHz: 780,
+        endFrequencyHz: 260,
+        gain: 0.1,
+        startOffsetS: 0.11,
+        durationS: 0.14,
+        releaseS: 0.04,
+      },
+    ],
+    noises: [
+      {
+        gain: 0.12,
+        startOffsetS: 0.04,
+        durationS: 0.12,
+        releaseS: 0.035,
+        filterType: "highpass",
+        filterFrequencyHz: 1800,
+        filterQ: 0.6,
+        playbackRate: 1.9,
+      },
+    ],
+  },
+  wrong: {
+    tones: [
+      {
+        type: "sawtooth",
+        frequencyHz: 185,
+        endFrequencyHz: 150,
+        gain: 0.11,
+        startOffsetS: 0,
+        durationS: 0.1,
+        releaseS: 0.025,
+      },
+      {
+        type: "sawtooth",
+        frequencyHz: 150,
+        endFrequencyHz: 115,
+        gain: 0.11,
+        startOffsetS: 0.12,
+        durationS: 0.13,
+        releaseS: 0.035,
+      },
+    ],
+  },
+  targetLock: {
+    tones: [
+      { type: "sine", frequencyHz: 520, gain: 0.07, startOffsetS: 0, durationS: 0.05 },
+      { type: "sine", frequencyHz: 780, gain: 0.08, startOffsetS: 0.06, durationS: 0.055 },
+      { type: "sine", frequencyHz: 1040, gain: 0.09, startOffsetS: 0.125, durationS: 0.07 },
+    ],
+  },
+  reloadReady: {
+    tones: [
+      {
+        type: "triangle",
+        frequencyHz: 300,
+        endFrequencyHz: 620,
+        gain: 0.08,
+        startOffsetS: 0,
+        durationS: 0.11,
+        releaseS: 0.025,
+      },
+      { type: "sine", frequencyHz: 980, gain: 0.08, startOffsetS: 0.12, durationS: 0.065 },
+    ],
+  },
 };
 
 // -- Class --------------------------------------------------------------------
@@ -112,6 +377,7 @@ export class MorseEngine {
   readonly #masterGain: GainNode;
   readonly #battleEffectGains = new Set<GainNode>();
 
+  #noiseBuffer: AudioBuffer | null = null;
   #isPlaying: boolean = false;
   #playbackId: number = 0;
   #unitMs: number = DEFAULT_UNIT_MS;
@@ -248,11 +514,14 @@ export class MorseEngine {
   }
 
   playBattleEffect(effect: BattleSoundEffect): void {
-    const voices = BATTLE_EFFECTS[effect];
+    const preset = BATTLE_EFFECTS[effect];
     const now = this.#ctx.currentTime;
 
-    for (const voice of voices) {
-      this.#playEffectVoice(voice, now);
+    for (const tone of preset.tones ?? []) {
+      this.#playToneLayer(tone, now);
+    }
+    for (const noise of preset.noises ?? []) {
+      this.#playNoiseLayer(noise, now);
     }
 
     if (this.#ctx.state !== "running") {
@@ -365,7 +634,7 @@ export class MorseEngine {
     gain.setTargetAtTime(0, atS, MANUAL_RELEASE_S);
   }
 
-  #playEffectVoice(voice: BattleEffectVoice, baseS: number): void {
+  #playToneLayer(voice: ToneLayer, baseS: number): void {
     const atS = baseS + voice.startOffsetS;
     const durationS = Math.max(0.02, voice.durationS);
     const endS = atS + durationS;
@@ -408,6 +677,77 @@ export class MorseEngine {
       },
       Math.max(0, (endS + 0.08 - this.#ctx.currentTime) * 1000),
     );
+  }
+
+  #playNoiseLayer(layer: NoiseLayer, baseS: number): void {
+    const atS = baseS + layer.startOffsetS;
+    const durationS = Math.max(0.02, layer.durationS);
+    const endS = atS + durationS;
+    const attackS = layer.attackS ?? 0.003;
+    const releaseS = Math.min(durationS * 0.75, layer.releaseS ?? 0.06);
+    const releaseStartS = Math.max(atS + attackS, endS - releaseS);
+
+    const source = this.#ctx.createBufferSource();
+    const filter = this.#ctx.createBiquadFilter();
+    const gainNode = this.#ctx.createGain();
+    const gain = gainNode.gain;
+
+    source.buffer = this.#getNoiseBuffer();
+    source.playbackRate.setValueAtTime(layer.playbackRate ?? 1, atS);
+
+    filter.type = layer.filterType ?? "bandpass";
+    filter.frequency.setValueAtTime(layer.filterFrequencyHz ?? 900, atS);
+    filter.Q.value = layer.filterQ ?? 1;
+    if (layer.endFilterFrequencyHz !== undefined) {
+      filter.frequency.linearRampToValueAtTime(layer.endFilterFrequencyHz, endS);
+    }
+
+    gain.cancelScheduledValues(atS);
+    gain.setValueAtTime(0, atS);
+    gain.linearRampToValueAtTime(layer.gain, atS + attackS);
+    gain.setValueAtTime(layer.gain, releaseStartS);
+    gain.linearRampToValueAtTime(0, endS);
+
+    source.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(this.#masterGain);
+    this.#battleEffectGains.add(gainNode);
+
+    source.start(atS, 0, durationS);
+    source.stop(endS + 0.02);
+
+    setTimeout(
+      () => {
+        try {
+          source.disconnect();
+          filter.disconnect();
+          gainNode.disconnect();
+        } catch {
+          // Nodes can already be detached or the context can be closed.
+        }
+        this.#battleEffectGains.delete(gainNode);
+      },
+      Math.max(0, (endS + 0.08 - this.#ctx.currentTime) * 1000),
+    );
+  }
+
+  #getNoiseBuffer(): AudioBuffer {
+    if (this.#noiseBuffer) return this.#noiseBuffer;
+
+    const length = Math.max(1, Math.floor(this.#ctx.sampleRate * 1.2));
+    const buffer = this.#ctx.createBuffer(1, length, this.#ctx.sampleRate);
+    const channel = buffer.getChannelData(0);
+    let seed = 0x2f6e2b1;
+
+    for (let index = 0; index < channel.length; index++) {
+      seed = (1664525 * seed + 1013904223) >>> 0;
+      const white = seed / 0xffffffff;
+      const brownish = (white * 2 - 1) * (1 - index / channel.length) * 0.92;
+      channel[index] = brownish;
+    }
+
+    this.#noiseBuffer = buffer;
+    return buffer;
   }
 
   #scheduleSequence(gain: AudioParam, sequence: number[], unitS: number): number {

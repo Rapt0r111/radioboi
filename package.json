@@ -14,11 +14,13 @@
     "dev:local": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1",
     "stop:local": "powershell -ExecutionPolicy Bypass -File scripts/stop-local.ps1",
     "build": "turbo run build",
+    "start:web": "cd apps/web && bun run start",
     "lint": "turbo run lint",
     "type-check": "turbo run type-check",
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
     "test:all": "turbo run test test:e2e",
+    "release:check": "powershell -ExecutionPolicy Bypass -File scripts/release-check.ps1",
     "clean": "turbo run clean"
   },
   "devDependencies": {
