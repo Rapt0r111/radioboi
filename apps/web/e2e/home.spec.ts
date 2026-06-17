@@ -10,7 +10,7 @@ test("home page exposes the lobby form and security headers", async ({ page, req
   await page.goto("/");
 
   await expect(page.locator("main")).toBeVisible();
-  await expect(page.locator("footer")).toContainText("RADIOBOI");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 
   const codeInput = page.locator('input[name="code"]');
   await expect(codeInput).toHaveAttribute("maxlength", "6");

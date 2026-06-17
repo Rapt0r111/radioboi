@@ -37,6 +37,7 @@ export async function installFakeGameServer(page: Page): Promise<void> {
       connect() {
         return this;
       }
+      disconnect() {}
     }
 
     class FakeOscillatorNode extends FakeAudioNode {
@@ -56,12 +57,44 @@ export async function installFakeGameServer(page: Page): Promise<void> {
       gain = new FakeAudioParam();
     }
 
+    class FakeAudioBuffer {
+      private channels: Float32Array[];
+
+      constructor(
+        numberOfChannels: number,
+        readonly length: number,
+        readonly sampleRate: number,
+      ) {
+        this.channels = Array.from({ length: numberOfChannels }, () => new Float32Array(length));
+      }
+
+      getChannelData(channel: number) {
+        const data = this.channels[channel];
+        if (!data) throw new Error(`missing fake audio channel ${channel}`);
+        return data;
+      }
+    }
+
+    class FakeAudioBufferSourceNode extends FakeAudioNode {
+      buffer: FakeAudioBuffer | null = null;
+      playbackRate = new FakeAudioParam();
+      start() {}
+      stop() {}
+    }
+
     class FakeAudioContext {
       currentTime = 0;
       destination = new FakeAudioNode();
+      sampleRate = 44_100;
       state = "running";
       createOscillator() {
         return new FakeOscillatorNode();
+      }
+      createBuffer(numberOfChannels: number, length: number, sampleRate: number) {
+        return new FakeAudioBuffer(numberOfChannels, length, sampleRate);
+      }
+      createBufferSource() {
+        return new FakeAudioBufferSourceNode();
       }
       createBiquadFilter() {
         return new FakeBiquadFilterNode();

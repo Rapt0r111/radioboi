@@ -13,13 +13,24 @@ $pidFile = Join-Path $stateDir "pids.json"
 $workerLog = Join-Path $logDir "worker-dev.log"
 $webLog = Join-Path $logDir "web-dev.log"
 
+function Stop-ProcessTree([int]$ProcessId) {
+  $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue
+  foreach ($child in @($children)) {
+    Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+  }
+
+  if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Stop-ExistingFromPidFile {
   if (!(Test-Path $pidFile)) { return }
   try {
     $state = Get-Content -Raw $pidFile | ConvertFrom-Json
     foreach ($pidValue in @($state.workerLauncherPid, $state.webLauncherPid)) {
       if ($pidValue -and (Get-Process -Id $pidValue -ErrorAction SilentlyContinue)) {
-        Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+        Stop-ProcessTree -ProcessId ([int]$pidValue)
       }
     }
   } catch {
