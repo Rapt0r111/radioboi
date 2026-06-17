@@ -53,11 +53,11 @@ function CrtSlider({ id, label, unit, min, max, value, onChange, displayValue }:
       <div className="flex items-baseline justify-between">
         <label
           htmlFor={id}
-          className="font-mono text-[9px] uppercase tracking-widest text-[var(--color-miss-white)]/50"
+          className="font-mono text-[9px] uppercase tracking-widest text-miss-white/50"
         >
           {label}
         </label>
-        <span className="font-mono text-[10px] tabular-nums text-[var(--color-radar-green)]">
+        <span className="font-mono text-[10px] tabular-nums text-radar-green">
           {displayValue ?? `${value}${unit}`}
         </span>
       </div>
@@ -69,7 +69,7 @@ function CrtSlider({ id, label, unit, min, max, value, onChange, displayValue }:
           max={max}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="h-2 w-full cursor-pointer accent-[var(--color-radar-green)]"
+          className="h-2 w-full cursor-pointer accent-radar-green"
           aria-label={`${label}: ${displayValue ?? value}${unit}`}
         />
       </div>
@@ -133,14 +133,14 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
     <section
       aria-label="Панель управления"
       className="
-        rounded border border-[var(--color-ocean-800)]
-        bg-[var(--color-ocean-900)] p-4
+        rounded border border-ocean-800
+        bg-ocean-900 p-4
         font-mono w-full
       "
     >
-      <header className="mb-4 flex items-center gap-2 border-b border-[var(--color-ocean-800)] pb-2">
-        <span className="text-[var(--color-radar-green)]">▸</span>
-        <h2 className="text-[9px] uppercase tracking-[0.25em] text-[var(--color-miss-white)]/40">
+      <header className="mb-4 flex items-center gap-2 border-b border-ocean-800 pb-2">
+        <span className="text-radar-green">▸</span>
+        <h2 className="text-[9px] uppercase tracking-[0.25em] text-miss-white/40">
           RADIO CONTROLS
         </h2>
       </header>
@@ -178,7 +178,7 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
           displayValue={`${wpm} WPM · ${wpmToUnitMs(wpm)}мс`}
         />
 
-        <div className="mt-1 border-t border-[var(--color-ocean-800)] pt-3">
+        <div className="mt-1 border-t border-ocean-800 pt-3">
           <button
             type="button"
             onClick={handleRepeat}
@@ -189,15 +189,15 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
               text-[10px] uppercase tracking-[0.2em]
               transition-all duration-150
               disabled:cursor-not-allowed
-              disabled:border-[var(--color-ocean-800)]
-              disabled:text-[var(--color-miss-white)]/20
-              enabled:border-[var(--color-morse-amber)]/70
-              enabled:text-[var(--color-morse-amber)]
-              enabled:hover:bg-[var(--color-morse-amber)]/10
-              enabled:hover:border-[var(--color-morse-amber)]
+              disabled:border-ocean-800
+              disabled:text-miss-white/20
+              enabled:border-morse-amber/70
+              enabled:text-morse-amber
+              enabled:hover:bg-morse-amber/10
+              enabled:hover:border-morse-amber
               focus-visible:outline-none
               focus-visible:ring-1
-              focus-visible:ring-[var(--color-morse-amber)]
+              focus-visible:ring-morse-amber
             "
           >
             <span className="flex items-center justify-center gap-2">
@@ -208,8 +208,8 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
                     key={repeatKey}
                     className={
                       i < repeatCount
-                        ? "h-1.5 w-1.5 rounded-full bg-[var(--color-hit-red)]"
-                        : "h-1.5 w-1.5 rounded-full bg-[var(--color-ocean-800)] group-enabled:bg-[var(--color-morse-amber)]/40"
+                        ? "h-1.5 w-1.5 rounded-full bg-hit-red"
+                        : "h-1.5 w-1.5 rounded-full bg-ocean-800 group-enabled:bg-morse-amber/40"
                     }
                   />
                 ))}
@@ -217,7 +217,7 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
             </span>
           </button>
 
-          <p className="mt-1.5 text-center text-[8px] uppercase tracking-widest text-[var(--color-miss-white)]/25">
+          <p className="mt-1.5 text-center text-[8px] uppercase tracking-widest text-miss-white/25">
             {!isDefensePhase
               ? "недоступно вне фазы защиты"
               : repeatCount >= MAX_REPEATS

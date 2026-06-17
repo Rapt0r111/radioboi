@@ -43,11 +43,11 @@ export default async function HomePage({ searchParams }: LobbyProps) {
       />
       <div
         aria-hidden="true"
-        className="home-radar-glow pointer-events-none absolute -left-28 top-20 h-[34rem] w-[34rem] rounded-full border border-radar-green/20 opacity-50"
+        className="home-radar-glow pointer-events-none absolute -left-28 top-20 h-136 w-136 rounded-full border border-radar-green/20 opacity-50"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -left-12 top-36 h-[22rem] w-[22rem] rounded-full border border-radar-green/15 opacity-60"
+        className="pointer-events-none absolute -left-12 top-36 h-88 w-88 rounded-full border border-radar-green/15 opacity-60"
       />
       <div
         aria-hidden="true"
@@ -109,7 +109,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
         <aside className="battle-panel relative overflow-hidden rounded border border-radar-green/30 bg-ocean-950/82 p-4 shadow-[0_0_50px_rgba(0,255,136,0.1)] backdrop-blur sm:p-5">
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-radar-green to-transparent opacity-70"
+            className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-radar-green to-transparent opacity-70"
           />
           <div
             aria-hidden="true"

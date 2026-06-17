@@ -140,3 +140,66 @@ test("async room starts without turn or intercept gating and keeps miss markers"
   await expect(firstEnemyCell).toHaveText("·");
   await expect(firstEnemyCell).toBeDisabled();
 });
+
+test("game over page renders the detailed battle report", async ({ page }) => {
+  await page.goto("/game/STAT99");
+  await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() >= 1);
+
+  const playerId = await page.evaluate(() => sessionStorage.getItem("radioboi:playerId"));
+  expect(playerId).not.toBeNull();
+
+  await emitServerEvent(page, {
+    type: "SYNC_STATE",
+    payload: {
+      phase: "gameOver",
+      ownBoard: {
+        [makeCoordinate(0, 0)]: "ship",
+        [makeCoordinate(1, 0)]: "hit",
+        [makeCoordinate(2, 0)]: "sunk",
+        [makeCoordinate(3, 0)]: "miss",
+      },
+      enemyBoard: {
+        [makeCoordinate(0, 0)]: "sunk",
+        [makeCoordinate(1, 0)]: "sunk",
+        [makeCoordinate(2, 0)]: "hit",
+        [makeCoordinate(3, 0)]: "miss",
+        [makeCoordinate(4, 0)]: "blocked",
+      },
+      activeMissiles: [],
+      isMyTurn: false,
+      winnerId: playerId,
+      shotLog: [
+        { by: "us", coord: "А1", result: "hit", ts: 1_000 },
+        { by: "them", coord: "Б2", result: "miss", ts: 7_000 },
+        { by: "us", coord: "А2", result: "sunk", ts: 16_000 },
+        { by: "them", coord: "В3", result: "hit", ts: 29_000 },
+        { by: "us", coord: "А3", result: "hit", ts: 38_000 },
+        { by: "us", coord: "А4", result: "miss", ts: 50_000 },
+        { by: "them", coord: "Г4", result: "miss", ts: 55_000 },
+        { by: "us", coord: "А5", result: "hit", ts: 60_000 },
+        { by: "us", coord: "А6", result: "hit", ts: 65_000 },
+        { by: "them", coord: "Д5", result: "hit", ts: 70_000 },
+        { by: "us", coord: "А7", result: "miss", ts: 75_000 },
+        { by: "us", coord: "А8", result: "sunk", ts: 80_000 },
+      ],
+      settings: {
+        battleMode: "async",
+        attackCooldownMs: 2000,
+        interceptWindowMs: 25000,
+        maxInterceptAttempts: 3,
+      },
+      attackCooldownExpiresAt: 0,
+    },
+  });
+
+  await expect(page.getByRole("heading", { name: "Победа" })).toBeVisible();
+  await expect(page.locator("body")).toContainText("Огонь по противнику");
+  await expect(page.locator("body")).toContainText("Финальная карта боя");
+  await expect(page.locator("body")).toContainText("Общая статистика");
+  await expect(page.locator("body")).toContainText("Последние сигналы");
+  await expect(page.locator("body")).toContainText("75%");
+  await expect(page.locator("body")).toContainText("67%");
+  await expect(page.getByTestId("shot-timeline-row")).toHaveCount(12);
+
+  await expect(page.getByRole("link", { name: "Новый бой" })).toBeVisible();
+});

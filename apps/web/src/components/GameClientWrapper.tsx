@@ -517,7 +517,7 @@ export function GameClientWrapper({ roomId }: Props) {
       {morseEngine ? <AudioUnlocker engine={morseEngine} /> : null}
       <ConnectionMonitor />
 
-      <main className="crt-scanlines mx-auto flex min-h-dvh w-full max-w-[1600px] flex-col gap-4 px-4 py-4 lg:px-6 lg:py-6">
+      <main className="crt-scanlines mx-auto flex min-h-dvh w-full max-w-400 flex-col gap-4 px-4 py-4 lg:px-6 lg:py-6">
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <header className="battle-panel rounded border p-3 shadow-[0_0_28px_rgba(0,255,136,0.08)]">

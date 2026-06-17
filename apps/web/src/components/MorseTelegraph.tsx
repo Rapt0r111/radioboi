@@ -267,7 +267,7 @@ export function MorseTelegraph({
         <div className="flex items-center gap-2">
           {isWrongFlash && (
             <div
-              className="rounded border border-[var(--color-hit-red)]/60 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-[var(--color-hit-red)]"
+              className="rounded border border-hit-red/60 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-hit-red"
               role="alert"
               aria-live="assertive"
             >
@@ -277,7 +277,7 @@ export function MorseTelegraph({
           <div
             className={`rounded border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] transition-colors duration-150 ${
               isWrongFlash
-                ? "border-[var(--color-hit-red)]/60 text-[var(--color-hit-red)]"
+                ? "border-hit-red/60 text-hit-red"
                 : "border-green-500/30 text-green-400"
             }`}
           >
@@ -296,7 +296,7 @@ export function MorseTelegraph({
             key={slotKey}
             className={`flex h-11 items-center justify-center rounded border font-mono text-lg shadow-[0_0_10px_rgba(34,197,94,0.15)] transition-colors duration-150 ${
               isWrongFlash
-                ? "border-[var(--color-hit-red)]/40 bg-[var(--color-hit-red)]/5 text-[var(--color-hit-red)]/70"
+                ? "border-hit-red/40 bg-hit-red/5 text-hit-red/70"
                 : char
                   ? "border-green-400/60 bg-green-500/10 text-green-300"
                   : "border-green-500/30 bg-green-500/5 text-green-300/40"
@@ -346,7 +346,7 @@ export function MorseTelegraph({
         <span
           className={`absolute inset-0 transition-opacity duration-75 ${
             isWrongFlash
-              ? "bg-[var(--color-hit-red)]/8 opacity-100"
+              ? "bg-hit-red/8 opacity-100"
               : isPressed
                 ? "bg-green-500/10 opacity-100"
                 : "opacity-0"

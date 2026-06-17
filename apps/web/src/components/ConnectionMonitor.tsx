@@ -89,10 +89,10 @@ export function ConnectionMonitor() {
       aria-live="assertive"
       aria-label="Статус соединения"
       className="
-        fixed inset-x-0 top-0 z-[100]
+        fixed inset-x-0 top-0 z-100
         flex items-center justify-between gap-4
-        border-b border-[var(--color-hit-red)]/60
-        bg-[var(--color-ocean-950)]/95 px-4 py-2.5
+        border-b border-hit-red/60
+        bg-ocean-950/95 px-4 py-2.5
         backdrop-blur-sm
         font-mono
       "
@@ -105,19 +105,19 @@ export function ConnectionMonitor() {
       <div className="flex items-center gap-2.5 min-w-0">
         {/* Мигающий красный огонь */}
         <span
-          className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-hit-red)]"
+          className="h-2 w-2 shrink-0 rounded-full bg-hit-red"
           aria-hidden="true"
           style={{ animation: "morse-blink 0.8s step-end infinite" }}
         />
 
-        <span className="truncate text-[10px] uppercase tracking-[0.18em] text-[var(--color-hit-red)]">
+        <span className="truncate text-[10px] uppercase tracking-[0.18em] text-hit-red">
           {status === "reconnecting" ? "ПЕРЕПОДКЛЮЧЕНИЕ..." : "ПОТЕРЯ СИГНАЛА. ПЕРЕПОДКЛЮЧЕНИЕ..."}
         </span>
 
         {/* Анимированные точки ожидания */}
         {status === "reconnecting" && (
           <span
-            className="text-[10px] text-[var(--color-hit-red)]/60 tabular-nums"
+            className="text-[10px] text-hit-red/60 tabular-nums"
             aria-hidden="true"
             style={{ animation: "morse-blink 1.2s step-end infinite" }}
           >
@@ -137,15 +137,15 @@ export function ConnectionMonitor() {
           text-[9px] uppercase tracking-[0.2em]
           transition-all duration-150
           disabled:cursor-not-allowed
-          disabled:border-[var(--color-ocean-800)]
-          disabled:text-[var(--color-miss-white)]/20
-          enabled:border-[var(--color-hit-red)]/50
-          enabled:text-[var(--color-hit-red)]
-          enabled:hover:bg-[var(--color-hit-red)]/10
-          enabled:hover:border-[var(--color-hit-red)]
+          disabled:border-ocean-800
+          disabled:text-miss-white/20
+          enabled:border-hit-red/50
+          enabled:text-hit-red
+          enabled:hover:bg-hit-red/10
+          enabled:hover:border-hit-red
           focus-visible:outline-none
           focus-visible:ring-1
-          focus-visible:ring-[var(--color-hit-red)]
+          focus-visible:ring-hit-red
         "
       >
         {isSyncing ? (
