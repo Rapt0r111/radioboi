@@ -9,7 +9,7 @@
   --color-ocean-900: #041528;
   --color-ocean-800: #062040;
   --color-radar-green: #00ff88;
-  --color-radar-dim: #00552e;
+  --color-radar-dim: #d5dfea;
   --color-morse-amber: #ffaa00;
   --color-hit-red: #ff3b3b;
   --color-miss-white: #e0e8f0;
@@ -131,6 +131,35 @@
 }
 
 @layer components {
+  .home-bg-gradient {
+    background:
+      radial-gradient(circle at 18% 18%, rgba(0, 255, 136, 0.16), transparent 28rem),
+      radial-gradient(circle at 78% 12%, rgba(255, 170, 0, 0.12), transparent 24rem),
+      linear-gradient(180deg, rgba(0, 22, 39, 0.2), rgba(0, 8, 20, 0.96));
+  }
+
+  .home-bg-grid {
+    background-image:
+      linear-gradient(rgba(0, 255, 136, 0.24) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 255, 136, 0.18) 1px, transparent 1px);
+    background-size: 54px 54px;
+    mask-image: linear-gradient(to bottom, transparent, black 14%, black 82%, transparent);
+  }
+
+  .home-radar-glow {
+    box-shadow: 0 0 90px rgba(0, 255, 136, 0.08) inset, 0 0 70px rgba(0, 255, 136, 0.08);
+  }
+
+  .home-bottom-scan {
+    background:
+      repeating-linear-gradient(-8deg, transparent 0 18px, rgba(0, 255, 136, 0.08) 19px 21px),
+      linear-gradient(to top, rgba(0, 95, 126, 0.34), transparent);
+  }
+
+  .home-title-glow {
+    text-shadow: 0 0 18px rgba(0, 255, 136, 0.42), 0 0 42px rgba(0, 255, 136, 0.14);
+  }
+
   .battle-shell {
     background:
       radial-gradient(circle at 20% 8%, rgba(0, 255, 136, 0.12), transparent 34rem),

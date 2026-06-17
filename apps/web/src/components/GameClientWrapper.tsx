@@ -67,11 +67,38 @@ type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   lastInterceptWrong?: boolean;
 };
 
+function createClientId(): string {
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+  return [
+    hex.slice(0, 4).join(""),
+    hex.slice(4, 6).join(""),
+    hex.slice(6, 8).join(""),
+    hex.slice(8, 10).join(""),
+    hex.slice(10, 16).join(""),
+  ].join("-");
+}
+
 function getOrCreateTabId(): string {
   if (window.name.startsWith(TAB_NAME_PREFIX)) {
     return window.name.slice(TAB_NAME_PREFIX.length);
   }
-  const next = crypto.randomUUID();
+  const next = createClientId();
   window.name = `${TAB_NAME_PREFIX}${next}`;
   return next;
 }
@@ -81,7 +108,7 @@ function getOrCreatePlayerId(): string {
   const storedTabId = sessionStorage.getItem(TAB_ID_KEY);
   const stored = sessionStorage.getItem(PLAYER_ID_KEY);
   if (stored !== null && storedTabId === tabId) return stored;
-  const next = crypto.randomUUID();
+  const next = createClientId();
   sessionStorage.setItem(TAB_ID_KEY, tabId);
   sessionStorage.setItem(PLAYER_ID_KEY, next);
   return next;
@@ -336,7 +363,7 @@ export function GameClientWrapper({ roomId }: Props) {
 
     if (missileInFlightRef.current) { setStatusLine("Ракета в полёте. Ожидайте результата."); return; }
 
-    const missileId = crypto.randomUUID();
+    const missileId = createClientId();
     const timestamp = Date.now();
     const morseSequence = toMorseSequence(coord);
     const radarPoint = toRadarPoint(coord);

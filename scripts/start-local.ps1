@@ -88,7 +88,7 @@ $publicHostValue = if ($PublicHost.Trim().Length -gt 0) {
 $wsUrl = "ws://${publicHostValue}:$WorkerPort"
 
 $workerCmd = "cd /d `"$workerDir`" && bun run dev -- --port $WorkerPort --ip $bindHost > `"$workerLog`" 2>&1"
-$webCmd = "cd /d `"$webDir`" && set NEXT_PUBLIC_WS_URL=$wsUrl&& bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
+$webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_URL=$wsUrl`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$publicHostValue`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
 
 $worker = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $workerCmd) -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 4

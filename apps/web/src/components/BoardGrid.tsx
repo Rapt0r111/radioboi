@@ -220,7 +220,7 @@ export const BoardGrid = memo(function BoardGrid({
             <th
               key={col}
               scope="col"
-              className="text-center text-[9px] font-mono text-radar-dim leading-tight"
+              className="text-center text-[13px] font-mono text-radar-dim leading-tight"
             >
               {BOARD_COLUMN_LABELS[colIndex] ?? col}
             </th>
@@ -233,7 +233,7 @@ export const BoardGrid = memo(function BoardGrid({
           <tr key={row}>
             <th
               scope="row"
-              className="w-5 shrink-0 text-center text-[9px] font-mono text-radar-dim"
+              className="w-5 shrink-0 text-center text-[13px] font-mono text-radar-dim"
             >
               {BOARD_ROW_LABELS[rowIndex] ?? rowIndex}
             </th>

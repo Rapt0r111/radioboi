@@ -35,26 +35,15 @@ export default async function HomePage({ searchParams }: LobbyProps) {
     <main className="relative min-h-dvh overflow-hidden bg-ocean-950 px-4 py-5 text-miss-white sm:px-6 lg:px-8">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 opacity-80"
-        style={{
-          background:
-            "radial-gradient(circle at 18% 18%, rgba(0,255,136,0.16), transparent 28rem), radial-gradient(circle at 78% 12%, rgba(255,170,0,0.12), transparent 24rem), linear-gradient(180deg, rgba(0,22,39,0.2), rgba(0,8,20,0.96))",
-        }}
+        className="home-bg-gradient pointer-events-none absolute inset-0 opacity-80"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 opacity-[0.16]"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(0,255,136,0.24) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,0.18) 1px, transparent 1px)",
-          backgroundSize: "54px 54px",
-          maskImage: "linear-gradient(to bottom, transparent, black 14%, black 82%, transparent)",
-        }}
+        className="home-bg-grid pointer-events-none absolute inset-0 opacity-[0.16]"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -left-28 top-20 h-[34rem] w-[34rem] rounded-full border border-radar-green/20 opacity-50"
-        style={{ boxShadow: "0 0 90px rgba(0,255,136,0.08) inset, 0 0 70px rgba(0,255,136,0.08)" }}
+        className="home-radar-glow pointer-events-none absolute -left-28 top-20 h-[34rem] w-[34rem] rounded-full border border-radar-green/20 opacity-50"
       />
       <div
         aria-hidden="true"
@@ -62,11 +51,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute bottom-0 left-0 right-0 h-40 opacity-35"
-        style={{
-          background:
-            "repeating-linear-gradient(-8deg, transparent 0 18px, rgba(0,255,136,0.08) 19px 21px), linear-gradient(to top, rgba(0,95,126,0.34), transparent)",
-        }}
+        className="home-bottom-scan pointer-events-none absolute bottom-0 left-0 right-0 h-40 opacity-35"
       />
 
       <section className="relative mx-auto grid min-h-[calc(100dvh-2.5rem)] w-full max-w-6xl items-center gap-7 lg:grid-cols-[1.12fr_0.88fr]">
@@ -88,8 +73,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
               частота 600 hz · callsign rb-01
             </p>
             <h1
-              className="mt-4 font-mono text-4xl font-black uppercase leading-[0.95] tracking-[0.18em] text-radar-green sm:text-6xl lg:text-7xl"
-              style={{ textShadow: "0 0 18px rgba(0,255,136,0.42), 0 0 42px rgba(0,255,136,0.14)" }}
+              className="home-title-glow mt-4 font-mono text-4xl font-black uppercase leading-[0.95] tracking-[0.18em] text-radar-green sm:text-6xl lg:text-7xl"
             >
               Морской
               <span className="block text-miss-white">радиобой</span>
