@@ -53,16 +53,40 @@ Open:
 http://127.0.0.1:3000
 ```
 
+### LAN startup from another laptop
+
+If another laptop opens the game by IP, start the stack in LAN mode so both the
+web server and Worker/WebSocket server listen on the network:
+
+```powershell
+bun run dev:lan
+```
+
+The script prints the LAN URLs to use, for example:
+
+```text
+http://192.168.206.1:3000
+ws://192.168.206.1:8787
+```
+
+If Windows has multiple network adapters and the script picks the wrong address,
+pass the address explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1 -Lan -PublicHost 192.168.206.1
+```
+
+Allow both ports in Windows Firewall if the page opens but game actions still
+stay disconnected: `3000` for the web app and `8787` for the Worker/WebSocket.
+
 Stop both processes:
 
 ```powershell
 bun run stop:local
 ```
 
-Logs are written to:
-
-- `.omx/logs/worker-dev.log`
-- `.omx/logs/web-dev.log`
+The script prints the exact log paths. Logs are written under `.omx/logs/` as
+`worker-dev-*.log` and `web-dev-*.log`.
 
 If ports are busy, use the script directly:
 
@@ -87,6 +111,13 @@ Terminal 2:
 cd apps/web
 $env:NEXT_PUBLIC_WS_URL = "ws://127.0.0.1:8787"
 bun run dev -- --hostname 127.0.0.1 -p 3000
+```
+
+For manual LAN startup, replace `127.0.0.1` with `0.0.0.0` for bind arguments
+and set `NEXT_PUBLIC_WS_URL` to the reachable host IP:
+
+```powershell
+$env:NEXT_PUBLIC_WS_URL = "ws://192.168.206.1:8787"
 ```
 
 ## Release Verification

@@ -8,6 +8,18 @@ For normal local gameplay, run the full stack from the repository root:
 bun run dev:local
 ```
 
+For gameplay from another laptop on the same network, run:
+
+```powershell
+bun run dev:lan
+```
+
+If the auto-detected address is wrong, start from the repository root with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1 -Lan -PublicHost 192.168.206.1
+```
+
 For web-only development:
 
 ```powershell

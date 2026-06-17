@@ -13,7 +13,20 @@ import { decodeServerEvent, encodeClientEvent, FrameDecodeError } from "./msgpac
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8787";
+function getDefaultWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL;
+  }
+
+  if (typeof window !== "undefined") {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${window.location.hostname}:8787`;
+  }
+
+  return "ws://localhost:8787";
+}
+
+const DEFAULT_WS_URL = getDefaultWsUrl();
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS  = 30_000;
 const RECONNECT_JITTER  = 0.2;
