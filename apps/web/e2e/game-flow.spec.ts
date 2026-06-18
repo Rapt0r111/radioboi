@@ -69,6 +69,39 @@ test("battle phase lets the active player select an enemy target", async ({ page
   await expect(firstEnemyCell).toHaveAttribute("aria-pressed", "true");
 });
 
+test("telegraph prevents repeated Space keydown from scrolling during battle", async ({ page }) => {
+  await page.goto("/game/SPACE1");
+  await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);
+
+  await emitServerEvent(page, {
+    type: "SYNC_STATE",
+    payload: {
+      phase: "battle",
+      ownBoard: {},
+      enemyBoard: {},
+      activeMissiles: [],
+      isMyTurn: true,
+      shotLog: [],
+    },
+  });
+
+  await expect(page.locator('button:has-text("PRESS TO KEY")')).toBeVisible();
+
+  const wasPrevented = await page.evaluate(() => {
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      code: "Space",
+      key: " ",
+      repeat: true,
+    });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+
+  expect(wasPrevented).toBe(true);
+});
+
 test("async room starts without turn or intercept gating and keeps miss markers", async ({ page }) => {
   const roomId = "ASYNC1";
   const target = makeCoordinate(0, 0);

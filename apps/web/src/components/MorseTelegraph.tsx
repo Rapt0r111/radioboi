@@ -218,8 +218,9 @@ export function MorseTelegraph({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
-      if (event.code !== "Space" || event.repeat || isEditableTarget(event.target)) return;
+      if (event.code !== "Space" || isEditableTarget(event.target)) return;
       event.preventDefault();
+      if (event.repeat) return;
       startSignal();
     }
 
