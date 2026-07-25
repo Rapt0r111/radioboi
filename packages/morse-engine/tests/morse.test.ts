@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { encodeToMorse, FuzzyDecoder, MORSE_ALPHABET, MorseEngine } from "../src";
+import { encodeToMorse, FuzzyDecoder, MORSE_ALPHABET, MORSE_REVERSE, MorseEngine } from "../src";
 import type { BattleSoundEffect } from "../src";
 
 describe("Morse alphabet and timing encoder", () => {
@@ -12,6 +12,19 @@ describe("Morse alphabet and timing encoder", () => {
   test("skips unknown characters instead of emitting invalid timings", () => {
     expect(encodeToMorse("@")).toEqual([]);
     expect(encodeToMorse("A@")).toEqual([1, -1, 3, -3]);
+  });
+
+  test("keeps alphabet and reverse lookup in sync for supported symbols", () => {
+    for (const [char, morse] of Object.entries(MORSE_ALPHABET)) {
+      const decoded = MORSE_REVERSE[morse];
+      expect(decoded).toBeDefined();
+      expect(MORSE_ALPHABET[decoded ?? char]).toBe(morse);
+    }
+  });
+
+  test("preserves character and word spacing boundaries", () => {
+    expect(encodeToMorse("EE")).toEqual([1, -3, 1, -3]);
+    expect(encodeToMorse("E E")).toEqual([1, -7, 1, -3]);
   });
 });
 
@@ -63,6 +76,34 @@ describe("FuzzyDecoder", () => {
     decoder.pointerUp(680);
 
     expect(decoder.flush()).toBe("В");
+  });
+  test("reset clears buffered symbols before flush", () => {
+    const chars: string[] = [];
+    const decoder = new FuzzyDecoder({
+      dotDuration: 100,
+      onChar: (char) => chars.push(char),
+    });
+
+    decoder.pointerDown(0);
+    decoder.pointerUp(80);
+    decoder.reset();
+
+    expect(decoder.currentMorse).toBe("");
+    expect(decoder.flush()).toBeNull();
+    expect(chars).toEqual([]);
+  });
+
+  test("uses the dash threshold at 1.5 dot durations", () => {
+    const decoder = new FuzzyDecoder({ dotDuration: 100 });
+
+    decoder.pointerDown(0);
+    decoder.pointerUp(149);
+    expect(decoder.currentMorse).toBe(".");
+
+    decoder.reset();
+    decoder.pointerDown(0);
+    decoder.pointerUp(150);
+    expect(decoder.currentMorse).toBe("-");
   });
 });
 

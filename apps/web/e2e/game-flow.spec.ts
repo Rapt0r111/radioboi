@@ -229,7 +229,7 @@ test("game over page renders the detailed battle report", async ({ page }) => {
   await expect(page.locator("body")).toContainText("Огонь по противнику");
   await expect(page.locator("body")).toContainText("Финальная карта боя");
   await expect(page.locator("body")).toContainText("Общая статистика");
-  await expect(page.locator("body")).toContainText("Последние сигналы");
+  await expect(page.locator("body")).toContainText("История сигналов");
   await expect(page.locator("body")).toContainText("75%");
   await expect(page.locator("body")).toContainText("67%");
   await expect(page.getByTestId("shot-timeline-row")).toHaveCount(12);

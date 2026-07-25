@@ -1,13 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { BOARD_COLUMN_LABELS, BOARD_ROW_LABELS, makeCoordinate } from "@radioboi/game-core";
 import {
+  addAttackerTurnAlarm,
   addInterceptAlarm,
   addPlayer,
   applyShipsPlaced,
+  clampRoomSettings,
   createRoomState,
   formatCoordForShotLog,
+  getCooldownRemaining,
   getEnemyBoard,
   getOpponentId,
+  nextAlarmAt,
+  popExpiredAlarms,
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
@@ -15,7 +20,14 @@ import {
   resolveHit,
   validateShipGeometry,
 } from "../src/game-logic";
-import { coordIndicesToMorse, splitMorseSequence, validateMorseForCoord } from "../src/morse";
+import {
+  charToMorse,
+  coordIndicesToMorse,
+  morseToChar,
+  morseToCoordIndices,
+  splitMorseSequence,
+  validateMorseForCoord,
+} from "../src/morse";
 import { closeWebSocketSafely } from "../src/websocket";
 
 function validFleet() {
@@ -44,6 +56,24 @@ function roomReadyForBattle() {
 }
 
 describe("room lifecycle", () => {
+  test("clamps room settings from untrusted input", () => {
+    expect(
+      clampRoomSettings({
+        battleMode: "async",
+        attackCooldownMs: 1,
+        interceptWindowMs: 999_999,
+        maxInterceptAttempts: 99,
+      }),
+    ).toEqual({
+      battleMode: "async",
+      attackCooldownMs: 2_000,
+      interceptWindowMs: 60_000,
+      maxInterceptAttempts: 5,
+    });
+
+    expect(clampRoomSettings(null).battleMode).toBe("turn-based");
+  });
+
   test("moves from lobby to placement when the second player joins", () => {
     const state = createRoomState("ROOM42");
 
@@ -163,6 +193,7 @@ describe("attack resolution", () => {
     if (launched.ok) {
       expect(launched.cooldownExpiresAt).toBeGreaterThan(Date.now());
     }
+    expect(getCooldownRemaining(state, "p1")).toBeGreaterThan(0);
     expect(prepareAttack(state, "p1", makeCoordinate(8, 8), "m-blocked")).toEqual({
       ok: false,
       reason: "ATTACK_ON_COOLDOWN",
@@ -197,6 +228,21 @@ describe("attack resolution", () => {
     expect(state.pendingAttacks).toEqual({});
   });
 
+  test("enforces turn ownership and one pending attack in turn-based mode", () => {
+    const state = roomReadyForBattle();
+    const firstTarget = makeCoordinate(9, 9);
+
+    expect(prepareAttack(state, "p2", firstTarget, "m-wrong-turn")).toEqual({
+      ok: false,
+      reason: "NOT_YOUR_TURN",
+    });
+    expect(prepareAttack(state, "p1", firstTarget, "m-first")).toEqual({ ok: true });
+    expect(prepareAttack(state, "p1", makeCoordinate(8, 8), "m-second")).toEqual({
+      ok: false,
+      reason: "ATTACK_ALREADY_PENDING",
+    });
+  });
+
   test("keeps intercept attempts server-owned and blocks self-intercepts", () => {
     const state = roomReadyForBattle();
     const target = makeCoordinate(9, 9);
@@ -229,6 +275,19 @@ describe("attack resolution", () => {
     expect(state.currentTurnId).toBe("p1");
     expect(state.boards.p2?.[target]).toBe("sunk");
     expect(state.shotLog.at(-1)?.target).toBe(target);
+  });
+
+  test("sets game over winner when the final ship is sunk", () => {
+    const state = roomReadyForBattle();
+    const target = makeCoordinate(0, 0);
+    state.boards.p2 = { [target]: "ship" };
+    state.ships.p2 = [{ coords: [target], isSunk: false }];
+
+    const result = resolveHit(state, "p1", target, "m-final");
+
+    expect(result).toEqual({ result: "sunk", isGameOver: true, winnerId: "p1" });
+    expect(state.phase).toBe("gameOver");
+    expect(state.winnerId).toBe("p1");
   });
 
   test("marks and blocks all legal exclusion cells around a sunk ship", () => {
@@ -277,6 +336,24 @@ describe("alarm scheduling", () => {
     });
     expect(fireAt).toBeGreaterThan(Date.now());
   });
+
+  test("sorts alarms, replaces attacker-turn timeout, and pops expired entries", () => {
+    const state = roomReadyForBattle();
+    const now = Date.now();
+
+    addInterceptAlarm(state, "m-late", "p1", 30_000);
+    addAttackerTurnAlarm(state, 20_000);
+    addAttackerTurnAlarm(state, 10_000);
+    state.pendingAlarms.push({ type: "intercept_timeout", missileId: "old", attackerId: "p1", fireAt: now - 1 });
+    state.pendingAlarms.sort((a, b) => a.fireAt - b.fireAt);
+
+    expect(state.pendingAlarms.filter((alarm) => alarm.type === "attacker_turn_timeout")).toHaveLength(1);
+    expect(nextAlarmAt(state)).toBeLessThanOrEqual(now);
+    expect(popExpiredAlarms(state)).toEqual([
+      { type: "intercept_timeout", missileId: "old", attackerId: "p1", fireAt: now - 1 },
+    ]);
+    expect(nextAlarmAt(state)).toBeGreaterThan(now);
+  });
 });
 
 describe("worker Morse validation", () => {
@@ -287,6 +364,15 @@ describe("worker Morse validation", () => {
     expect(splitMorseSequence(sequence)).toEqual([".-", ".----"]);
     expect(validateMorseForCoord(sequence, 0, 0)).toBe(true);
     expect(validateMorseForCoord(sequence, 1, 0)).toBe(false);
+  });
+
+  test("rejects invalid Morse tokens and out-of-range coordinate indices", () => {
+    expect(charToMorse("А")).toBe(".-");
+    expect(charToMorse("@")).toBeNull();
+    expect(morseToChar("......")).toBeNull();
+    expect(morseToCoordIndices("......", ".----")).toBeNull();
+    expect(splitMorseSequence([".", "."])).toBeNull();
+    expect(() => coordIndicesToMorse(10, 0)).toThrow(RangeError);
   });
 });
 
