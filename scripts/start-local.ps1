@@ -47,27 +47,82 @@ function Test-PortFree([int]$Port) {
   return $null -eq $listeners
 }
 
+function Wait-ForPort([int]$Port, [int]$TimeoutSeconds = 30) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  do {
+    if (!(Test-PortFree $Port)) { return $true }
+    Start-Sleep -Milliseconds 250
+  } while ((Get-Date) -lt $deadline)
+
+  return $false
+}
+
 function Get-LogTail([string]$Path) {
   if (!(Test-Path $Path)) { return "<log file was not created>" }
   return (Get-Content $Path -Tail 40) -join [Environment]::NewLine
 }
 
 function Get-LocalLanAddress {
-  $candidate = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  $addresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object {
       $_.IPAddress -notlike "127.*" -and
       $_.IPAddress -notlike "169.254.*" -and
       $_.IPAddress -ne "0.0.0.0" -and
+      $_.AddressState -eq "Preferred" -and
       $_.PrefixOrigin -ne "WellKnown"
-    } |
-    Sort-Object -Property SkipAsSource, InterfaceIndex |
-    Select-Object -First 1
+    })
+
+  if ($addresses.Count -eq 0) {
+    throw "Could not auto-detect a preferred LAN IPv4 address. Pass -PublicHost, for example -PublicHost 192.168.206.1."
+  }
+
+  # Prefer the interface carrying the active default route. This avoids using
+  # disconnected, tentative, VPN, or virtual-adapter addresses when several
+  # 192.168.*.* interfaces exist on the machine.
+  $defaultRoutes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
+    Where-Object { $_.NextHop -ne "0.0.0.0" } |
+    Sort-Object -Property RouteMetric, InterfaceMetric)
+
+  foreach ($route in $defaultRoutes) {
+    $candidate = $addresses |
+      Where-Object { $_.InterfaceIndex -eq $route.InterfaceIndex } |
+      Select-Object -First 1
+    if ($null -ne $candidate) { return $candidate.IPAddress }
+  }
+
+  # Hotspot and isolated LAN adapters may have no default route. Prefer an
+  # explicitly connected interface before falling back to interface order.
+  $connectedInterfaces = @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.ConnectionState -eq "Connected" } |
+    Sort-Object -Property InterfaceMetric, InterfaceIndex)
+
+  foreach ($interface in $connectedInterfaces) {
+    $candidate = $addresses |
+      Where-Object { $_.InterfaceIndex -eq $interface.InterfaceIndex } |
+      Select-Object -First 1
+    if ($null -ne $candidate) { return $candidate.IPAddress }
+  }
+
+  $candidate = $addresses | Sort-Object -Property SkipAsSource, InterfaceIndex | Select-Object -First 1
 
   if ($null -eq $candidate) {
     throw "Could not auto-detect a LAN IPv4 address. Pass -PublicHost, for example -PublicHost 192.168.206.1."
   }
 
   return $candidate.IPAddress
+}
+
+function Warn-IfLanFirewallRulesMissing([int[]]$Ports) {
+  $missingPorts = @()
+  foreach ($port in $Ports) {
+    $rule = Get-NetFirewallRule -DisplayName "Radioboi LAN TCP $port" -ErrorAction SilentlyContinue |
+      Where-Object { $_.Enabled -eq "True" -and $_.Action -eq "Allow" }
+    if ($null -eq $rule) { $missingPorts += $port }
+  }
+
+  if ($missingPorts.Count -gt 0) {
+    Write-Warning "Windows Firewall may block LAN clients on TCP $($missingPorts -join ', '). Run 'powershell -ExecutionPolicy Bypass -File scripts/allow-lan-firewall.ps1 -WebPort $WebPort -WorkerPort $WorkerPort' from an elevated PowerShell window."
+  }
 }
 
 Stop-ExistingFromPidFile
@@ -87,21 +142,36 @@ $publicHostValue = if ($PublicHost.Trim().Length -gt 0) {
 }
 $wsUrl = "ws://${publicHostValue}:$WorkerPort"
 
+if ($Lan) {
+  Warn-IfLanFirewallRulesMissing @($WebPort, $WorkerPort)
+}
+
 $workerCmd = "cd /d `"$workerDir`" && bun run dev -- --port $WorkerPort --ip $bindHost > `"$workerLog`" 2>&1"
 $webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_URL=$wsUrl`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$publicHostValue`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
 
-$worker = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $workerCmd) -PassThru -WindowStyle Hidden
-Start-Sleep -Seconds 4
+$worker = $null
+$web = $null
 
-if (!(Get-Process -Id $worker.Id -ErrorAction SilentlyContinue)) {
-  throw "Worker dev server exited before the web app started.$([Environment]::NewLine)$(Get-LogTail $workerLog)"
+try {
+  $worker = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $workerCmd) -PassThru -WindowStyle Hidden
+
+  if (!(Wait-ForPort $WorkerPort)) {
+    throw "Worker dev server did not start listening on port $WorkerPort within 30 seconds.$([Environment]::NewLine)$(Get-LogTail $workerLog)"
+  }
+
+  $web = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $webCmd) -PassThru -WindowStyle Hidden
+
+  if (!(Wait-ForPort $WebPort)) {
+    throw "Web dev server did not start listening on port $WebPort within 30 seconds.$([Environment]::NewLine)$(Get-LogTail $webLog)"
+  }
+} catch {
+  foreach ($process in @($web, $worker)) {
+    if ($null -ne $process -and (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+      Stop-ProcessTree -ProcessId ([int]$process.Id)
+    }
+  }
+  throw
 }
-
-if (Test-PortFree $WorkerPort) {
-  throw "Worker dev server did not start listening on port $WorkerPort.$([Environment]::NewLine)$(Get-LogTail $workerLog)"
-}
-
-$web = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $webCmd) -PassThru -WindowStyle Hidden
 
 $state = [ordered]@{
   workerLauncherPid = $worker.Id

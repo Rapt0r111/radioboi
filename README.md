@@ -78,6 +78,19 @@ powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1 -Lan -PublicHos
 
 Allow both ports in Windows Firewall if the page opens but game actions still
 stay disconnected: `3000` for the web app and `8787` for the Worker/WebSocket.
+The firewall is normally inbound-blocked on Windows. Open an elevated PowerShell
+and run:
+
+```powershell
+bun run lan:firewall
+```
+
+This allows TCP `3000` and `8787` only from the local subnet on the Private
+network profile. To remove the rules later:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/allow-lan-firewall.ps1 -Remove
+```
 
 Stop both processes:
 

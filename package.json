@@ -13,6 +13,7 @@
     "dev:client": "cd apps/web && bun run dev -- --hostname 127.0.0.1 -p 3000",
     "dev:local": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1",
     "dev:lan": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1 -Lan",
+    "lan:firewall": "powershell -ExecutionPolicy Bypass -File scripts/allow-lan-firewall.ps1",
     "stop:local": "powershell -ExecutionPolicy Bypass -File scripts/stop-local.ps1",
     "build": "turbo run build",
     "start:web": "cd apps/web && bun run start",

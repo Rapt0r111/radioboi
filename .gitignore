@@ -17,3 +17,7 @@ desktop.ini
 *.tsbuildinfo
 dev-server.*.log
 .omx/
+
+graphify-out/
+
+.codex/
