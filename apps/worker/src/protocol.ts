@@ -63,6 +63,17 @@ export function makeGameStarted(firstTurnPlayerId: string): Uint8Array {
   return encodeEvent({ type: "GAME_STARTED", payload: { firstTurnPlayerId } });
 }
 
+export function makeMissileFired(
+  missileId: string,
+  attackerId: string,
+  timestamp: number,
+): Uint8Array {
+  return encodeEvent({
+    type: "MISSILE_FIRED",
+    payload: { missileId, attackerId, timestamp },
+  });
+}
+
 export function makeIncomingMissile(
   missileId: string,
   morseSequence: string[],

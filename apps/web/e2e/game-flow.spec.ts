@@ -69,6 +69,49 @@ test("battle phase lets the active player select an enemy target", async ({ page
   await expect(firstEnemyCell).toHaveAttribute("aria-pressed", "true");
 });
 
+test("expert mode requires manual coordinates and hides input hints", async ({ page }) => {
+  const roomId = "EXPERT1";
+  await page.addInitScript((id) => {
+    sessionStorage.setItem(
+      `radioboi:settings:${id}`,
+      JSON.stringify({
+        battleMode: "turn-based",
+        difficulty: "expert",
+        attackCooldownMs: 2000,
+        interceptWindowMs: 25000,
+        maxInterceptAttempts: 3,
+      }),
+    );
+  }, roomId);
+
+  await page.goto(`/game/${roomId}`);
+  await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);
+
+  await emitServerEvent(page, {
+    type: "SYNC_STATE",
+    payload: {
+      phase: "battle",
+      ownBoard: {},
+      enemyBoard: {},
+      activeMissiles: [],
+      isMyTurn: true,
+      shotLog: [],
+      settings: {
+        battleMode: "turn-based",
+        difficulty: "expert",
+        attackCooldownMs: 2000,
+        interceptWindowMs: 25000,
+        maxInterceptAttempts: 3,
+      },
+    },
+  });
+
+  const firstEnemyCell = page.locator("table").first().locator("button").first();
+  await expect(firstEnemyCell).toBeDisabled();
+  await expect(page.locator("body")).not.toContainText("мс/ед");
+  await expect(page.locator("body")).not.toContainText("Выберите цель на поле противника");
+});
+
 test("telegraph prevents repeated Space keydown from scrolling during battle", async ({ page }) => {
   await page.goto("/game/SPACE1");
   await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);
@@ -110,6 +153,7 @@ test("async room starts without turn or intercept gating and keeps miss markers"
       `radioboi:settings:${id}`,
       JSON.stringify({
         battleMode: "async",
+        difficulty: "normal",
         attackCooldownMs: 2000,
         interceptWindowMs: 25000,
         maxInterceptAttempts: 3,
@@ -143,6 +187,7 @@ test("async room starts without turn or intercept gating and keeps miss markers"
       shotLog: [],
       settings: {
         battleMode: "async",
+        difficulty: "normal",
         attackCooldownMs: 2000,
         interceptWindowMs: 25000,
         maxInterceptAttempts: 3,
@@ -217,6 +262,7 @@ test("game over page renders the detailed battle report", async ({ page }) => {
       ],
       settings: {
         battleMode: "async",
+        difficulty: "normal",
         attackCooldownMs: 2000,
         interceptWindowMs: 25000,
         maxInterceptAttempts: 3,

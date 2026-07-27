@@ -20,7 +20,7 @@ const PITCH_DEFAULT = 600;
 
 const WPM_MIN = 10;
 const WPM_MAX = 30;
-const WPM_DEFAULT = 20;
+const WPM_DEFAULT = 14;
 
 const MAX_REPEATS = 3;
 const REPEAT_INDICATOR_KEYS = ["repeat-1", "repeat-2", "repeat-3"] as const;

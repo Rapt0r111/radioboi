@@ -130,6 +130,23 @@
   50%       { opacity: 1; }
 }
 
+/* Supplied SFX are approximately two seconds long. The cell VFX use the same
+   one-shot envelope so an explosion or splash does not loop forever after its
+   recording has finished. */
+@keyframes battle-impact-sound {
+  0%   { opacity: 0; transform: scale(0.72); }
+  10%  { opacity: 1; transform: scale(1.08); }
+  24%  { opacity: 0.92; transform: scale(0.98); }
+  100% { opacity: 0; transform: scale(1.16); }
+}
+
+@keyframes battle-splash-sound {
+  0%   { opacity: 0; transform: scale(0.78); }
+  14%  { opacity: 1; transform: scale(1.03); }
+  42%  { opacity: 0.82; transform: scale(0.98); }
+  100% { opacity: 0; transform: scale(1.12); }
+}
+
 @layer components {
   .home-bg-gradient {
     background:
@@ -412,6 +429,20 @@
 
   .battle-sunk-cross::before { transform: rotate(45deg); }
   .battle-sunk-cross::after  { transform: rotate(-45deg); }
+
+  /* One lifecycle per resolved shot: hit/sunk use boom.m4a, miss uses
+     splash.m4a. The inner particles keep their short motion, while this
+     envelope controls the full recording-length presentation. */
+  .battle-cell-vfx--hit,
+  .battle-cell-vfx--sunk {
+    transform-origin: 50% 50%;
+    animation: battle-impact-sound 2.02s ease-out 1 both;
+  }
+
+  .battle-cell-vfx--miss {
+    transform-origin: 50% 50%;
+    animation: battle-splash-sound 2.02s ease-out 1 both;
+  }
 }
 
 /* ── Reduced motion — remove all animations safely ───────────────────────── */
@@ -422,6 +453,9 @@
   .battle-cell--selected,
   .battle-cell--hit,
   .battle-cell--sunk,
+  .battle-cell-vfx--hit,
+  .battle-cell-vfx--sunk,
+  .battle-cell-vfx--miss,
   .battle-flame,
   .battle-smoke,
   .battle-ember,

@@ -64,6 +64,7 @@ type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   incomingMissileId?: string | null;
   incomingMissileMaxAttempts?: number;
   incomingMissileSequence?: number[] | null;
+  incomingMissileTarget?: Coordinate | null;
   lastInterceptWrong?: boolean;
 };
 
@@ -118,9 +119,16 @@ function readStoredRoomSettings(roomId: string): RoomSettings | undefined {
   try {
     const raw = sessionStorage.getItem(`${ROOM_SETTINGS_KEY_PREFIX}${roomId}`);
     if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<RoomSettings>;
+    const parsed = JSON.parse(raw) as Partial<RoomSettings> & { beginnerMode?: boolean };
+    const difficulty =
+      parsed.difficulty === "beginner" || parsed.difficulty === "normal" || parsed.difficulty === "expert"
+        ? parsed.difficulty
+        : parsed.beginnerMode === true
+          ? "beginner"
+          : "normal";
     return {
       battleMode: parsed.battleMode === "async" ? "async" : "turn-based",
+      difficulty,
       attackCooldownMs: typeof parsed.attackCooldownMs === "number" ? parsed.attackCooldownMs : 2_000,
       interceptWindowMs: typeof parsed.interceptWindowMs === "number" ? parsed.interceptWindowMs : 25_000,
       maxInterceptAttempts: typeof parsed.maxInterceptAttempts === "number" ? parsed.maxInterceptAttempts : 3,
@@ -175,6 +183,7 @@ export function GameClientWrapper({ roomId }: Props) {
   const cooldownExpiresAt = useGameStore(selectCooldownExpiresAt);
 
   const isAsync = settings.battleMode === "async";
+  const isExpert = settings.difficulty === "expert";
 
   const incomingMissileAttempts = useGameStore(
     (s) => (s as RuntimeCarrier).incomingMissileAttempts ?? 0,
@@ -191,6 +200,9 @@ export function GameClientWrapper({ roomId }: Props) {
   const incomingMissileSequence = useGameStore(
     (s) => (s as RuntimeCarrier).incomingMissileSequence ?? null,
   );
+  const incomingMissileTarget = useGameStore(
+    (s) => (s as RuntimeCarrier).incomingMissileTarget ?? null,
+  );
   const lastInterceptWrong = useGameStore(
     (s) => (s as RuntimeCarrier).lastInterceptWrong ?? false,
   );
@@ -198,7 +210,9 @@ export function GameClientWrapper({ roomId }: Props) {
   const [morseEngine, setMorseEngine] = useState<MorseEngine | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<Coordinate | null>(null);
   const [statusLine, setStatusLine] = useState(
-    isAsync
+    isExpert
+      ? "Введите координату самостоятельно."
+      : isAsync
       ? "Выберите цель и передайте по Морзе. В асинхронном режиме оба игрока атакуют одновременно."
       : "Выберите цель на вражеской сетке и передайте её по Морзе.",
   );
@@ -354,11 +368,13 @@ export function GameClientWrapper({ roomId }: Props) {
       return;
     }
 
-    if (selectedTarget === null) { setStatusLine("Сначала отметьте цель на вражеской сетке."); return; }
-    if (coord !== selectedTarget) {
-      morseEngine?.playBattleEffect("wrong");
-      setStatusLine(`Передача не совпала. Ожидали ${formatCoord(selectedTarget)}.`);
-      return;
+    if (!isExpert) {
+      if (selectedTarget === null) { setStatusLine("Сначала отметьте цель на вражеской сетке."); return; }
+      if (coord !== selectedTarget) {
+        morseEngine?.playBattleEffect("wrong");
+        setStatusLine(`Передача не совпала. Ожидали ${formatCoord(selectedTarget)}.`);
+        return;
+      }
     }
 
     if (missileInFlightRef.current) { setStatusLine("Ракета в полёте. Ожидайте результата."); return; }
@@ -445,6 +461,7 @@ export function GameClientWrapper({ roomId }: Props) {
     phase === "battle" &&
     !hasTurnBasedIncomingMissile &&
     (isAsync ? !isOnCooldown : isMyTurn) &&
+    !isExpert &&
     !missileInFlightUI;
 
   const turnLabel = isAsync
@@ -470,6 +487,14 @@ export function GameClientWrapper({ roomId }: Props) {
   const actionTitle =
     hasTurnBasedIncomingMissile
       ? "Перехват входящей ракеты"
+      : isExpert
+        ? isAsync
+          ? isOnCooldown
+            ? "Перезарядка орудия"
+            : "Введите координату для атаки"
+          : isMyTurn
+            ? "Введите координату для атаки"
+            : "Ожидайте ход противника"
       : isAsync
         ? isOnCooldown
           ? "Перезарядка орудия"
@@ -485,6 +510,14 @@ export function GameClientWrapper({ roomId }: Props) {
   const actionDetail =
     hasTurnBasedIncomingMissile
       ? `Примите сигнал и введите координату. Попытка ${Math.min(incomingMissileAttempts + 1, incomingMissileMaxAttempts)}/${incomingMissileMaxAttempts}.`
+      : isExpert
+        ? isAsync
+          ? isOnCooldown
+            ? `Орудие перезаряжается. Осталось ${cooldownSecondsLeft ?? "?"}с.`
+            : "Координата принимается из самостоятельного ввода."
+          : isMyTurn
+            ? "Координата принимается из самостоятельного ввода."
+            : "Пока соперник атакует, следите за своим полем."
       : isAsync
         ? isOnCooldown
           ? `Орудие перезаряжается. Осталось ${cooldownSecondsLeft ?? "?"}с. В ASYNC нет перехвата — следите за полем и готовьте следующий выстрел.`
@@ -615,6 +648,8 @@ export function GameClientWrapper({ roomId }: Props) {
                 <p className="font-mono text-[10px] leading-relaxed text-miss-white/45">
                   {canSelectEnemyTarget
                     ? "Выберите клетку для атаки."
+                    : isExpert && enemyBoardDisabledMessage === undefined
+                      ? "Цель вводится вручную."
                     : enemyBoardDisabledMessage ?? "Клик — выбор цели, затем передача по Морзе."}
                 </p>
               </div>
@@ -635,6 +670,10 @@ export function GameClientWrapper({ roomId }: Props) {
                 disabledMessage={enemyBoardDisabledMessage}
                 onCellClick={(coord) => {
                   if (phase !== "battle") return;
+                  if (isExpert) {
+                    setStatusLine("В экспертном режиме цель вводится вручную.");
+                    return;
+                  }
                   if (hasTurnBasedIncomingMissile) {
                     setStatusLine("Сначала завершите перехват.");
                     return;
@@ -696,7 +735,7 @@ export function GameClientWrapper({ roomId }: Props) {
               <p className="mt-2 font-mono text-xs leading-relaxed text-miss-white/70">
                 {actionDetail}
               </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {!isExpert ? <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <div className="rounded border border-ocean-800/70 bg-ocean-950/50 px-3 py-2">
                   <p className="font-mono text-[9px] uppercase tracking-normal text-miss-white/35">Цель</p>
                   <p className="mt-1 font-mono text-lg text-morse-amber">{targetLabel}</p>
@@ -722,7 +761,7 @@ export function GameClientWrapper({ roomId }: Props) {
                     </div>
                   </div>
                 </div>
-              </div>
+              </div> : null}
             </div>
 
             {/* Status line */}
@@ -758,6 +797,24 @@ export function GameClientWrapper({ roomId }: Props) {
               morseEngine={morseEngine}
               onSequenceComplete={handleSequenceComplete}
               unitMs={unitMs}
+              difficulty={settings.difficulty}
+              showHints={!isExpert}
+              expectedNotation={
+                !isExpert && hasTurnBasedIncomingMissile
+                  ? incomingMissileTarget
+                    ? coordinateToMorseNotation(incomingMissileTarget)
+                    : null
+                  : selectedTarget
+                    ? coordinateToMorseNotation(selectedTarget)
+                    : null
+              }
+              onInputError={(part) => {
+                setStatusLine(
+                  part === "letter"
+                    ? "Неверная буква. Повторите только букву."
+                    : "Неверная цифра. Повторите только цифру.",
+                );
+              }}
               showWrongFeedback={lastInterceptWrong}
             />
 
@@ -774,6 +831,11 @@ export function GameClientWrapper({ roomId }: Props) {
             <div className="battle-status-chip rounded border border-ocean-800/50 bg-ocean-900/45 px-3 py-2 font-mono text-[8px] text-miss-white/25 leading-relaxed">
               <span className="text-miss-white/30 uppercase tracking-widest">Настройки: </span>
               {isAsync ? "ASYNC" : "ПОШАГОВЫЙ"}
+              {settings.difficulty === "beginner"
+                ? " · НОВИЧОК"
+                : settings.difficulty === "expert"
+                  ? " · ЭКСПЕРТ"
+                  : " · НОРМАЛЬНЫЙ"}
               {isAsync && ` · перезарядка ${settings.attackCooldownMs / 1000}с`}
               {isAsync
                 ? " · перехват отключён"

@@ -18,25 +18,19 @@ import {
   COLUMN_MORSE_DIGITS,
   type Coordinate,
   morseNotationToCoordinate,
+  type DifficultyMode,
 } from "@radioboi/game-core";
-import { FuzzyDecoder, MORSE_ALPHABET, type MorseEngine } from "@radioboi/morse-engine";
+import { FuzzyDecoder, type MorseEngine } from "@radioboi/morse-engine";
+import {
+  applyMorseInputChar,
+  BOARD_REVERSE_MORSE,
+  type MorseExpectedParts,
+  type MorseInputPart,
+} from "@/src/lib/morseInput";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 const DISPLAY_SLOTS = 2;
 const DISPLAY_SLOT_KEYS = Array.from({ length: DISPLAY_SLOTS }, (_, index) => `display-slot-${index + 1}`);
-
-const BOARD_REVERSE_MORSE: Readonly<Record<string, string>> = (() => {
-  const reverse: Record<string, string> = {};
-  for (const letter of BOARD_ROW_LABELS) {
-    const morse = MORSE_ALPHABET[letter];
-    if (morse !== undefined) reverse[morse] = letter;
-  }
-  for (const digit of COLUMN_MORSE_DIGITS) {
-    const morse = MORSE_ALPHABET[digit];
-    if (morse !== undefined) reverse[morse] = digit;
-  }
-  return reverse;
-})();
 
 function normalizeDecodedChar(char: string, slotIndex: number): string {
   const upper = char.toUpperCase();
@@ -49,7 +43,11 @@ type Props = {
   morseEngine?: MorseEngine | null;
   onSequenceComplete(coord: Coordinate): void;
   unitMs?: number;
+  difficulty?: DifficultyMode;
+  expectedNotation?: MorseExpectedParts | null;
+  onInputError?(part: MorseInputPart): void;
   showWrongFeedback?: boolean;
+  showHints?: boolean;
 };
 
 function toDisplayChars(decodedChars: readonly string[]): string[] {
@@ -81,7 +79,11 @@ export function MorseTelegraph({
   morseEngine = null,
   onSequenceComplete,
   unitMs = 60,
+  difficulty = "normal",
+  expectedNotation = null,
+  onInputError,
   showWrongFeedback = false,
+  showHints = true,
 }: Props) {
   const [decodedChars, setDecodedChars] = useState<string[]>([]);
   const [isPressed, setIsPressed] = useState(false);
@@ -93,8 +95,16 @@ export function MorseTelegraph({
   const unitMsRef = useRef(unitMs);
   unitMsRef.current = unitMs;
 
+  const difficultyRef = useRef(difficulty);
+  difficultyRef.current = difficulty;
+  const expectedNotationRef = useRef<MorseExpectedParts | null>(expectedNotation);
+  expectedNotationRef.current = expectedNotation;
+
   const isPressedRef = useRef(false);
   const previousModeRef = useRef(mode);
+  const previousExpectedKeyRef = useRef(
+    `${expectedNotation?.letter ?? ""}:${expectedNotation?.digit ?? ""}`,
+  );
   const wrongFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const completeSequence = useEffectEvent((chars: readonly string[]) => {
@@ -108,6 +118,10 @@ export function MorseTelegraph({
     }
   });
 
+  const reportInputError = useEffectEvent((part: MorseInputPart) => {
+    onInputError?.(part);
+  });
+
   // FIX: Decoder инициализируется с актуальным unitMs через ref.
   // Это устраняет brief mismatch при первом рендере когда effect ещё не запустился.
   const decoderRef = useRef<FuzzyDecoder | null>(null);
@@ -119,7 +133,17 @@ export function MorseTelegraph({
         setLiveMorse("");
         setDecodedChars((current) => {
           const normalizedChar = normalizeDecodedChar(char, current.length);
-          const next = [...current, normalizedChar];
+          const inputResult = applyMorseInputChar(
+            current,
+            normalizedChar,
+            expectedNotationRef.current,
+            difficultyRef.current === "beginner",
+          );
+          const wrongPart = inputResult.wrongPart;
+          if (wrongPart !== undefined) {
+            queueMicrotask(() => reportInputError(wrongPart));
+          }
+          const next = inputResult.chars;
 
           const row = next[0] ?? "";
           if (
@@ -165,6 +189,15 @@ export function MorseTelegraph({
     isPressedRef.current = false;
     setIsPressed(false);
   });
+
+  useEffect(() => {
+    const nextExpectedKey = `${expectedNotation?.letter ?? ""}:${expectedNotation?.digit ?? ""}`;
+    if (previousExpectedKeyRef.current === nextExpectedKey) return;
+    previousExpectedKeyRef.current = nextExpectedKey;
+    decoderRef.current?.reset();
+    setDecodedChars([]);
+    setLiveMorse("");
+  }, [expectedNotation?.digit, expectedNotation?.letter]);
 
   // Flash-анимация при неверном перехвате
   useEffect(() => {
@@ -258,11 +291,13 @@ export function MorseTelegraph({
           <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-green-500/60">
             {mode === "attack" ? "ATTACK KEY" : "INTERCEPT KEY"}
           </p>
-          <p className="font-mono text-xs text-miss-white/45">
-            {mode === "attack"
-              ? "Передайте выбранную цель точно."
-              : "Примите сигнал и введите координату вручную."}
-          </p>
+          {showHints ? (
+            <p className="font-mono text-xs text-miss-white/45">
+              {mode === "attack"
+                ? "Передайте выбранную цель точно."
+                : "Примите сигнал и введите координату вручную."}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
@@ -361,10 +396,11 @@ export function MorseTelegraph({
         </span>
       </button>
 
-      {/* Подсказка по скорости */}
-      <p className="text-center font-mono text-[8px] uppercase tracking-widest text-miss-white/20">
-        {unitMs}мс/ед · точка &lt; {Math.round(unitMs * 1.3)}мс · тире &gt; {Math.round(unitMs * 1.5)}мс
-      </p>
+      {showHints ? (
+        <p className="text-center font-mono text-[8px] uppercase tracking-widest text-miss-white/20">
+          {unitMs}мс/ед · точка &lt; {Math.round(unitMs * 1.3)}мс · тире &gt; {Math.round(unitMs * 1.5)}мс
+        </p>
+      ) : null}
     </section>
   );
 }

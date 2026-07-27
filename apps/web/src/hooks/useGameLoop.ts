@@ -16,6 +16,7 @@ import { MORSE_REVERSE, type BattleSoundEffect, type MorseEngine } from "@radiob
 import { type RefObject, useEffect, useRef } from "react";
 import type { RadarRef } from "@/src/components/RadarCanvas";
 import type { GameClient } from "@/src/lib/network/gameClient";
+import { decodeBoardMorseSequence } from "@/src/lib/morseInput";
 import { formatCoordForLog, useGameStore } from "@/src/store/gameStore";
 
 const INTERCEPT_WINDOW_MS = 25_000;
@@ -30,6 +31,7 @@ export type GameLoopRuntimeState = {
   incomingMissileId: string | null;
   incomingMissileMaxAttempts: number;
   incomingMissileSequence: number[] | null;
+  incomingMissileTarget: Coordinate | null;
   lastInterceptWrong: boolean;
 };
 
@@ -42,6 +44,7 @@ const DEFAULT_RUNTIME_STATE: GameLoopRuntimeState = {
   incomingMissileId: null,
   incomingMissileMaxAttempts: 3,
   incomingMissileSequence: null,
+  incomingMissileTarget: null,
   lastInterceptWrong: false,
 };
 
@@ -53,6 +56,7 @@ function readRuntimeState(): GameLoopRuntimeState {
     incomingMissileId: state.incomingMissileId ?? null,
     incomingMissileMaxAttempts: state.incomingMissileMaxAttempts ?? 3,
     incomingMissileSequence: state.incomingMissileSequence ?? null,
+    incomingMissileTarget: state.incomingMissileTarget ?? null,
     lastInterceptWrong: state.lastInterceptWrong ?? false,
   };
 }
@@ -122,6 +126,8 @@ export function useGameLoop(
       // Async mode has no intercept phase; stale incoming frames are ignored defensively.
       const settings = useGameStore.getState().settings;
       if (settings.battleMode === "async") return;
+      playBattleEffect(morseEngine, "missileLaunch");
+      void radarWorker.current?.triggerEffect("rocket", 0.5, 0.5);
       const windowMs = settings?.interceptWindowMs ?? INTERCEPT_WINDOW_MS;
 
       const playbackSequence = toPlaybackSequence(event.payload.morseSequence);
@@ -137,11 +143,19 @@ export function useGameLoop(
         incomingMissileId: event.payload.missileId,
         incomingMissileMaxAttempts: event.payload.maxAttempts,
         incomingMissileSequence: playbackSequence,
+        incomingMissileTarget: decodeBoardMorseSequence(event.payload.morseSequence),
         lastInterceptWrong: false,
       });
 
       morseEngine?.playBattleEffect("incomingMissile");
       void morseEngine?.playSequence(playbackSequence);
+    });
+
+    // Async mode resolves immediately, so the opponent receives this launch-only
+    // event before RESOLVE_HIT. The target remains private until the result arrives.
+    const stopFired = transport.on(GameEventType.MISSILE_FIRED, () => {
+      playBattleEffect(morseEngine, "missileLaunch");
+      void radarWorker.current?.triggerEffect("rocket", 0.5, 0.5);
     });
 
     // ── RESOLVE_HIT ───────────────────────────────────────────────────────
@@ -232,6 +246,7 @@ export function useGameLoop(
 
     const cleanup = () => {
       stopIncoming();
+      stopFired();
       stopResolve();
       stopIntercepted();
       stopSync();

@@ -260,6 +260,14 @@ export class GameClient {
         }
         break;
 
+      case GameEventType.MISSILE_FIRED:
+        store.addMissile({
+          id: event.payload.missileId,
+          target: "" as unknown as Coordinate,
+          launchedAt: event.payload.timestamp,
+        });
+        break;
+
       case GameEventType.INCOMING_MISSILE:
         store.addMissile({
           id: event.payload.missileId,

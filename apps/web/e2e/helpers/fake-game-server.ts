@@ -73,6 +73,10 @@ export async function installFakeGameServer(page: Page): Promise<void> {
         if (!data) throw new Error(`missing fake audio channel ${channel}`);
         return data;
       }
+
+      get duration() {
+        return this.length / this.sampleRate;
+      }
     }
 
     class FakeAudioBufferSourceNode extends FakeAudioNode {
@@ -95,6 +99,11 @@ export async function installFakeGameServer(page: Page): Promise<void> {
       }
       createBufferSource() {
         return new FakeAudioBufferSourceNode();
+      }
+      async decodeAudioData(_data: ArrayBuffer) {
+        // The browser-side fake only needs a correctly timed buffer shape; the
+        // real browser decodes the checked-in m4a recordings.
+        return new FakeAudioBuffer(1, this.sampleRate * 2, this.sampleRate);
       }
       createBiquadFilter() {
         return new FakeBiquadFilterNode();

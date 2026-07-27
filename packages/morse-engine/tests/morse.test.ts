@@ -196,6 +196,12 @@ class MockAudioBuffer {
     this.channelData = Array.from({ length: numberOfChannels }, () => new Float32Array(length));
   }
 
+  get duration(): number {
+    return this.channelData[0]?.length
+      ? this.channelData[0].length / this.sampleRate
+      : 0;
+  }
+
   getChannelData(channel: number): Float32Array {
     const data = this.channelData[channel];
     if (!data) throw new Error(`missing channel ${channel}`);
@@ -273,6 +279,10 @@ class MockAudioContext {
     return buffer;
   }
 
+  decodeAudioData(_data: ArrayBuffer): Promise<MockAudioBuffer> {
+    return Promise.resolve(this.createBuffer(1, this.sampleRate * 2, this.sampleRate));
+  }
+
   createBufferSource(): MockAudioBufferSourceNode {
     const node = new MockAudioBufferSourceNode();
     this.bufferSources.push(node);
@@ -305,12 +315,13 @@ class MockAudioContext {
   }
 }
 
-function installMockAudioContext(): void {
+function installMockAudioContext(withBattleSamples = false): void {
   mockContexts.length = 0;
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
       AudioContext: MockAudioContext,
+      ...(withBattleSamples ? { location: { origin: "https://radioboi.test" } } : {}),
     },
   });
 }
@@ -443,6 +454,44 @@ describe("MorseEngine manual tone latency", () => {
 });
 
 describe("MorseEngine battle sound effects", () => {
+  test("preloads supplied recordings and uses the decoded duration for playback", async () => {
+    installMockAudioContext(true);
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      writable: true,
+      value: async (input: RequestInfo | URL) => {
+        requested.push(String(input));
+        return new Response(new ArrayBuffer(8), { status: 200 });
+      },
+    });
+
+    try {
+      const engine = new MorseEngine();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const ctx = requireMockContext();
+      const beforeSources = ctx.bufferSources.length;
+      engine.playBattleEffect("missileLaunch");
+
+      expect(requested).toEqual(
+        expect.arrayContaining(["/audio/shot.m4a", "/audio/boom.m4a", "/audio/splash.m4a"]),
+      );
+      expect(ctx.bufferSources.length).toBeGreaterThan(beforeSources);
+      expect(ctx.bufferSources.at(-1)?.buffer?.duration).toBe(2);
+      expect(ctx.bufferSources.at(-1)?.startCalls).toContainEqual({ when: 0 });
+      expect(ctx.bufferSources.at(-1)?.stopCalls).toContain(2.02);
+    } finally {
+      Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: originalFetch,
+      });
+    }
+  });
+
   test("schedules distinct one-shot voices for every battle effect", () => {
     installMockAudioContext();
 

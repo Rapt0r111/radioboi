@@ -4,6 +4,7 @@ import {
   decodeEvent,
   makeAttackCooldownUpdate,
   makeIncomingMissile,
+  makeMissileFired,
   makeSyncState,
 } from "../src/protocol";
 
@@ -41,6 +42,7 @@ describe("worker protocol event builders", () => {
         "p1",
         {
           battleMode: "async",
+          difficulty: "normal",
           attackCooldownMs: 2_000,
           interceptWindowMs: 25_000,
           maxInterceptAttempts: 3,
@@ -61,6 +63,7 @@ describe("worker protocol event builders", () => {
         winnerId: "p1",
         settings: {
           battleMode: "async",
+          difficulty: "normal",
           attackCooldownMs: 2_000,
           interceptWindowMs: 25_000,
           maxInterceptAttempts: 3,
@@ -79,6 +82,13 @@ describe("worker protocol event builders", () => {
         timestamp: 1,
         maxAttempts: 3,
       },
+    });
+  });
+
+  test("builds a target-private missile fired event", () => {
+    expect(decode(makeMissileFired("m1", "p1", 123))).toEqual({
+      type: "MISSILE_FIRED",
+      payload: { missileId: "m1", attackerId: "p1", timestamp: 123 },
     });
   });
 

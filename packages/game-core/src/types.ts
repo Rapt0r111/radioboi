@@ -18,9 +18,12 @@ export type Missile = {
 // ── Room Settings ─────────────────────────────────────────────────────────────
 
 export type BattleMode = "turn-based" | "async";
+export type DifficultyMode = "beginner" | "normal" | "expert";
 
 export type RoomSettings = {
   battleMode: BattleMode;
+  /** Keep the correctly entered letter when only the digit is wrong. */
+  difficulty: DifficultyMode;
   /** Async only: ms a player must wait after firing before next attack */
   attackCooldownMs: number;
   /** Ms window defender has to intercept an incoming missile */
@@ -31,6 +34,7 @@ export type RoomSettings = {
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   battleMode: "turn-based",
+  difficulty: "normal",
   attackCooldownMs: 2_000,
   interceptWindowMs: 25_000,
   maxInterceptAttempts: 3,

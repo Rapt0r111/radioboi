@@ -3,7 +3,7 @@
 // apps/web/src/components/LobbyCreateForm.tsx
 // Interactive room creation/join form with radio-room settings.
 
-import type { RoomSettings } from "@radioboi/game-core";
+import type { DifficultyMode, RoomSettings } from "@radioboi/game-core";
 import { DEFAULT_ROOM_SETTINGS } from "@radioboi/game-core";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
@@ -39,9 +39,9 @@ type SliderProps = {
 type SegmentProps = {
   id: string;
   label: string;
-  options: { value: number; label: string }[];
-  value: number;
-  onChange: (value: number) => void;
+  options: { value: string | number; label: string }[];
+  value: string | number;
+  onChange: (value: string | number) => void;
 };
 
 function cx(...classes: Array<string | false | null | undefined>): string {
@@ -61,6 +61,7 @@ const SETTINGS_PRESETS: Array<{ id: string; label: string; hint: string; setting
     hint: "быстро и жёстко",
     settings: {
       battleMode: "turn-based",
+      difficulty: "normal",
       attackCooldownMs: 2_000,
       interceptWindowMs: 15_000,
       maxInterceptAttempts: 2,
@@ -72,6 +73,7 @@ const SETTINGS_PRESETS: Array<{ id: string; label: string; hint: string; setting
     hint: "огонь без ходов",
     settings: {
       battleMode: "async",
+      difficulty: "normal",
       attackCooldownMs: 2_000,
       interceptWindowMs: 25_000,
       maxInterceptAttempts: 3,
@@ -93,13 +95,15 @@ function CrtToggle({ id, label, value, onChange }: ToggleProps) {
         onClick={() => onChange(!value)}
         className={cx(
           "relative h-6 w-12 rounded-full border transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-radar-green",
-          value ? "border-radar-green bg-radar-green/20" : "border-ocean-800 bg-ocean-900",
+          value ? "border-radar-green bg-radar-green/20" : "border-miss-white/40 bg-ocean-800/90",
         )}
       >
         <span
           className={cx(
             "absolute left-0.5 top-0.5 h-5 w-5 rounded-full transition-transform duration-200",
-            value ? "translate-x-6 bg-radar-green" : "translate-x-0 bg-ocean-700",
+            value
+              ? "translate-x-6 bg-radar-green"
+              : "translate-x-0 bg-miss-white/70 ring-1 ring-ocean-950/80 shadow-[0_0_8px_rgba(224,232,240,0.3)]",
           )}
           aria-hidden="true"
         />
@@ -136,7 +140,7 @@ function CrtSegment({ id, label, options, value, onChange }: SegmentProps) {
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className="font-mono text-xs uppercase tracking-[0.18em] text-miss-white/58">{label}</legend>
-      <div id={id} className="grid grid-cols-4 gap-1">
+      <div id={id} className={cx("grid gap-1", options.length === 3 ? "grid-cols-3" : "grid-cols-4")}>
         {options.map((option) => (
           <button
             key={option.value}
@@ -165,12 +169,14 @@ export function LobbyCreateForm({ initialError }: Props) {
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState(initialError ?? "");
   const [isAsync, setIsAsync] = useState(DEFAULT_ROOM_SETTINGS.battleMode === "async");
+  const [difficulty, setDifficulty] = useState<DifficultyMode>(DEFAULT_ROOM_SETTINGS.difficulty);
   const [cooldownMs, setCooldownMs] = useState(DEFAULT_ROOM_SETTINGS.attackCooldownMs);
   const [interceptMs, setInterceptMs] = useState(DEFAULT_ROOM_SETTINGS.interceptWindowMs);
   const [maxAttempts, setMaxAttempts] = useState(DEFAULT_ROOM_SETTINGS.maxInterceptAttempts);
 
   function applySettings(settings: RoomSettings): void {
     setIsAsync(settings.battleMode === "async");
+    setDifficulty(settings.difficulty);
     setCooldownMs(settings.attackCooldownMs);
     setInterceptMs(settings.interceptWindowMs);
     setMaxAttempts(settings.maxInterceptAttempts);
@@ -179,6 +185,7 @@ export function LobbyCreateForm({ initialError }: Props) {
   function buildSettings(): Partial<RoomSettings> {
     return {
       battleMode: isAsync ? "async" : "turn-based",
+      difficulty,
       attackCooldownMs: cooldownMs,
       interceptWindowMs: interceptMs,
       maxInterceptAttempts: maxAttempts,
@@ -259,6 +266,30 @@ export function LobbyCreateForm({ initialError }: Props) {
 
               <CrtToggle id="setting-async" label="Асинхронный бой" value={isAsync} onChange={setIsAsync} />
 
+              <CrtSegment
+                id="setting-difficulty"
+                label="Уровень подготовки"
+                options={[
+                  { value: "beginner", label: "Новичок" },
+                  { value: "normal", label: "Нормальный" },
+                  { value: "expert", label: "Эксперт" },
+                ]}
+                value={difficulty}
+                onChange={(value) => setDifficulty(value as DifficultyMode)}
+              />
+
+              {difficulty === "beginner" ? (
+                <p className="rounded border border-radar-green/20 bg-radar-green/5 px-3 py-2 font-mono text-[10px] leading-5 text-radar-green/70">
+                  Неверная буква повторяется отдельно. Если ошиблись в цифре, букву вводить заново не нужно.
+                </p>
+              ) : null}
+
+              {difficulty === "expert" ? (
+                <p className="rounded border border-morse-amber/20 bg-morse-amber/5 px-3 py-2 font-mono text-[10px] leading-5 text-morse-amber/70">
+                  Клетка не выбирается на поле: координата вводится полностью вручную.
+                </p>
+              ) : null}
+
               {isAsync ? (
                 <p className="rounded border border-morse-amber/20 bg-morse-amber/5 px-3 py-2 font-mono text-[10px] leading-5 text-morse-amber/62">
                   Оба игрока атакуют независимо. Перехват отключён, после пуска работает только перезарядка.
@@ -300,7 +331,7 @@ export function LobbyCreateForm({ initialError }: Props) {
                       { value: 5, label: "5" },
                     ]}
                     value={maxAttempts}
-                    onChange={setMaxAttempts}
+                    onChange={(value) => setMaxAttempts(value as number)}
                   />
                 </>
               ) : (
@@ -312,6 +343,11 @@ export function LobbyCreateForm({ initialError }: Props) {
               <div className="rounded border border-ocean-800/70 bg-ocean-950/60 px-3 py-2 font-mono text-[10px] leading-5 text-miss-white/38">
                 <span className="text-radar-green/70">Режим: </span>
                 {isAsync ? "АСИНХРОННЫЙ" : "ПОШАГОВЫЙ"}
+                {difficulty === "beginner"
+                  ? " · НОВИЧОК"
+                  : difficulty === "expert"
+                    ? " · ЭКСПЕРТ"
+                    : " · НОРМАЛЬНЫЙ"}
                 {isAsync
                   ? ` · перезарядка ${cooldownMs / 1000}с · перехват отключён`
                   : ` · перехват ${interceptMs / 1000}с · ${maxAttempts} поп.`}

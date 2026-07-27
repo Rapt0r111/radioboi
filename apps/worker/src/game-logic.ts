@@ -46,6 +46,7 @@ export type RoomPhase = "lobby" | "placement" | "battle" | "gameOver";
 
 export type RoomSettings = {
   battleMode: "turn-based" | "async";
+  difficulty: "beginner" | "normal" | "expert";
   attackCooldownMs: number;
   interceptWindowMs: number;
   maxInterceptAttempts: number;
@@ -53,6 +54,7 @@ export type RoomSettings = {
 
 export const DEFAULT_SETTINGS: RoomSettings = {
   battleMode: "turn-based",
+  difficulty: "normal",
   attackCooldownMs: 2_000,
   interceptWindowMs: 25_000,
   maxInterceptAttempts: 3,
@@ -65,9 +67,15 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 export function clampRoomSettings(raw: unknown): RoomSettings {
   const record =
-    typeof raw === "object" && raw !== null ? raw as Partial<RoomSettings> : {};
+    typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
+  const difficulty = record.difficulty === "beginner" || record.difficulty === "normal" || record.difficulty === "expert"
+    ? record.difficulty
+    : record.beginnerMode === true
+      ? "beginner"
+      : DEFAULT_SETTINGS.difficulty;
   return {
     battleMode: record.battleMode === "async" ? "async" : "turn-based",
+    difficulty,
     attackCooldownMs: clampNumber(
       record.attackCooldownMs,
       2_000,

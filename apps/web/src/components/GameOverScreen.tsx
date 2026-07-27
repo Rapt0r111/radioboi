@@ -538,6 +538,12 @@ export function GameOverScreen({ roomId }: Props) {
 
   const copy = OUTCOME_COPY[report.outcome];
   const modeLabel = settings.battleMode === "async" ? "Асинхронный бой" : "Ходовой бой";
+  const difficultyLabel =
+    settings.difficulty === "beginner"
+      ? "Новичок"
+      : settings.difficulty === "expert"
+        ? "Эксперт"
+        : "Нормальный";
   const damageDelta = report.ownFire.hits - report.enemyFire.hits;
   const accuracyDelta = report.ownFire.accuracy - report.enemyFire.accuracy;
 
@@ -573,6 +579,7 @@ export function GameOverScreen({ roomId }: Props) {
               <div className="rounded border border-ocean-800/70 bg-ocean-950/50 px-3 py-2">
                 <span className="block text-miss-white/25">Режим</span>
                 <span className="mt-1 block text-morse-amber/70">{modeLabel}</span>
+                <span className="mt-1 block text-radar-green/60">{difficultyLabel}</span>
               </div>
             </div>
           </div>

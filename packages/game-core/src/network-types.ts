@@ -25,6 +25,7 @@ export const GameEventType = {
   INTERCEPT_ATTEMPT: "INTERCEPT_ATTEMPT",
   PLAYER_JOINED: "PLAYER_JOINED",
   GAME_STARTED: "GAME_STARTED",
+  MISSILE_FIRED: "MISSILE_FIRED",
   INCOMING_MISSILE: "INCOMING_MISSILE",
   RESOLVE_HIT: "RESOLVE_HIT",
   MISSILE_INTERCEPTED: "MISSILE_INTERCEPTED",
@@ -77,6 +78,12 @@ export type PlayerJoinedEvent = {
 export type GameStartedEvent = {
   type: typeof GameEventType.GAME_STARTED;
   payload: { firstTurnPlayerId: string };
+};
+
+/** Sent to the opponent when a missile launches without revealing its target. */
+export type MissileFiredEvent = {
+  type: typeof GameEventType.MISSILE_FIRED;
+  payload: { missileId: string; attackerId: string; timestamp: number };
 };
 
 export type IncomingMissileEvent = {
@@ -186,6 +193,7 @@ export type ClientGameEvent =
 export type ServerGameEvent =
   | PlayerJoinedEvent
   | GameStartedEvent
+  | MissileFiredEvent
   | IncomingMissileEvent
   | ResolveHitEvent
   | MissileInterceptedEvent

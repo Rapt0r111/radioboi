@@ -54,5 +54,14 @@ export {
   validatePlacement,
 } from "./ship-placement";
 
-export type { BattleMode, Board, CellState, Coordinate, GamePhase, Missile, RoomSettings } from "./types";
+export type {
+  BattleMode,
+  Board,
+  CellState,
+  Coordinate,
+  DifficultyMode,
+  GamePhase,
+  Missile,
+  RoomSettings,
+} from "./types";
 export { DEFAULT_ROOM_SETTINGS } from "./types";

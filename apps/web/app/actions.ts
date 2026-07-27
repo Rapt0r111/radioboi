@@ -48,8 +48,15 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 }
 
 function clampSettings(raw: Partial<RoomSettings>): RoomSettings {
+  const legacy = raw as Partial<RoomSettings> & { beginnerMode?: boolean };
+  const difficulty = legacy.difficulty === "beginner" || legacy.difficulty === "normal" || legacy.difficulty === "expert"
+    ? legacy.difficulty
+    : legacy.beginnerMode === true
+      ? "beginner"
+      : DEFAULT_ROOM_SETTINGS.difficulty;
   return {
     battleMode: raw.battleMode === "async" ? "async" : "turn-based",
+    difficulty,
     attackCooldownMs: clampNumber(
       raw.attackCooldownMs,
       2_000,

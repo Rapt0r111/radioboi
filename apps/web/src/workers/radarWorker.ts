@@ -67,11 +67,14 @@ function seededRange(seed: number, min: number, max: number): number {
 
 function effectDuration(kind: EffectKind): number {
   switch (kind) {
-    case "sunk":      return 1_800;
+    case "sunk":      return 2_020;
     case "fire":      return 1_600;
     case "bubble":    return 1_400;
-    case "miss":      return 1_300;
-    case "hit":       return 900;
+    // boom.m4a and splash.m4a are about two seconds long. Keep the radar
+    // impact alive for the same audible window instead of cutting the visual
+    // feedback off while the recording is still playing.
+    case "miss":      return 2_020;
+    case "hit":       return 2_020;
     case "rocket":    return 600;
     case "intercept": return 750;
   }

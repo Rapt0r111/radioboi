@@ -60,18 +60,22 @@ describe("room lifecycle", () => {
     expect(
       clampRoomSettings({
         battleMode: "async",
+        difficulty: "beginner",
         attackCooldownMs: 1,
         interceptWindowMs: 999_999,
         maxInterceptAttempts: 99,
       }),
     ).toEqual({
       battleMode: "async",
+      difficulty: "beginner",
       attackCooldownMs: 2_000,
       interceptWindowMs: 60_000,
       maxInterceptAttempts: 5,
     });
 
     expect(clampRoomSettings(null).battleMode).toBe("turn-based");
+    expect(clampRoomSettings({ beginnerMode: true }).difficulty).toBe("beginner");
+    expect(clampRoomSettings({ difficulty: "expert" }).difficulty).toBe("expert");
   });
 
   test("moves from lobby to placement when the second player joins", () => {

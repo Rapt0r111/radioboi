@@ -107,6 +107,7 @@ describe("GameClient", () => {
 
     client.connect("ROOM1", "p1", "Player 1", {
       battleMode: "async",
+      difficulty: "normal",
       attackCooldownMs: 3_000,
       interceptWindowMs: 20_000,
       maxInterceptAttempts: 2,
@@ -171,6 +172,17 @@ describe("GameClient", () => {
     expect(useGameStore.getState().phase).toBe("battle");
     expect(useGameStore.getState().settings.battleMode).toBe("async");
     expect(received).toHaveLength(1);
+
+    sockets[0]?.emitMessage(
+      encodeServerFrame({
+        type: GameEventType.MISSILE_FIRED,
+        payload: { missileId: "m1", attackerId: "p2", timestamp: 123 },
+      }),
+    );
+    await Promise.resolve();
+    expect(useGameStore.getState().activeMissiles).toEqual([
+      { id: "m1", target: "", launchedAt: 123 },
+    ]);
 
     unsubscribe();
     sockets[0]?.emitMessage(

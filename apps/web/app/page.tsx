@@ -55,7 +55,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
       />
 
       <section className="relative mx-auto grid min-h-[calc(100dvh-2.5rem)] w-full max-w-6xl items-center gap-7 lg:grid-cols-[1.12fr_0.88fr]">
-        <div className="space-y-7">
+        <div className="space-y-7 lg:self-start lg:pt-8">
           <div className="flex flex-wrap gap-2">
             {STATUS_ITEMS.map((item) => (
               <div

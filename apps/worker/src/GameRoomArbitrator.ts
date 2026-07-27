@@ -41,6 +41,7 @@ import {
   makeError,
   makeGameStarted,
   makeIncomingMissile,
+  makeMissileFired,
   makeMissileIntercepted,
   makePlayerJoined,
   makeResolveHit,
@@ -74,6 +75,7 @@ function canReconcileStoredSettings(state: RoomState): boolean {
 function roomSettingsDiffer(left: RoomSettings, right: RoomSettings): boolean {
   return (
     left.battleMode !== right.battleMode ||
+    left.difficulty !== right.difficulty ||
     left.attackCooldownMs !== right.attackCooldownMs ||
     left.interceptWindowMs !== right.interceptWindowMs ||
     left.maxInterceptAttempts !== right.maxInterceptAttempts
@@ -442,6 +444,11 @@ export class GameRoomArbitrator extends DurableObject<Env> {
         this.#sendToPlayer(playerId, makeAttackCooldownUpdate(recordResult.cooldownExpiresAt));
       }
 
+      const opponentId = getOpponentId(state, playerId);
+      if (opponentId) {
+        this.#sendToPlayer(opponentId, makeMissileFired(missileId, playerId, timestamp as number));
+      }
+
       this.#broadcast(
         makeResolveHit(
           missileId,
@@ -706,7 +713,9 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       if (!stored.activeMissiles) stored.activeMissiles = [];
       if (!stored.shotLog) stored.shotLog = [];
       if (!stored.attackCooldowns) stored.attackCooldowns = {};
-      if (!stored.settings) stored.settings = DEFAULT_SETTINGS;
+      stored.settings = stored.settings
+        ? clampRoomSettings(stored.settings)
+        : { ...DEFAULT_SETTINGS };
       const incomingSettings = parseEncodedRoomSettings(encodedSettings);
       if (
         incomingSettings &&

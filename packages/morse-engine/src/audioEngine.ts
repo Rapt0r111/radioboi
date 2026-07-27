@@ -53,6 +53,25 @@ export type BattleSoundEffect =
   | "targetLock"
   | "reloadReady";
 
+type BattleSoundAsset = {
+  src: string;
+  /** Reference duration of the supplied recording; playback uses AudioBuffer.duration. */
+  durationMs: number;
+  gain: number;
+};
+
+/**
+ * Supplied battle recordings. They are intentionally mapped to semantic game
+ * events instead of being played from components, so Web Audio keeps all
+ * voices on the same clock and can mix them with Morse input.
+ */
+export const BATTLE_SOUND_ASSETS: Partial<Record<BattleSoundEffect, BattleSoundAsset>> = {
+  missileLaunch: { src: "/audio/shot.m4a", durationMs: 1_941, gain: 0.78 },
+  hit: { src: "/audio/boom.m4a", durationMs: 2_023, gain: 0.9 },
+  sunk: { src: "/audio/boom.m4a", durationMs: 2_023, gain: 0.96 },
+  miss: { src: "/audio/splash.m4a", durationMs: 2_023, gain: 0.88 },
+};
+
 type ToneLayer = {
   frequencyHz: number;
   endFrequencyHz?: number;
@@ -378,6 +397,8 @@ export class MorseEngine {
   readonly #battleEffectGains = new Set<GainNode>();
 
   #noiseBuffer: AudioBuffer | null = null;
+  #battleSampleBuffers = new Map<string, AudioBuffer>();
+  #battleSamplePromises = new Map<string, Promise<AudioBuffer | null>>();
   #isPlaying: boolean = false;
   #playbackId: number = 0;
   #unitMs: number = DEFAULT_UNIT_MS;
@@ -434,6 +455,7 @@ export class MorseEngine {
     this.#masterGain.connect(this.#ctx.destination);
 
     this.#oscillator.start();
+    this.#preloadBattleSamples();
   }
 
   // -- AudioContext -----------------------------------------------------------
@@ -514,6 +536,117 @@ export class MorseEngine {
   }
 
   playBattleEffect(effect: BattleSoundEffect): void {
+    const sample = BATTLE_SOUND_ASSETS[effect];
+    const sampleBuffer = sample ? this.#battleSampleBuffers.get(sample.src) : undefined;
+
+    if (sample && sampleBuffer) {
+      this.#playSample(sampleBuffer, sample.gain);
+    } else {
+      // Keep the procedural voice available while the recording is loading or
+      // when a deployment does not serve optional static audio assets.
+      this.#playProceduralBattleEffect(effect);
+    }
+
+    if (sample) void this.#loadBattleSample(sample.src);
+
+    if (this.#ctx.state !== "running") {
+      void this.resume().catch(() => {
+        // The effect was already scheduled for the next successful unlock.
+      });
+    }
+  }
+
+  // -- Supplied battle recordings --------------------------------------------
+
+  #preloadBattleSamples(): void {
+    // Unit-test AudioContext shims and non-browser callers do not have a real
+    // document origin. In that case the procedural effects remain the safe
+    // deterministic path.
+    if (typeof fetch !== "function" || !window.location?.origin) return;
+
+    const sources = new Set(
+      Object.values(BATTLE_SOUND_ASSETS).map((asset) => asset.src),
+    );
+    for (const source of sources) {
+      void this.#loadBattleSample(source);
+    }
+  }
+
+  #loadBattleSample(source: string): Promise<AudioBuffer | null> {
+    if (typeof fetch !== "function" || !window.location?.origin) {
+      return Promise.resolve(null);
+    }
+
+    const cached = this.#battleSampleBuffers.get(source);
+    if (cached) return Promise.resolve(cached);
+
+    const existing = this.#battleSamplePromises.get(source);
+    if (existing) return existing;
+
+    const load = fetch(source, { cache: "force-cache" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.arrayBuffer();
+      })
+      .then((data) => this.#ctx.decodeAudioData(data))
+      .then((buffer) => {
+        this.#battleSampleBuffers.set(source, buffer);
+        return buffer;
+      })
+      .catch(() => null);
+
+    this.#battleSamplePromises.set(source, load);
+    return load;
+  }
+
+  #playSample(buffer: AudioBuffer, outputGain: number): void {
+    const source = this.#ctx.createBufferSource();
+    const gainNode = this.#ctx.createGain();
+    const gain = gainNode.gain;
+    const now = this.#ctx.currentTime;
+    const durationS = Math.max(0.02, buffer.duration);
+    const attackS = Math.min(0.008, durationS * 0.04);
+    const releaseS = Math.min(0.08, durationS * 0.08);
+    const endS = now + durationS;
+    const releaseStartS = Math.max(now + attackS, endS - releaseS);
+
+    source.buffer = buffer;
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(0, now);
+    gain.linearRampToValueAtTime(outputGain, now + attackS);
+    gain.setValueAtTime(outputGain, releaseStartS);
+    gain.linearRampToValueAtTime(0, endS);
+
+    source.connect(gainNode);
+    gainNode.connect(this.#masterGain);
+    this.#battleEffectGains.add(gainNode);
+
+    // Start immediately on the AudioContext clock. The sample's decoded
+    // duration, not a guessed timeout, controls the release and cleanup.
+    source.start(now);
+    source.stop(endS + 0.02);
+
+    setTimeout(
+      () => {
+        try {
+          source.disconnect();
+          gainNode.disconnect();
+        } catch {
+          // Nodes can already be detached or the context can be closed.
+        }
+        this.#battleEffectGains.delete(gainNode);
+      },
+      Math.max(0, (endS + 0.08 - this.#ctx.currentTime) * 1000),
+    );
+  }
+
+  /*
+   * Procedural fallback for battle effects. Kept separate from sample
+   * playback so a loaded recording never gets doubled by its placeholder.
+   */
+  #playProceduralBattleEffect(effect: BattleSoundEffect): void {
     const preset = BATTLE_EFFECTS[effect];
     const now = this.#ctx.currentTime;
 
@@ -524,11 +657,6 @@ export class MorseEngine {
       this.#playNoiseLayer(noise, now);
     }
 
-    if (this.#ctx.state !== "running") {
-      void this.resume().catch(() => {
-        // The effect was already scheduled for the next successful unlock.
-      });
-    }
   }
 
   // -- Manual telegraph key ---------------------------------------------------
