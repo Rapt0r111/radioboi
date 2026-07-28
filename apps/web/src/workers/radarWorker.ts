@@ -45,6 +45,12 @@ type GridBounds = {
   height: number;
 };
 
+// Keep cinematic effects fluid without spending a full 60 FPS while the board
+// is idle. A 16 ms pause followed by rAF produces roughly 30 FPS while an
+// effect is active; the background sweep refreshes at only 10 FPS.
+const ACTIVE_FRAME_DELAY_MS = 16;
+const IDLE_FRAME_DELAY_MS = 100;
+
 // ── Pure math helpers (no closures, no allocations in hot path) ───────────────
 
 function clamp01(v: number): number {
@@ -99,8 +105,9 @@ class RadarRenderer {
   #missiles = new Map<string, MissileEntry>();
   #effects: EffectEntry[] = [];
   #radarAngle = 0;
-  // PERF-1: 0 = not scheduled
+  // PERF-1: at most one timer or one rAF can be pending at once.
   #rafId = 0;
+  #frameTimer: ReturnType<typeof setTimeout> | null = null;
   #gridBounds: GridBounds = { offsetX: 0, offsetY: 0, width: 0, height: 0 };
 
   init(canvas: OffscreenCanvas): void {
@@ -129,7 +136,7 @@ class RadarRenderer {
       x, y, progress,
       startedAt: existing?.startedAt ?? performance.now(),
     });
-    this.#scheduleFrame();
+    this.#scheduleFrame(true);
   }
 
   removeMissile(id: string): void {
@@ -138,16 +145,39 @@ class RadarRenderer {
 
   triggerEffect(kind: EffectKind, x: number, y: number): void {
     this.#effects.push({ kind, x, y, startedAt: performance.now() });
-    this.#scheduleFrame();
+    this.#scheduleFrame(true);
   }
 
-  // PERF-1: Demand-driven scheduling — never stacks multiple rAF callbacks
-  #scheduleFrame(): void {
-    if (this.#rafId !== 0 || !this.#canvas) return;
-    this.#rafId = requestAnimationFrame(() => {
-      this.#rafId = 0;
-      this.#draw();
-    });
+  // PERF-1: Demand-driven scheduling — never stacks callbacks. Effects get a
+  // capped cinematic cadence; the idle sweep avoids permanently burning a CPU.
+  #scheduleFrame(immediate = false): void {
+    if (!this.#canvas || this.#rafId !== 0) return;
+
+    if (immediate && this.#frameTimer !== null) {
+      clearTimeout(this.#frameTimer);
+      this.#frameTimer = null;
+    }
+    if (this.#frameTimer !== null) return;
+
+    const isActive = this.#missiles.size > 0 || this.#effects.length > 0;
+    const delay = immediate ? 0 : isActive ? ACTIVE_FRAME_DELAY_MS : IDLE_FRAME_DELAY_MS;
+
+    const requestDraw = () => {
+      this.#rafId = requestAnimationFrame(() => {
+        this.#rafId = 0;
+        this.#draw();
+      });
+    };
+
+    if (delay === 0) {
+      requestDraw();
+      return;
+    }
+
+    this.#frameTimer = setTimeout(() => {
+      this.#frameTimer = null;
+      requestDraw();
+    }, delay);
   }
 
   #draw(): void {
@@ -473,10 +503,24 @@ class RadarRenderer {
     eased: number, alpha: number,
     cellSize: number,
   ): void {
+    const radius = cellSize * (0.18 + 0.58 * eased);
+
+    // A compact launch bloom makes both local and remote shots read clearly.
+    // The four rays share one path/stroke, so this stays cheap on CPU canvas.
     ctx.fillStyle = `rgba(255,245,175,${(0.82 * alpha).toFixed(2)})`;
     ctx.beginPath();
-    ctx.arc(px, py, cellSize * (0.18 + 0.58 * eased), 0, Math.PI * 2);
+    ctx.arc(px, py, radius, 0, Math.PI * 2);
     ctx.fill();
+
+    ctx.strokeStyle = `rgba(255,116,28,${(0.68 * alpha).toFixed(2)})`;
+    ctx.lineWidth = Math.max(1, cellSize * 0.035);
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const angle = (Math.PI / 2) * i + eased * 0.32;
+      ctx.moveTo(px + Math.cos(angle) * radius * 0.42, py + Math.sin(angle) * radius * 0.42);
+      ctx.lineTo(px + Math.cos(angle) * radius * 1.34, py + Math.sin(angle) * radius * 1.34);
+    }
+    ctx.stroke();
   }
 
   #drawInterceptEffect(

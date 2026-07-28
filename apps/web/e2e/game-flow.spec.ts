@@ -219,6 +219,58 @@ test("async room starts without turn or intercept gating and keeps miss markers"
   await expect(firstEnemyCell).toBeDisabled();
 });
 
+test("resolved fire and splash effects remain visible after the impact sound window", async ({ page }) => {
+  const hitTarget = makeCoordinate(0, 0);
+  const missTarget = makeCoordinate(1, 0);
+
+  await page.goto("/game/PERSIST1");
+  await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);
+
+  await emitServerEvent(page, {
+    type: "SYNC_STATE",
+    payload: {
+      phase: "battle",
+      ownBoard: {},
+      enemyBoard: {},
+      activeMissiles: [],
+      isMyTurn: true,
+      shotLog: [],
+    },
+  });
+
+  const playerId = await page.evaluate(() => sessionStorage.getItem("radioboi:playerId"));
+  expect(playerId).not.toBeNull();
+
+  for (const [missileId, target, result] of [
+    ["persist-hit", hitTarget, "hit"],
+    ["persist-miss", missTarget, "miss"],
+  ] as const) {
+    await emitServerEvent(page, {
+      type: "RESOLVE_HIT",
+      payload: {
+        missileId,
+        attackerId: playerId,
+        target,
+        result,
+        nextTurnPlayerId: "",
+        isGameOver: false,
+        wasIntercepted: false,
+      },
+    });
+  }
+
+  const enemyBoard = page.locator("table").first();
+  const fire = enemyBoard.locator(`button[data-coord="${hitTarget}"] .battle-cell-vfx--hit`);
+  const splash = enemyBoard.locator(`button[data-coord="${missTarget}"] .battle-cell-vfx--miss`);
+
+  await expect(fire).toBeVisible();
+  await expect(splash).toBeVisible();
+  await page.waitForTimeout(2_200);
+
+  await expect(fire).toHaveCSS("opacity", "1");
+  await expect(splash).toHaveCSS("opacity", "1");
+});
+
 test("game over page renders the detailed battle report", async ({ page }) => {
   await page.goto("/game/STAT99");
   await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() >= 1);
