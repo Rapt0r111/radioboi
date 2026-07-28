@@ -232,6 +232,22 @@ describe("attack resolution", () => {
     expect(state.pendingAttacks).toEqual({});
   });
 
+  test("rejects a previously used coordinate without consuming the attack", () => {
+    const state = roomReadyForBattle();
+    const target = makeCoordinate(9, 9);
+    state.boards.p2![target] = "miss";
+    state.shotLog.push({ attackerId: "p1", target, result: "miss", ts: 1 });
+
+    expect(prepareAttack(state, "p1", target, "m-duplicate")).toEqual({
+      ok: false,
+      reason: "CELL_ALREADY_SHOT",
+    });
+    expect(state.currentTurnId).toBe("p1");
+    expect(state.pendingAttacks).toEqual({});
+    expect(state.activeMissiles).toEqual([]);
+    expect(state.shotLog).toHaveLength(1);
+  });
+
   test("enforces turn ownership and one pending attack in turn-based mode", () => {
     const state = roomReadyForBattle();
     const firstTarget = makeCoordinate(9, 9);

@@ -18,7 +18,7 @@ const PITCH_MIN = 440;
 const PITCH_MAX = 800;
 const PITCH_DEFAULT = 600;
 
-const WPM_MIN = 10;
+const WPM_MIN = 4;
 const WPM_MAX = 30;
 const WPM_DEFAULT = 14;
 

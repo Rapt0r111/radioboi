@@ -7,7 +7,6 @@
 
 import {
   GameEventType,
-  type Missile,
   type MorseSymbol,
   parseCoordinate,
   type Coordinate,
@@ -82,9 +81,7 @@ function toPlaybackSequence(sequence: readonly MorseSymbol[]): number[] {
 }
 
 function removeMissileFromStore(missileId: string): void {
-  useGameStore.setState((state) => ({
-    activeMissiles: state.activeMissiles.filter((m) => m.id !== missileId),
-  }));
+  useGameStore.getState().removeMissile(missileId);
 }
 
 function playBattleEffect(morseEngine: MorseEngine | null, effect: BattleSoundEffect): void {
@@ -214,10 +211,6 @@ export function useGameLoop(
 
     // ── SYNC_STATE ────────────────────────────────────────────────────────
     const stopSync = transport.on(GameEventType.SYNC_STATE, (event) => {
-      useGameStore.setState({
-        activeMissiles: event.payload.activeMissiles as Missile[],
-      });
-
       if (event.payload.activeMissiles.length === 0) {
         resetGameLoopRuntimeState();
       }

@@ -84,6 +84,37 @@ describe("game store", () => {
     expect(useGameStore.getState().settings).toBe(settings);
   });
 
+  test("deduplicates and removes local missiles while syncing server missiles", () => {
+    const coord = makeCoordinate(0, 0);
+    const missile = { id: "m1", target: coord, launchedAt: 100 };
+    const store = useGameStore.getState();
+
+    store.addMissile(missile);
+    store.addMissile(missile);
+    expect(useGameStore.getState().activeMissiles).toEqual([missile]);
+
+    store.removeMissile(missile.id);
+    expect(useGameStore.getState().activeMissiles).toEqual([]);
+
+    store.syncFromServer({
+      phase: "battle",
+      ownBoard: {},
+      enemyBoard: {},
+      activeMissiles: [missile],
+      isMyTurn: true,
+    });
+    expect(useGameStore.getState().activeMissiles).toEqual([missile]);
+
+    store.syncFromServer({
+      phase: "battle",
+      ownBoard: {},
+      enemyBoard: {},
+      activeMissiles: [],
+      isMyTurn: true,
+    });
+    expect(useGameStore.getState().activeMissiles).toEqual([]);
+  });
+
   test("cooldown accepts only future timestamps", () => {
     const future = Date.now() + 10_000;
 

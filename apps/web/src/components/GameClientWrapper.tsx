@@ -218,6 +218,7 @@ export function GameClientWrapper({ roomId }: Props) {
   );
   const [transport, setTransport] = useState<GameClient | null>(null);
   const [unitMs, setUnitMs] = useState(60);
+  const [morseResetToken, setMorseResetToken] = useState(0);
   const [attackerTurnStart, setAttackerTurnStart] = useState<number | null>(null);
   const [hasPlaced, setHasPlaced] = useState(() => {
     try { return sessionStorage.getItem(`${PLACED_KEY_PREFIX}${roomId}`) === "1"; }
@@ -225,6 +226,7 @@ export function GameClientWrapper({ roomId }: Props) {
   });
 
   const missileInFlightRef = useRef(false);
+  const pendingAttackRef = useRef<{ id: string; target: Coordinate } | null>(null);
   const [missileInFlightUI, setMissileInFlightUI] = useState(false);
   const radarRef = useRef<RadarRef>(null);
   const autoResolveMissileIdRef = useRef<string | null>(null);
@@ -261,6 +263,65 @@ export function GameClientWrapper({ roomId }: Props) {
   }, [isAsync, phase, isMyTurn, incomingMissileId]);
 
   useEffect(() => {
+    if (phase !== "battle" || missileInFlightRef.current) return;
+    setStatusLine(
+      isExpert
+        ? "Канал готов."
+        : isAsync
+          ? "Выберите цель и передайте по Морзе. В асинхронном режиме оба игрока атакуют одновременно."
+          : "Выберите цель на вражеской сетке и передайте её по Морзе.",
+    );
+  }, [isAsync, isExpert, phase]);
+
+  useEffect(() => {
+    if (!transport) return;
+
+    const stopResolve = transport.on(GameEventType.RESOLVE_HIT, (event) => {
+      if (pendingAttackRef.current?.id === event.payload.missileId) {
+        pendingAttackRef.current = null;
+      }
+    });
+    const stopIntercepted = transport.on(GameEventType.MISSILE_INTERCEPTED, (event) => {
+      if (pendingAttackRef.current?.id === event.payload.missileId) {
+        pendingAttackRef.current = null;
+      }
+    });
+    const stopError = transport.on(GameEventType.ERROR, (event) => {
+      const pending = pendingAttackRef.current;
+      const messages: Record<string, string> = {
+        CELL_ALREADY_SHOT: "Координата уже использована. Введите другую.",
+        NOT_YOUR_TURN: "Сейчас не ваш ход.",
+        ATTACK_ON_COOLDOWN: "Орудие ещё перезаряжается.",
+        ATTACK_ALREADY_PENDING: "Предыдущая атака ещё обрабатывается.",
+        NO_PENDING_ATTACK: "Атака не была принята сервером. Повторите ввод.",
+        MORSE_MISMATCH: "Сигнал не распознан сервером. Повторите ввод.",
+        INVALID_COORDINATE: "Координата не распознана. Повторите ввод.",
+      };
+
+      if (pending) {
+        useGameStore.getState().removeMissile(pending.id);
+        useGameStore.getState().setAttackCooldown(0);
+        void radarRef.current?.removeMissile(pending.id);
+        pendingAttackRef.current = null;
+        missileInFlightRef.current = false;
+        setMissileInFlightUI(false);
+        setSelectedTarget(null);
+        setMorseResetToken((value) => value + 1);
+      }
+
+      if (event.payload.code !== "MORSE_MISMATCH" || pending) {
+        setStatusLine(messages[event.payload.code] ?? `Сервер отклонил действие: ${event.payload.message}`);
+      }
+    });
+
+    return () => {
+      stopResolve();
+      stopIntercepted();
+      stopError();
+    };
+  }, [transport]);
+
+  useEffect(() => {
     useGameStore.getState().reset();
     const nextPlayerId = getOrCreatePlayerId();
     const client = getGameClient();
@@ -278,6 +339,7 @@ export function GameClientWrapper({ roomId }: Props) {
     return () => {
       resetGameLoopRuntimeState();
       setSelectedTarget(null);
+      pendingAttackRef.current = null;
       missileInFlightRef.current = false;
       setMissileInFlightUI(false);
       setTransport(null);
@@ -368,6 +430,18 @@ export function GameClientWrapper({ roomId }: Props) {
       return;
     }
 
+    if (missileInFlightRef.current || pendingAttackRef.current !== null) {
+      setStatusLine("Ракета в полёте. Ожидайте результата.");
+      return;
+    }
+
+    const knownEnemyCell = enemyBoard[coord];
+    if (isExpert && (knownEnemyCell === "hit" || knownEnemyCell === "miss" || knownEnemyCell === "sunk" || knownEnemyCell === "blocked")) {
+      setMorseResetToken((value) => value + 1);
+      setStatusLine(`Координата ${formatCoord(coord)} уже использована. Введите другую.`);
+      return;
+    }
+
     if (!isExpert) {
       if (selectedTarget === null) { setStatusLine("Сначала отметьте цель на вражеской сетке."); return; }
       if (coord !== selectedTarget) {
@@ -377,21 +451,16 @@ export function GameClientWrapper({ roomId }: Props) {
       }
     }
 
-    if (missileInFlightRef.current) { setStatusLine("Ракета в полёте. Ожидайте результата."); return; }
-
     const missileId = createClientId();
     const timestamp = Date.now();
     const morseSequence = toMorseSequence(coord);
     const radarPoint = toRadarPoint(coord);
 
     missileInFlightRef.current = true;
+    pendingAttackRef.current = { id: missileId, target: coord };
     setMissileInFlightUI(true);
     morseEngine?.playBattleEffect("missileLaunch");
     void radarRef.current?.triggerEffect("rocket", radarPoint.x, radarPoint.y);
-    if (isAsync) {
-      useGameStore.getState().setAttackCooldown(timestamp + settings.attackCooldownMs);
-    }
-
     useGameStore.getState().addMissile({ id: missileId, launchedAt: timestamp, target: coord });
     void radarRef.current?.updateMissile(missileId, radarPoint.x, radarPoint.y, 0);
     transport.send({ type: GameEventType.ATTACK_PREP, payload: { missileId, target: coord } });
@@ -491,9 +560,9 @@ export function GameClientWrapper({ roomId }: Props) {
         ? isAsync
           ? isOnCooldown
             ? "Перезарядка орудия"
-            : "Введите координату для атаки"
+            : "Канал атаки готов"
           : isMyTurn
-            ? "Введите координату для атаки"
+            ? "Канал атаки готов"
             : "Ожидайте ход противника"
       : isAsync
         ? isOnCooldown
@@ -514,9 +583,9 @@ export function GameClientWrapper({ roomId }: Props) {
         ? isAsync
           ? isOnCooldown
             ? `Орудие перезаряжается. Осталось ${cooldownSecondsLeft ?? "?"}с.`
-            : "Координата принимается из самостоятельного ввода."
+            : "Сигнал готов."
           : isMyTurn
-            ? "Координата принимается из самостоятельного ввода."
+            ? "Сигнал готов."
             : "Пока соперник атакует, следите за своим полем."
       : isAsync
         ? isOnCooldown
@@ -649,8 +718,8 @@ export function GameClientWrapper({ roomId }: Props) {
                   {canSelectEnemyTarget
                     ? "Выберите клетку для атаки."
                     : isExpert && enemyBoardDisabledMessage === undefined
-                      ? "Цель вводится вручную."
-                    : enemyBoardDisabledMessage ?? "Клик — выбор цели, затем передача по Морзе."}
+                      ? "История вражеского сектора."
+                      : enemyBoardDisabledMessage ?? "Клик — выбор цели, затем передача по Морзе."}
                 </p>
               </div>
               <div className={`min-w-32 rounded border px-2 py-1 text-right font-mono text-[10px] uppercase tracking-normal transition-colors ${selectedTarget !== null
@@ -799,6 +868,7 @@ export function GameClientWrapper({ roomId }: Props) {
               unitMs={unitMs}
               difficulty={settings.difficulty}
               showHints={!isExpert}
+              resetToken={morseResetToken}
               expectedNotation={
                 !isExpert && hasTurnBasedIncomingMissile
                   ? incomingMissileTarget

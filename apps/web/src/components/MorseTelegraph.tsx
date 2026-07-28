@@ -48,6 +48,7 @@ type Props = {
   onInputError?(part: MorseInputPart): void;
   showWrongFeedback?: boolean;
   showHints?: boolean;
+  resetToken?: number;
 };
 
 function toDisplayChars(decodedChars: readonly string[]): string[] {
@@ -84,6 +85,7 @@ export function MorseTelegraph({
   onInputError,
   showWrongFeedback = false,
   showHints = true,
+  resetToken = 0,
 }: Props) {
   const [decodedChars, setDecodedChars] = useState<string[]>([]);
   const [isPressed, setIsPressed] = useState(false);
@@ -105,6 +107,7 @@ export function MorseTelegraph({
   const previousExpectedKeyRef = useRef(
     `${expectedNotation?.letter ?? ""}:${expectedNotation?.digit ?? ""}`,
   );
+  const previousResetTokenRef = useRef(resetToken);
   const wrongFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const completeSequence = useEffectEvent((chars: readonly string[]) => {
@@ -198,6 +201,16 @@ export function MorseTelegraph({
     setDecodedChars([]);
     setLiveMorse("");
   }, [expectedNotation?.digit, expectedNotation?.letter]);
+
+  useEffect(() => {
+    if (previousResetTokenRef.current === resetToken) return;
+    previousResetTokenRef.current = resetToken;
+    decoderRef.current?.reset();
+    setDecodedChars([]);
+    setLiveMorse("");
+    isPressedRef.current = false;
+    setIsPressed(false);
+  }, [resetToken]);
 
   // Flash-анимация при неверном перехвате
   useEffect(() => {

@@ -46,6 +46,7 @@ type SyncSnapshot = {
   phase: GamePhase;
   ownBoard: Board;
   enemyBoard: Board;
+  activeMissiles?: Missile[] | undefined;
   isMyTurn: boolean;
   winnerId?: string | undefined;
   shotLog?: ShotLogEntry[] | undefined;
@@ -59,6 +60,7 @@ type GameActions = {
   setSession(playerId: string, roomId: string): void;
   placeShip(coords: Coordinate[]): void;
   addMissile(missile: Missile): void;
+  removeMissile(missileId: string): void;
   applyEnemyShot(coord: Coordinate, result: "hit" | "miss" | "sunk"): void;
   applyOwnHit(coord: Coordinate, result: "hit" | "miss" | "sunk"): void;
   interceptMissile(missileId: string): void;
@@ -103,7 +105,17 @@ export const useGameStore = create<GameStore>((set) => ({
   },
 
   addMissile(missile) {
-    set((state) => ({ activeMissiles: [...state.activeMissiles, missile] }));
+    set((state) => ({
+      activeMissiles: state.activeMissiles.some((entry) => entry.id === missile.id)
+        ? state.activeMissiles.map((entry) => entry.id === missile.id ? missile : entry)
+        : [...state.activeMissiles, missile],
+    }));
+  },
+
+  removeMissile(missileId) {
+    set((state) => ({
+      activeMissiles: state.activeMissiles.filter((missile) => missile.id !== missileId),
+    }));
   },
 
   applyEnemyShot(coord, result) {
@@ -124,11 +136,12 @@ export const useGameStore = create<GameStore>((set) => ({
 
   toggleTurn() { set((state) => ({ isMyTurn: !state.isMyTurn })); },
 
-  syncFromServer({ phase, ownBoard, enemyBoard, isMyTurn, winnerId, shotLog, settings, attackCooldownExpiresAt }) {
+  syncFromServer({ phase, ownBoard, enemyBoard, activeMissiles, isMyTurn, winnerId, shotLog, settings, attackCooldownExpiresAt }) {
     set((state) => ({
       phase,
       ownBoard,
       enemyBoard,
+      activeMissiles: activeMissiles ?? state.activeMissiles,
       isMyTurn,
       winnerId: winnerId ?? null,
       // Server snapshot is perspective-correct for this player; replace local optimistic log.
