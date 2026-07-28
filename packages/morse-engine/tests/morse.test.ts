@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { encodeToMorse, FuzzyDecoder, MORSE_ALPHABET, MORSE_REVERSE, MorseEngine } from "../src";
 import type { BattleSoundEffect } from "../src";
+import { encodeToMorse, FuzzyDecoder, MORSE_ALPHABET, MORSE_REVERSE, MorseEngine } from "../src";
 
 describe("Morse alphabet and timing encoder", () => {
   test("encodes latin letters and digits with standard timing gaps", () => {
@@ -56,6 +56,25 @@ describe("FuzzyDecoder", () => {
     decoder.pointerUp(35);
 
     expect(decoder.currentMorse).toBe("-");
+  });
+
+  test("allows a longer configurable pause between symbols", async () => {
+    const chars: string[] = [];
+    const decoder = new FuzzyDecoder({
+      dotDuration: 100,
+      symbolGapMs: 40,
+      onChar: (char) => chars.push(char),
+    });
+
+    decoder.pointerDown(0);
+    decoder.pointerUp(80);
+
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(chars).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 45));
+    expect(chars).toEqual(["E"]);
+    expect(decoder.symbolGapMs).toBe(40);
   });
 
   test("can prefer a custom reverse map for ambiguous Cyrillic screen codes", () => {
@@ -197,9 +216,7 @@ class MockAudioBuffer {
   }
 
   get duration(): number {
-    return this.channelData[0]?.length
-      ? this.channelData[0].length / this.sampleRate
-      : 0;
+    return this.channelData[0]?.length ? this.channelData[0].length / this.sampleRate : 0;
   }
 
   getChannelData(channel: number): Float32Array {
@@ -538,13 +555,7 @@ describe("MorseEngine battle sound effects", () => {
     const engine = new MorseEngine();
     const ctx = requireMockContext();
     ctx.state = "running";
-    const noisyEffects: BattleSoundEffect[] = [
-      "missileLaunch",
-      "hit",
-      "miss",
-      "sunk",
-      "intercept",
-    ];
+    const noisyEffects: BattleSoundEffect[] = ["missileLaunch", "hit", "miss", "sunk", "intercept"];
 
     for (const effect of noisyEffects) {
       const beforeSources = ctx.bufferSources.length;

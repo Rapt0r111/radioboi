@@ -11,6 +11,11 @@ export type MorseSymbol = "." | "-";
 export type FuzzyDecoderOptions = {
   /** Базовая длительность точки в мс. По умолчанию 150. */
   dotDuration?: number;
+  /**
+   * Допустимая пауза после отпускания ключа до завершения текущего символа.
+   * Если не задана, используется стандартная пауза в 2.5 длительности точки.
+   */
+  symbolGapMs?: number;
   /** Опциональная таблица декодирования для неоднозначных алфавитов. */
   reverseMap?: Readonly<Record<string, string>>;
   /** Вызывается когда расшифрован полный символ (буква/цифра). */
@@ -37,6 +42,7 @@ const WORD_TIMEOUT_FACTOR = 4.5; // 7 единиц − 2.5 уже истекло
 export class FuzzyDecoder {
   // FIX BUG 1: убрали readonly — dotDuration теперь изменяется через setDotDuration()
   #dotDuration: number;
+  #symbolGapMs: number | null;
 
   // Callbacks
   readonly #reverseMap: Readonly<Record<string, string>>;
@@ -52,6 +58,10 @@ export class FuzzyDecoder {
 
   constructor(options: FuzzyDecoderOptions = {}) {
     this.#dotDuration = options.dotDuration ?? 150;
+    this.#symbolGapMs =
+      typeof options.symbolGapMs === "number" && Number.isFinite(options.symbolGapMs)
+        ? Math.max(20, options.symbolGapMs)
+        : null;
     this.#reverseMap = options.reverseMap ?? MORSE_REVERSE;
     this.#onChar = options.onChar;
     this.#onSymbol = options.onSymbol;
@@ -64,6 +74,11 @@ export class FuzzyDecoder {
     return this.#dotDuration;
   }
 
+  /** Максимальная пауза между элементами одного символа. */
+  get symbolGapMs(): number {
+    return this.#symbolGapMs ?? this.#dotDuration * CHAR_TIMEOUT_FACTOR;
+  }
+
   /**
    * FIX BUG 1: Обновляет базовую длительность точки в реальном времени.
    * Вызывается при изменении WPM: dotDuration = 1200 / wpm (мс на единицу).
@@ -71,6 +86,14 @@ export class FuzzyDecoder {
    */
   setDotDuration(ms: number): void {
     this.#dotDuration = Math.max(20, ms); // минимум 20мс для защиты от слишком быстрых тапов
+  }
+
+  /**
+   * Позволяет отдельно от скорости Морзе увеличить паузу между точками и тире.
+   * Настройка применяется к следующему отпусканию ключа.
+   */
+  setSymbolGapMs(ms: number): void {
+    this.#symbolGapMs = Math.max(20, ms);
   }
 
   /** Текущая накопленная морзе-строка (до завершения символа). */
@@ -106,16 +129,22 @@ export class FuzzyDecoder {
     // ── Запуск таймера завершения символа ─────────────────────────────────
     this.#clearTimers();
 
+    const symbolGapMs = this.symbolGapMs;
+
     this.#charTimer = setTimeout(() => {
       this.#charTimer = null;
       this.#completeChar();
 
-      // После завершения символа ждём паузу между словами
-      this.#wordTimer = setTimeout(() => {
-        this.#wordTimer = null;
-        this.#onWordBreak?.();
-      }, this.#dotDuration * WORD_TIMEOUT_FACTOR);
-    }, this.#dotDuration * CHAR_TIMEOUT_FACTOR);
+      // Сохраняем стандартные 7 единиц до разделителя слов, даже если
+      // разрешённая пауза внутри символа была увеличена отдельно.
+      this.#wordTimer = setTimeout(
+        () => {
+          this.#wordTimer = null;
+          this.#onWordBreak?.();
+        },
+        Math.max(0, this.#dotDuration * (CHAR_TIMEOUT_FACTOR + WORD_TIMEOUT_FACTOR) - symbolGapMs),
+      );
+    }, symbolGapMs);
   }
 
   /**

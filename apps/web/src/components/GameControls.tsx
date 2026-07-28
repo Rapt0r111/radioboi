@@ -22,6 +22,10 @@ const WPM_MIN = 4;
 const WPM_MAX = 30;
 const WPM_DEFAULT = 14;
 
+const SYMBOL_GAP_MIN_MS = 250;
+const SYMBOL_GAP_MAX_MS = 1_500;
+const SYMBOL_GAP_DEFAULT_MS = 500;
+
 const MAX_REPEATS = 3;
 const REPEAT_INDICATOR_KEYS = ["repeat-1", "repeat-2", "repeat-3"] as const;
 
@@ -34,6 +38,7 @@ type Props = {
   currentIncomingSequence: number[] | null;
   currentMissileId: string | null;
   onSpeedChange?: (unitMs: number) => void;
+  onSymbolGapChange?: (symbolGapMs: number) => void;
 };
 
 type SliderProps = {
@@ -42,12 +47,23 @@ type SliderProps = {
   unit: string;
   min: number;
   max: number;
+  step?: number;
   value: number;
   onChange: (v: number) => void;
   displayValue?: string;
 };
 
-function CrtSlider({ id, label, unit, min, max, value, onChange, displayValue }: SliderProps) {
+function CrtSlider({
+  id,
+  label,
+  unit,
+  min,
+  max,
+  step,
+  value,
+  onChange,
+  displayValue,
+}: SliderProps) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between">
@@ -67,6 +83,7 @@ function CrtSlider({ id, label, unit, min, max, value, onChange, displayValue }:
           type="range"
           min={min}
           max={max}
+          step={step}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
           className="h-2 w-full cursor-pointer accent-radar-green"
@@ -77,25 +94,36 @@ function CrtSlider({ id, label, unit, min, max, value, onChange, displayValue }:
   );
 }
 
-export function GameControls({ engine, currentIncomingSequence, currentMissileId, onSpeedChange }: Props) {
+export function GameControls({
+  engine,
+  currentIncomingSequence,
+  currentMissileId,
+  onSpeedChange,
+  onSymbolGapChange,
+}: Props) {
   const phase = useGameStore((s) => s.phase);
 
   const [volume, setVolume] = useState(VOLUME_DEFAULT);
   const [pitch, setPitch] = useState(PITCH_DEFAULT);
   const [wpm, setWpm] = useState(WPM_DEFAULT);
+  const [symbolGapMs, setSymbolGapMs] = useState(SYMBOL_GAP_DEFAULT_MS);
 
   const [repeatCount, setRepeatCount] = useState(0);
   const lastMissileIdRef = useRef<string | null>(null);
 
   // FIX: Синхронизируем начальную скорость engine при монтировании.
-  // engine создаётся с DEFAULT_UNIT_MS=100мс, но UI стартует с WPM_DEFAULT=20
-  // (= 60мс). Без этого effect входящая ракета воспроизводится в 1.67× медленнее
+  // engine создаётся с DEFAULT_UNIT_MS=100мс, но UI стартует с WPM_DEFAULT=14
+  // (= 86мс). Без этого effect входящая ракета воспроизводится медленнее
   // чем показывает ползунок — игрок не может настроить скорость до первого изменения.
   useEffect(() => {
     const initialUnitMs = wpmToUnitMs(WPM_DEFAULT);
     engine.setSpeed(initialUnitMs);
     onSpeedChange?.(initialUnitMs);
   }, [engine, onSpeedChange]); // только при смене экземпляра движка
+
+  useEffect(() => {
+    onSymbolGapChange?.(SYMBOL_GAP_DEFAULT_MS);
+  }, [onSymbolGapChange]);
 
   useEffect(() => {
     if (currentMissileId === lastMissileIdRef.current) return;
@@ -121,6 +149,11 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
     const unitMs = wpmToUnitMs(v);
     engine.setSpeed(unitMs);
     onSpeedChange?.(unitMs);
+  }
+
+  function handleSymbolGapChange(v: number): void {
+    setSymbolGapMs(v);
+    onSymbolGapChange?.(v);
   }
 
   function handleRepeat(): void {
@@ -177,6 +210,22 @@ export function GameControls({ engine, currentIncomingSequence, currentMissileId
           onChange={handleWpmChange}
           displayValue={`${wpm} WPM · ${wpmToUnitMs(wpm)}мс`}
         />
+
+        <CrtSlider
+          id="ctrl-symbol-gap"
+          label="ПАУЗА МЕЖДУ НАЖАТИЯМИ"
+          unit=" мс"
+          min={SYMBOL_GAP_MIN_MS}
+          max={SYMBOL_GAP_MAX_MS}
+          step={50}
+          value={symbolGapMs}
+          onChange={handleSymbolGapChange}
+          displayValue={`${symbolGapMs} мс`}
+        />
+
+        <p className="-mt-2 text-[8px] uppercase tracking-widest text-miss-white/35">
+          Максимальная пауза между точками и тире одного символа
+        </p>
 
         <div className="mt-1 border-t border-ocean-800 pt-3">
           <button

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { makeCoordinate } from "@radioboi/game-core";
-import { installFakeGameServer, emitServerEvent } from "./helpers/fake-game-server";
+import { emitServerEvent, installFakeGameServer } from "./helpers/fake-game-server";
 
 test.beforeEach(async ({ page }) => {
   await installFakeGameServer(page);
@@ -145,7 +145,54 @@ test("telegraph prevents repeated Space keydown from scrolling during battle", a
   expect(wasPrevented).toBe(true);
 });
 
-test("async room starts without turn or intercept gating and keeps miss markers", async ({ page }) => {
+test("telegraph keeps a symbol open for the selected pause between presses", async ({ page }) => {
+  await page.goto("/game/GAP100");
+  await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);
+
+  await emitServerEvent(page, {
+    type: "SYNC_STATE",
+    payload: {
+      phase: "battle",
+      ownBoard: {},
+      enemyBoard: {},
+      activeMissiles: [],
+      isMyTurn: true,
+      shotLog: [],
+    },
+  });
+
+  const telegraphKey = page.locator('button:has-text("PRESS TO KEY")');
+  const telegraph = telegraphKey.locator("xpath=ancestor::section[@aria-label]");
+  const liveSymbols = telegraph.getByTestId("morse-live-symbols");
+  const gapSlider = page.locator("#ctrl-symbol-gap");
+
+  await expect(gapSlider).toHaveValue("500");
+  await gapSlider.focus();
+  for (let i = 0; i < 10; i += 1) {
+    await gapSlider.press("ArrowRight");
+  }
+  await expect(gapSlider).toHaveValue("1000");
+  await expect(telegraph).toContainText("пауза ≤ 1000мс");
+
+  const box = await telegraphKey.boundingBox();
+  expect(box).not.toBeNull();
+  if (box === null) return;
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(80);
+  await page.mouse.up();
+
+  await page.waitForTimeout(700);
+  await expect(liveSymbols).toHaveText(/^[.-]$/);
+
+  await page.waitForTimeout(350);
+  await expect(liveSymbols).toHaveText("READY");
+});
+
+test("async room starts without turn or intercept gating and keeps miss markers", async ({
+  page,
+}) => {
   const roomId = "ASYNC1";
   const target = makeCoordinate(0, 0);
   await page.addInitScript((id) => {
@@ -219,7 +266,9 @@ test("async room starts without turn or intercept gating and keeps miss markers"
   await expect(firstEnemyCell).toBeDisabled();
 });
 
-test("resolved fire and splash effects remain visible after the impact sound window", async ({ page }) => {
+test("resolved fire and splash effects remain visible after the impact sound window", async ({
+  page,
+}) => {
   const hitTarget = makeCoordinate(0, 0);
   const missTarget = makeCoordinate(1, 0);
 

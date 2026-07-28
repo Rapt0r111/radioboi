@@ -43,6 +43,7 @@ type Props = {
   morseEngine?: MorseEngine | null;
   onSequenceComplete(coord: Coordinate): void;
   unitMs?: number;
+  symbolGapMs?: number;
   difficulty?: DifficultyMode;
   expectedNotation?: MorseExpectedParts | null;
   onInputError?(part: MorseInputPart): void;
@@ -80,6 +81,7 @@ export function MorseTelegraph({
   morseEngine = null,
   onSequenceComplete,
   unitMs = 60,
+  symbolGapMs = 500,
   difficulty = "normal",
   expectedNotation = null,
   onInputError,
@@ -131,6 +133,7 @@ export function MorseTelegraph({
   if (decoderRef.current === null) {
     decoderRef.current = new FuzzyDecoder({
       dotDuration: unitMsRef.current, // ← актуальный unitMs через ref
+      symbolGapMs,
       reverseMap: BOARD_REVERSE_MORSE,
       onChar: (char) => {
         setLiveMorse("");
@@ -181,6 +184,10 @@ export function MorseTelegraph({
   useEffect(() => {
     decoderRef.current?.setDotDuration(unitMs);
   }, [unitMs]);
+
+  useEffect(() => {
+    decoderRef.current?.setSymbolGapMs(symbolGapMs);
+  }, [symbolGapMs]);
 
   // Сброс состояния при смене режима (attack ↔ intercept)
   useEffect(() => {
@@ -256,31 +263,41 @@ export function MorseTelegraph({
     stopSignal();
   }
 
-  function isEditableTarget(target: EventTarget | null): boolean {
+  function isInteractiveTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
-    const tagName = target.tagName.toLowerCase();
-    return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+    return (
+      target.isContentEditable ||
+      target.closest("input, textarea, select, button, a, [role='button'], [role='slider']") !== null
+    );
   }
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
-      if (event.code !== "Space" || isEditableTarget(event.target)) return;
+      if (event.code !== "Space" || isInteractiveTarget(event.target)) return;
       event.preventDefault();
       if (event.repeat) return;
       startSignal();
     }
 
     function onKeyUp(event: KeyboardEvent): void {
-      if (event.code !== "Space" || isEditableTarget(event.target)) return;
+      if (event.code !== "Space" || isInteractiveTarget(event.target)) return;
       event.preventDefault();
       stopSignal();
     }
 
+    function onVisibilityChange(): void {
+      if (document.visibilityState !== "visible") stopSignal();
+    }
+
     window.addEventListener("keydown", onKeyDown, { capture: true });
     window.addEventListener("keyup", onKeyUp, { capture: true });
+    window.addEventListener("blur", stopSignal);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.removeEventListener("keydown", onKeyDown, { capture: true });
       window.removeEventListener("keyup", onKeyUp, { capture: true });
+      window.removeEventListener("blur", stopSignal);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   });
 
@@ -324,6 +341,7 @@ export function MorseTelegraph({
             </div>
           )}
           <div
+            data-testid="morse-live-symbols"
             className={`rounded border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] transition-colors duration-150 ${
               isWrongFlash
                 ? "border-hit-red/60 text-hit-red"
@@ -373,12 +391,14 @@ export function MorseTelegraph({
           releaseKey(event.pointerId, event.currentTarget);
         }}
         onPointerDown={(event) => {
+          if (event.button !== 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           startSignal();
         }}
         onPointerUp={(event) => {
           releaseKey(event.pointerId, event.currentTarget);
         }}
+        onLostPointerCapture={stopSignal}
         onKeyDown={(event) => {
           if (event.key !== " " && event.key !== "Enter") return;
           event.preventDefault();
@@ -411,7 +431,7 @@ export function MorseTelegraph({
 
       {showHints ? (
         <p className="text-center font-mono text-[8px] uppercase tracking-widest text-miss-white/20">
-          {unitMs}мс/ед · точка &lt; {Math.round(unitMs * 1.3)}мс · тире &gt; {Math.round(unitMs * 1.5)}мс
+          {unitMs}мс/ед · точка &lt; {Math.round(unitMs * 1.3)}мс · тире &gt; {Math.round(unitMs * 1.5)}мс · пауза ≤ {symbolGapMs}мс
         </p>
       ) : null}
     </section>

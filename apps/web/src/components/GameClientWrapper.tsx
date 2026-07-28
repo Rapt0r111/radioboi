@@ -218,6 +218,7 @@ export function GameClientWrapper({ roomId }: Props) {
   );
   const [transport, setTransport] = useState<GameClient | null>(null);
   const [unitMs, setUnitMs] = useState(60);
+  const [symbolGapMs, setSymbolGapMs] = useState(500);
   const [morseResetToken, setMorseResetToken] = useState(0);
   const [attackerTurnStart, setAttackerTurnStart] = useState<number | null>(null);
   const [hasPlaced, setHasPlaced] = useState(() => {
@@ -866,6 +867,7 @@ export function GameClientWrapper({ roomId }: Props) {
               morseEngine={morseEngine}
               onSequenceComplete={handleSequenceComplete}
               unitMs={unitMs}
+              symbolGapMs={symbolGapMs}
               difficulty={settings.difficulty}
               showHints={!isExpert}
               resetToken={morseResetToken}
@@ -894,6 +896,7 @@ export function GameClientWrapper({ roomId }: Props) {
                 currentMissileId={hasTurnBasedIncomingMissile ? incomingMissileId : null}
                 engine={morseEngine}
                 onSpeedChange={setUnitMs}
+                onSymbolGapChange={setSymbolGapMs}
               />
             ) : null}
 
