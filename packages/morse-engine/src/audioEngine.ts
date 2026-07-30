@@ -44,6 +44,11 @@ export type MorseEngineOptions = {
 
 export type BattleSoundEffect =
   | "missileLaunch"
+  | "guidedMissileShot"
+  | "guidedMissileFlight"
+  | "guidedHit"
+  | "guidedMiss"
+  | "guidedSunk"
   | "incomingMissile"
   | "hit"
   | "miss"
@@ -52,6 +57,13 @@ export type BattleSoundEffect =
   | "wrong"
   | "targetLock"
   | "reloadReady";
+
+/** Clock-aligned timing for the guided missile flight animation. */
+export type GuidedMissileTimeline = {
+  flightStartsInMs: number;
+  flightDurationMs: number;
+  sequenceDurationMs: number;
+};
 
 type BattleSoundAsset = {
   src: string;
@@ -67,9 +79,17 @@ type BattleSoundAsset = {
  */
 export const BATTLE_SOUND_ASSETS: Partial<Record<BattleSoundEffect, BattleSoundAsset>> = {
   missileLaunch: { src: "/audio/shot.m4a", durationMs: 1_941, gain: 0.78 },
-  hit: { src: "/audio/boom.m4a", durationMs: 2_023, gain: 0.9 },
-  sunk: { src: "/audio/boom.m4a", durationMs: 2_023, gain: 0.96 },
-  miss: { src: "/audio/splash.m4a", durationMs: 2_023, gain: 0.88 },
+  // Beginner and normal modes use this ordered launch path. Each supplied
+  // recording has the same output gain so its perceived level stays consistent
+  // while the master volume remains under the player's control.
+  guidedMissileShot: { src: "/audio/shooting.m4a", durationMs: 6_874, gain: 0.9 },
+  guidedMissileFlight: { src: "/audio/flying.m4a", durationMs: 942, gain: 0.9 },
+  guidedHit: { src: "/audio/boom.m4a", durationMs: 2_000, gain: 0.9 },
+  guidedSunk: { src: "/audio/boom.m4a", durationMs: 2_000, gain: 0.9 },
+  guidedMiss: { src: "/audio/splash.m4a", durationMs: 1_672, gain: 0.9 },
+  hit: { src: "/audio/boom.m4a", durationMs: 2_000, gain: 0.9 },
+  sunk: { src: "/audio/boom.m4a", durationMs: 2_000, gain: 0.96 },
+  miss: { src: "/audio/splash.m4a", durationMs: 1_672, gain: 0.88 },
 };
 
 type ToneLayer = {
@@ -101,7 +121,12 @@ type BattleEffectPreset = {
   noises?: NoiseLayer[];
 };
 
-const BATTLE_EFFECTS: Record<BattleSoundEffect, BattleEffectPreset> = {
+type ProceduralBattleSoundEffect = Exclude<
+  BattleSoundEffect,
+  "guidedMissileShot" | "guidedMissileFlight" | "guidedHit" | "guidedMiss" | "guidedSunk"
+>;
+
+const BATTLE_EFFECTS: Record<ProceduralBattleSoundEffect, BattleEffectPreset> = {
   missileLaunch: {
     tones: [
       {
@@ -408,6 +433,7 @@ export class MorseEngine {
   #manualToneStartedAtS: number | null = null;
   #nextTapPulseVoice: number = 0;
   #resumePromise: Promise<void> | null = null;
+  #guidedMissileSequenceEndsAtS: number = 0;
 
   constructor(options: MorseEngineOptions = {}) {
     if (typeof window === "undefined") {
@@ -536,15 +562,52 @@ export class MorseEngine {
   }
 
   playBattleEffect(effect: BattleSoundEffect): void {
+    this.#playBattleEffectAt(effect, this.#ctx.currentTime);
+  }
+
+  /**
+   * Plays the novice/normal attack recordings back-to-back on the Web Audio
+   * clock. Using decoded sample duration means flight never starts early or
+   * leaves a timer-based gap after shooting.
+   */
+  playGuidedMissileSequence(): GuidedMissileTimeline {
+    const sequenceStartedAtS = this.#ctx.currentTime;
+    const shotEndsAtS = this.#playBattleEffectAt("guidedMissileShot", sequenceStartedAtS);
+    const flightEndsAtS = this.#playBattleEffectAt(
+      "guidedMissileFlight",
+      shotEndsAtS,
+    );
+    this.#guidedMissileSequenceEndsAtS = flightEndsAtS;
+    return {
+      flightStartsInMs: Math.max(0, (shotEndsAtS - sequenceStartedAtS) * 1_000),
+      flightDurationMs: Math.max(0, (flightEndsAtS - shotEndsAtS) * 1_000),
+      sequenceDurationMs: Math.max(0, (flightEndsAtS - sequenceStartedAtS) * 1_000),
+    };
+  }
+
+  /**
+   * Queues the impact behind an active guided launch sequence. If the server
+   * result arrives later, it is played immediately; if it arrives early, the
+   * player still hears shooting -> flying -> splash/boom in that order.
+   */
+  playGuidedMissileImpact(effect: "guidedHit" | "guidedMiss" | "guidedSunk"): number {
+    const startAtS = Math.max(this.#ctx.currentTime, this.#guidedMissileSequenceEndsAtS);
+    this.#playBattleEffectAt(effect, startAtS);
+    this.#guidedMissileSequenceEndsAtS = 0;
+    return Math.max(0, (startAtS - this.#ctx.currentTime) * 1_000);
+  }
+
+  #playBattleEffectAt(effect: BattleSoundEffect, startAtS: number): number {
     const sample = BATTLE_SOUND_ASSETS[effect];
     const sampleBuffer = sample ? this.#battleSampleBuffers.get(sample.src) : undefined;
+    const safeStartAtS = Math.max(this.#ctx.currentTime, startAtS);
 
     if (sample && sampleBuffer) {
-      this.#playSample(sampleBuffer, sample.gain);
+      this.#playSample(sampleBuffer, sample.gain, safeStartAtS);
     } else {
       // Keep the procedural voice available while the recording is loading or
       // when a deployment does not serve optional static audio assets.
-      this.#playProceduralBattleEffect(effect);
+      this.#playProceduralBattleEffect(effect, safeStartAtS);
     }
 
     if (sample) void this.#loadBattleSample(sample.src);
@@ -554,6 +617,8 @@ export class MorseEngine {
         // The effect was already scheduled for the next successful unlock.
       });
     }
+
+    return safeStartAtS + (sampleBuffer?.duration ?? (sample?.durationMs ?? 0) / 1_000);
   }
 
   // -- Supplied battle recordings --------------------------------------------
@@ -601,11 +666,11 @@ export class MorseEngine {
     return load;
   }
 
-  #playSample(buffer: AudioBuffer, outputGain: number): void {
+  #playSample(buffer: AudioBuffer, outputGain: number, startAtS = this.#ctx.currentTime): void {
     const source = this.#ctx.createBufferSource();
     const gainNode = this.#ctx.createGain();
     const gain = gainNode.gain;
-    const now = this.#ctx.currentTime;
+    const now = Math.max(this.#ctx.currentTime, startAtS);
     const durationS = Math.max(0.02, buffer.duration);
     const attackS = Math.min(0.008, durationS * 0.04);
     const releaseS = Math.min(0.08, durationS * 0.08);
@@ -646,9 +711,21 @@ export class MorseEngine {
    * Procedural fallback for battle effects. Kept separate from sample
    * playback so a loaded recording never gets doubled by its placeholder.
    */
-  #playProceduralBattleEffect(effect: BattleSoundEffect): void {
-    const preset = BATTLE_EFFECTS[effect];
-    const now = this.#ctx.currentTime;
+  #playProceduralBattleEffect(effect: BattleSoundEffect, startAtS = this.#ctx.currentTime): void {
+    // Keep an audible, semantically close fallback while a guided recording is
+    // still loading or unavailable in a deployment.
+    const fallbackEffect: ProceduralBattleSoundEffect =
+      effect === "guidedMissileShot" || effect === "guidedMissileFlight"
+        ? "missileLaunch"
+        : effect === "guidedHit"
+          ? "hit"
+          : effect === "guidedSunk"
+            ? "sunk"
+            : effect === "guidedMiss"
+              ? "miss"
+              : effect;
+    const preset = BATTLE_EFFECTS[fallbackEffect];
+    const now = Math.max(this.#ctx.currentTime, startAtS);
 
     for (const tone of preset.tones ?? []) {
       this.#playToneLayer(tone, now);

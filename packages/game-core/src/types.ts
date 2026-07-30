@@ -20,6 +20,19 @@ export type Missile = {
 export type BattleMode = "turn-based" | "async";
 export type DifficultyMode = "beginner" | "normal" | "expert";
 
+/** Minimum async reload for the legacy expert launch sound. */
+export const MIN_ATTACK_COOLDOWN_MS = 2_000;
+/**
+ * Beginner/normal playback lasts at most 9,816 ms:
+ * shooting (6,874) + flying (942) + boom (2,000). Round up to a full second
+ * so a new shot cannot start before the previous audible sequence has ended.
+ */
+export const MIN_GUIDED_ATTACK_COOLDOWN_MS = 10_000;
+
+export function minimumAttackCooldownMs(difficulty: DifficultyMode): number {
+  return difficulty === "expert" ? MIN_ATTACK_COOLDOWN_MS : MIN_GUIDED_ATTACK_COOLDOWN_MS;
+}
+
 export type RoomSettings = {
   battleMode: BattleMode;
   /** Keep the correctly entered letter when only the digit is wrong. */
@@ -35,7 +48,7 @@ export type RoomSettings = {
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   battleMode: "turn-based",
   difficulty: "normal",
-  attackCooldownMs: 2_000,
+  attackCooldownMs: MIN_GUIDED_ATTACK_COOLDOWN_MS,
   interceptWindowMs: 25_000,
   maxInterceptAttempts: 3,
 };

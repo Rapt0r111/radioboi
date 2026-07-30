@@ -494,7 +494,13 @@ describe("MorseEngine battle sound effects", () => {
       engine.playBattleEffect("missileLaunch");
 
       expect(requested).toEqual(
-        expect.arrayContaining(["/audio/shot.m4a", "/audio/boom.m4a", "/audio/splash.m4a"]),
+        expect.arrayContaining([
+          "/audio/shot.m4a",
+          "/audio/shooting.m4a",
+          "/audio/flying.m4a",
+          "/audio/boom.m4a",
+          "/audio/splash.m4a",
+        ]),
       );
       expect(ctx.bufferSources.length).toBeGreaterThan(beforeSources);
       expect(ctx.bufferSources.at(-1)?.buffer?.duration).toBe(2);
@@ -517,6 +523,11 @@ describe("MorseEngine battle sound effects", () => {
     ctx.state = "running";
     const effects: BattleSoundEffect[] = [
       "missileLaunch",
+      "guidedMissileShot",
+      "guidedMissileFlight",
+      "guidedHit",
+      "guidedMiss",
+      "guidedSunk",
       "incomingMissile",
       "hit",
       "miss",
@@ -547,6 +558,34 @@ describe("MorseEngine battle sound effects", () => {
     }
 
     expect(ctx.oscillators.length).toBeGreaterThan(persistentOscillators + effects.length);
+  });
+
+  test("keeps guided shooting, flight, and impact in order when the impact arrives early", async () => {
+    installMockAudioContext(true);
+    const originalFetch = globalThis.fetch;
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      writable: true,
+      value: async () => new Response(new ArrayBuffer(8), { status: 200 }),
+    });
+
+    try {
+      const engine = new MorseEngine();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const ctx = requireMockContext();
+
+      engine.playGuidedMissileSequence();
+      engine.playGuidedMissileImpact("guidedMiss");
+
+      const guidedSources = ctx.bufferSources.slice(-3);
+      expect(guidedSources.map((source) => source.startCalls[0]?.when)).toEqual([0, 2, 4]);
+    } finally {
+      Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: originalFetch,
+      });
+    }
   });
 
   test("realistic battle presets add noise layers for explosions, water, rocket, and intercept", () => {

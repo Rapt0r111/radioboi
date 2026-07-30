@@ -68,7 +68,7 @@ describe("room lifecycle", () => {
     ).toEqual({
       battleMode: "async",
       difficulty: "beginner",
-      attackCooldownMs: 2_000,
+      attackCooldownMs: 10_000,
       interceptWindowMs: 60_000,
       maxInterceptAttempts: 5,
     });

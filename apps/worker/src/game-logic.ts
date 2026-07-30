@@ -14,6 +14,7 @@ import {
   BOARD_ROW_LABELS,
   COLUMNS,
   isValidCoordinate,
+  minimumAttackCooldownMs,
   parseCoordinate as parseCoordCore,
   ROWS,
   type Coordinate,
@@ -55,7 +56,7 @@ export type RoomSettings = {
 export const DEFAULT_SETTINGS: RoomSettings = {
   battleMode: "turn-based",
   difficulty: "normal",
-  attackCooldownMs: 2_000,
+  attackCooldownMs: minimumAttackCooldownMs("normal"),
   interceptWindowMs: 25_000,
   maxInterceptAttempts: 3,
 };
@@ -78,9 +79,9 @@ export function clampRoomSettings(raw: unknown): RoomSettings {
     difficulty,
     attackCooldownMs: clampNumber(
       record.attackCooldownMs,
-      2_000,
+      minimumAttackCooldownMs(difficulty),
       60_000,
-      DEFAULT_SETTINGS.attackCooldownMs,
+      minimumAttackCooldownMs(difficulty),
     ),
     interceptWindowMs: clampNumber(
       record.interceptWindowMs,

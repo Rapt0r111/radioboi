@@ -3,8 +3,13 @@
 // apps/web/src/components/LobbyCreateForm.tsx
 // Interactive room creation/join form with radio-room settings.
 
-import type { DifficultyMode, RoomSettings } from "@radioboi/game-core";
-import { DEFAULT_ROOM_SETTINGS } from "@radioboi/game-core";
+import {
+  DEFAULT_ROOM_SETTINGS,
+  MIN_GUIDED_ATTACK_COOLDOWN_MS,
+  minimumAttackCooldownMs,
+  type DifficultyMode,
+  type RoomSettings,
+} from "@radioboi/game-core";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useState, useTransition } from "react";
@@ -62,7 +67,7 @@ const SETTINGS_PRESETS: Array<{ id: string; label: string; hint: string; setting
     settings: {
       battleMode: "turn-based",
       difficulty: "normal",
-      attackCooldownMs: 2_000,
+      attackCooldownMs: MIN_GUIDED_ATTACK_COOLDOWN_MS,
       interceptWindowMs: 15_000,
       maxInterceptAttempts: 2,
     },
@@ -74,7 +79,7 @@ const SETTINGS_PRESETS: Array<{ id: string; label: string; hint: string; setting
     settings: {
       battleMode: "async",
       difficulty: "normal",
-      attackCooldownMs: 2_000,
+      attackCooldownMs: MIN_GUIDED_ATTACK_COOLDOWN_MS,
       interceptWindowMs: 25_000,
       maxInterceptAttempts: 3,
     },
@@ -177,7 +182,7 @@ export function LobbyCreateForm({ initialError }: Props) {
   function applySettings(settings: RoomSettings): void {
     setIsAsync(settings.battleMode === "async");
     setDifficulty(settings.difficulty);
-    setCooldownMs(settings.attackCooldownMs);
+    setCooldownMs(Math.max(settings.attackCooldownMs, minimumAttackCooldownMs(settings.difficulty)));
     setInterceptMs(settings.interceptWindowMs);
     setMaxAttempts(settings.maxInterceptAttempts);
   }
@@ -186,7 +191,7 @@ export function LobbyCreateForm({ initialError }: Props) {
     return {
       battleMode: isAsync ? "async" : "turn-based",
       difficulty,
-      attackCooldownMs: cooldownMs,
+      attackCooldownMs: Math.max(cooldownMs, minimumAttackCooldownMs(difficulty)),
       interceptWindowMs: interceptMs,
       maxInterceptAttempts: maxAttempts,
     };
@@ -275,7 +280,11 @@ export function LobbyCreateForm({ initialError }: Props) {
                   { value: "expert", label: "Эксперт" },
                 ]}
                 value={difficulty}
-                onChange={(value) => setDifficulty(value as DifficultyMode)}
+                onChange={(value) => {
+                  const nextDifficulty = value as DifficultyMode;
+                  setDifficulty(nextDifficulty);
+                  setCooldownMs((current) => Math.max(current, minimumAttackCooldownMs(nextDifficulty)));
+                }}
               />
 
               {difficulty === "beginner" ? (
@@ -299,11 +308,11 @@ export function LobbyCreateForm({ initialError }: Props) {
               <CrtSlider
                 id="setting-cooldown"
                 label="Перезарядка"
-                min={2}
+                min={minimumAttackCooldownMs(difficulty) / 1000}
                 max={60}
                 step={1}
                 value={cooldownMs / 1000}
-                onChange={(value) => setCooldownMs(value * 1000)}
+                onChange={(value) => setCooldownMs(Math.max(value * 1000, minimumAttackCooldownMs(difficulty)))}
                 format={(value) => `${value}с`}
                 disabled={!isAsync}
               />

@@ -30,6 +30,11 @@ type GameState = {
   ownBoard: Board;
   enemyBoard: Board;
   activeMissiles: Missile[];
+  /** Absolute browser times when cell impact VFX should become visible. */
+  impactVfxStartsAt: Record<string, number>;
+  /** Number of guided results whose authoritative snapshot is still hidden. */
+  deferredRevealCount: number;
+  deferredSyncSnapshot: SyncSnapshot | null;
   isMyTurn: boolean;
   winnerId: string | null;
   shotLog: ShotLogEntry[];
@@ -55,6 +60,33 @@ type SyncSnapshot = {
   attackCooldownExpiresAt?: number | undefined;
 };
 
+function cooldownFromSnapshot(
+  current: number | null,
+  expiresAt: number | undefined,
+): number | null {
+  if (expiresAt !== undefined && expiresAt > 0) return expiresAt;
+  if (expiresAt === 0) return null;
+  return current;
+}
+
+function syncStatePatch(state: GameState, snapshot: SyncSnapshot): Partial<GameState> {
+  return {
+    phase: snapshot.phase,
+    ownBoard: snapshot.ownBoard,
+    enemyBoard: snapshot.enemyBoard,
+    activeMissiles: snapshot.activeMissiles ?? state.activeMissiles,
+    isMyTurn: snapshot.isMyTurn,
+    winnerId: snapshot.winnerId ?? null,
+    // Server snapshot is perspective-correct for this player; replace local optimistic log.
+    shotLog: snapshot.shotLog ?? state.shotLog,
+    settings: snapshot.settings ?? state.settings,
+    attackCooldownExpiresAt: cooldownFromSnapshot(
+      state.attackCooldownExpiresAt,
+      snapshot.attackCooldownExpiresAt,
+    ),
+  };
+}
+
 type GameActions = {
   setPhase(phase: GamePhase): void;
   setSession(playerId: string, roomId: string): void;
@@ -69,6 +101,9 @@ type GameActions = {
   addShotEntry(entry: ShotLogEntry): void;
   /** Called on ATTACK_COOLDOWN_UPDATE event (async mode) */
   setAttackCooldown(expiresAt: number): void;
+  scheduleImpactVfx(key: string, startsAt: number): void;
+  beginRevealDelay(): void;
+  releaseRevealDelay(): void;
   reset(): void;
 };
 
@@ -82,6 +117,9 @@ function makeInitialState(): GameState {
     ownBoard: {} as Board,
     enemyBoard: {} as Board,
     activeMissiles: [],
+    impactVfxStartsAt: {},
+    deferredRevealCount: 0,
+    deferredSyncSnapshot: null,
     isMyTurn: false,
     winnerId: null,
     shotLog: [],
@@ -136,26 +174,21 @@ export const useGameStore = create<GameStore>((set) => ({
 
   toggleTurn() { set((state) => ({ isMyTurn: !state.isMyTurn })); },
 
-  syncFromServer({ phase, ownBoard, enemyBoard, activeMissiles, isMyTurn, winnerId, shotLog, settings, attackCooldownExpiresAt }) {
-    set((state) => ({
-      phase,
-      ownBoard,
-      enemyBoard,
-      activeMissiles: activeMissiles ?? state.activeMissiles,
-      isMyTurn,
-      winnerId: winnerId ?? null,
-      // Server snapshot is perspective-correct for this player; replace local optimistic log.
-      shotLog: shotLog ?? state.shotLog,
-      // Always update settings when server sends them
-      settings: settings ?? state.settings,
-      // attackCooldownExpiresAt: 0 from server means "not on cooldown"
-      attackCooldownExpiresAt:
-        attackCooldownExpiresAt !== undefined && attackCooldownExpiresAt > 0
-          ? attackCooldownExpiresAt
-          : attackCooldownExpiresAt === 0
-            ? null
-            : state.attackCooldownExpiresAt,
-    }));
+  syncFromServer(snapshot) {
+    set((state) => {
+      if (state.deferredRevealCount > 0) {
+        return {
+          deferredSyncSnapshot: snapshot,
+          // Cooldown/settings are safe to update while board results remain hidden.
+          settings: snapshot.settings ?? state.settings,
+          attackCooldownExpiresAt: cooldownFromSnapshot(
+            state.attackCooldownExpiresAt,
+            snapshot.attackCooldownExpiresAt,
+          ),
+        };
+      }
+      return syncStatePatch(state, snapshot);
+    });
   },
 
   addShotEntry(entry) {
@@ -164,6 +197,34 @@ export const useGameStore = create<GameStore>((set) => ({
 
   setAttackCooldown(expiresAt) {
     set({ attackCooldownExpiresAt: expiresAt > Date.now() ? expiresAt : null });
+  },
+
+  scheduleImpactVfx(key, startsAt) {
+    set((state) => ({
+      impactVfxStartsAt: { ...state.impactVfxStartsAt, [key]: startsAt },
+    }));
+  },
+
+  beginRevealDelay() {
+    set((state) => ({ deferredRevealCount: state.deferredRevealCount + 1 }));
+  },
+
+  releaseRevealDelay() {
+    set((state) => {
+      const deferredRevealCount = Math.max(0, state.deferredRevealCount - 1);
+      if (deferredRevealCount > 0) return { deferredRevealCount };
+
+      const snapshot = state.deferredSyncSnapshot;
+      if (snapshot === null) {
+        return { deferredRevealCount, deferredSyncSnapshot: null };
+      }
+
+      return {
+        ...syncStatePatch(state, snapshot),
+        deferredRevealCount,
+        deferredSyncSnapshot: null,
+      };
+    });
   },
 
   reset() { set(makeInitialState()); },

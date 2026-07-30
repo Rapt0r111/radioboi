@@ -238,6 +238,14 @@ export class GameClient {
       }
       return;
     }
+    if (event.type === GameEventType.RESOLVE_HIT) {
+      // Reserve the reveal window before applying RESOLVE_HIT; the following
+      // SYNC_STATE must be held until the flight animation has completed.
+      this.#dispatch(event);
+      this.#applyToStore(event);
+      return;
+    }
+
     this.#applyToStore(event);
     this.#dispatch(event);
   }
@@ -277,10 +285,12 @@ export class GameClient {
         break;
 
       case GameEventType.RESOLVE_HIT:
-        store.interceptMissile(event.payload.missileId);
-        if (event.payload.isGameOver) {
-          store.setPhase("gameOver");
-          useGameStore.setState({ winnerId: event.payload.winnerId ?? null });
+        if (store.deferredRevealCount === 0) {
+          store.interceptMissile(event.payload.missileId);
+          if (event.payload.isGameOver) {
+            store.setPhase("gameOver");
+            useGameStore.setState({ winnerId: event.payload.winnerId ?? null });
+          }
         }
         break;
 

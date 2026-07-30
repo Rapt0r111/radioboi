@@ -11,7 +11,12 @@ import {
   parseCoordinate,
   type Coordinate,
 } from "@radioboi/game-core";
-import { MORSE_REVERSE, type BattleSoundEffect, type MorseEngine } from "@radioboi/morse-engine";
+import {
+  MORSE_REVERSE,
+  type BattleSoundEffect,
+  type GuidedMissileTimeline,
+  type MorseEngine,
+} from "@radioboi/morse-engine";
 import { type RefObject, useEffect, useRef } from "react";
 import type { RadarRef } from "@/src/components/RadarCanvas";
 import type { GameClient } from "@/src/lib/network/gameClient";
@@ -88,6 +93,32 @@ function playBattleEffect(morseEngine: MorseEngine | null, effect: BattleSoundEf
   morseEngine?.playBattleEffect(effect);
 }
 
+function playMissileLaunchAudio(
+  morseEngine: MorseEngine | null,
+  isGuided: boolean,
+): GuidedMissileTimeline | null {
+  if (isGuided) {
+    return morseEngine?.playGuidedMissileSequence() ?? null;
+  } else {
+    playBattleEffect(morseEngine, "missileLaunch");
+    return null;
+  }
+}
+
+function playMissileImpactAudio(
+  morseEngine: MorseEngine | null,
+  result: "hit" | "miss" | "sunk",
+  isGuided: boolean,
+): number {
+  if (isGuided) {
+    const effect = result === "sunk" ? "guidedSunk" : result === "hit" ? "guidedHit" : "guidedMiss";
+    return morseEngine?.playGuidedMissileImpact(effect) ?? 0;
+  }
+
+  playBattleEffect(morseEngine, result);
+  return 0;
+}
+
 function toRadarPoint(coord: Coordinate): { x: number; y: number } {
   const { colIndex, rowIndex } = parseCoordinate(coord);
   return { x: (colIndex + 0.5) / 10, y: (rowIndex + 0.5) / 10 };
@@ -118,16 +149,57 @@ export function useGameLoop(
       return;
     }
 
+    const flightTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const scheduleFlight = (
+      missileId: string,
+      timeline: GuidedMissileTimeline | null,
+      callback: () => void,
+    ) => {
+      const previous = flightTimers.get(missileId);
+      if (previous !== undefined) clearTimeout(previous);
+      const delay = timeline?.flightStartsInMs ?? 0;
+      const timer = setTimeout(() => {
+        flightTimers.delete(missileId);
+        callback();
+      }, delay);
+      flightTimers.set(missileId, timer);
+    };
+    const cancelFlight = (missileId: string) => {
+      const timer = flightTimers.get(missileId);
+      if (timer !== undefined) clearTimeout(timer);
+      flightTimers.delete(missileId);
+    };
+
     // ── INCOMING_MISSILE ──────────────────────────────────────────────────
     const stopIncoming = transport.on(GameEventType.INCOMING_MISSILE, (event) => {
       // Async mode has no intercept phase; stale incoming frames are ignored defensively.
       const settings = useGameStore.getState().settings;
       if (settings.battleMode === "async") return;
-      playBattleEffect(morseEngine, "missileLaunch");
-      void radarWorker.current?.triggerEffect("rocket", 0.5, 0.5);
+      const isGuided = settings.difficulty !== "expert";
+      const launchTimeline = playMissileLaunchAudio(morseEngine, isGuided);
       const windowMs = settings?.interceptWindowMs ?? INTERCEPT_WINDOW_MS;
 
       const playbackSequence = toPlaybackSequence(event.payload.morseSequence);
+      const incomingTarget = decodeBoardMorseSequence(event.payload.morseSequence);
+      scheduleFlight(event.payload.missileId, launchTimeline, () => {
+        if (incomingTarget !== null) {
+          const point = toRadarPoint(incomingTarget);
+          void radarWorker.current?.updateMissile(
+            event.payload.missileId,
+            point.x,
+            point.y,
+            0,
+            launchTimeline?.flightDurationMs,
+          );
+        } else {
+          void radarWorker.current?.triggerEffect(
+            "rocket",
+            0.5,
+            0.5,
+            launchTimeline?.flightDurationMs,
+          );
+        }
+      });
 
       const deadline =
         typeof event.payload.expiresAt === "number"
@@ -144,15 +216,23 @@ export function useGameLoop(
         lastInterceptWrong: false,
       });
 
-      morseEngine?.playBattleEffect("incomingMissile");
+      if (!isGuided) morseEngine?.playBattleEffect("incomingMissile");
       void morseEngine?.playSequence(playbackSequence);
     });
 
     // Async mode resolves immediately, so the opponent receives this launch-only
     // event before RESOLVE_HIT. The target remains private until the result arrives.
-    const stopFired = transport.on(GameEventType.MISSILE_FIRED, () => {
-      playBattleEffect(morseEngine, "missileLaunch");
-      void radarWorker.current?.triggerEffect("rocket", 0.5, 0.5);
+    const stopFired = transport.on(GameEventType.MISSILE_FIRED, (event) => {
+      const isGuided = useGameStore.getState().settings.difficulty !== "expert";
+      const launchTimeline = playMissileLaunchAudio(morseEngine, isGuided);
+      scheduleFlight(event.payload.missileId, launchTimeline, () => {
+        void radarWorker.current?.triggerEffect(
+          "rocket",
+          0.5,
+          0.5,
+          launchTimeline?.flightDurationMs,
+        );
+      });
     });
 
     // ── RESOLVE_HIT ───────────────────────────────────────────────────────
@@ -161,43 +241,73 @@ export function useGameLoop(
 
       const isByThem = event.payload.attackerId !== store.playerId;
       const boardUpdater = isByThem ? store.applyOwnHit : store.applyEnemyShot;
+      const isGuided = store.settings.difficulty !== "expert";
 
-      void radarWorker.current?.removeMissile(event.payload.missileId);
+      // RESOLVE_HIT is delivered before the authoritative SYNC_STATE. Reserve
+      // the reveal window before GameClient applies either event, so neither
+      // player sees a hit/miss board state during shooting -> flying.
+      if (isGuided) store.beginRevealDelay();
+
+      // Keep the flight timer alive even when RESOLVE_HIT arrives early: the
+      // opponent still needs to see the same `flying` animation before the
+      // delayed impact is revealed.
       const point = toRadarPoint(event.payload.target);
-      void radarWorker.current?.triggerEffect(event.payload.result, point.x, point.y);
-      if (event.payload.result === "hit" || event.payload.result === "sunk") {
-        void radarWorker.current?.triggerEffect("fire", point.x, point.y);
-        void radarWorker.current?.triggerEffect("bubble", point.x, point.y);
-      }
-      removeMissileFromStore(event.payload.missileId);
-      boardUpdater(event.payload.target, event.payload.result);
+      const impactVfxKey = `${isByThem ? "own" : "enemy"}:${event.payload.target}`;
+      const impactDelayMs = playMissileImpactAudio(
+        morseEngine,
+        event.payload.result,
+        store.settings.difficulty !== "expert",
+      );
+      const impactStartsAt = Date.now() + impactDelayMs;
+      store.scheduleImpactVfx(impactVfxKey, impactStartsAt);
 
-      store.addShotEntry({
-        by: isByThem ? "them" : "us",
-        coord: formatCoordForLog(event.payload.target),
-        result: event.payload.result,
-        ts: Date.now(),
-      });
+      const finishRadarEffect = () => {
+        void radarWorker.current?.removeMissile(event.payload.missileId);
+        void radarWorker.current?.triggerEffect(event.payload.result, point.x, point.y);
+      };
+      const revealResult = () => {
+        removeMissileFromStore(event.payload.missileId);
+        boardUpdater(event.payload.target, event.payload.result);
+        store.addShotEntry({
+          by: isByThem ? "them" : "us",
+          coord: formatCoordForLog(event.payload.target),
+          result: event.payload.result,
+          ts: Date.now(),
+        });
 
-      if (event.payload.isGameOver) {
-        store.setPhase("gameOver");
-      }
+        if (event.payload.isGameOver) {
+          store.setPhase("gameOver");
+          useGameStore.setState({ winnerId: event.payload.winnerId ?? null });
+        }
 
-      if (event.payload.result === "sunk") {
-        playBattleEffect(morseEngine, "sunk");
-      } else if (event.payload.result === "hit") {
-        playBattleEffect(morseEngine, "hit");
-      } else {
-        playBattleEffect(morseEngine, "miss");
-      }
+        if (isGuided) store.releaseRevealDelay();
+        resetGameLoopRuntimeState();
+      };
+      const revealAtImpact = () => {
+        finishRadarEffect();
+        revealResult();
+      };
+      // A zero delay still uses a task boundary so GameClient can finish
+      // deferring the same RESOLVE_HIT before applying the next frame.
+      setTimeout(revealAtImpact, Math.max(0, impactDelayMs));
+      setTimeout(() => {
+        const current = useGameStore.getState().impactVfxStartsAt[impactVfxKey];
+        if (current === impactStartsAt) {
+          useGameStore.setState((state) => {
+            const next = { ...state.impactVfxStartsAt };
+            delete next[impactVfxKey];
+            return { impactVfxStartsAt: next };
+          });
+        }
+      }, impactDelayMs + 2_500);
 
-      resetGameLoopRuntimeState();
     });
 
     const stopIntercepted = transport.on(GameEventType.MISSILE_INTERCEPTED, (event) => {
       const runtime = readRuntimeState();
       const isByThem = runtime.incomingMissileId === event.payload.missileId;
 
+      cancelFlight(event.payload.missileId);
       void radarWorker.current?.removeMissile(event.payload.missileId);
       const point = toRadarPoint(event.payload.target);
       void radarWorker.current?.triggerEffect("intercept", point.x, point.y);
@@ -211,7 +321,10 @@ export function useGameLoop(
 
     // ── SYNC_STATE ────────────────────────────────────────────────────────
     const stopSync = transport.on(GameEventType.SYNC_STATE, (event) => {
-      if (event.payload.activeMissiles.length === 0) {
+      if (
+        event.payload.activeMissiles.length === 0 &&
+        useGameStore.getState().deferredRevealCount === 0
+      ) {
         resetGameLoopRuntimeState();
       }
     });
@@ -245,6 +358,8 @@ export function useGameLoop(
       stopSync();
       stopCooldown();
       stopError();
+      for (const timer of flightTimers.values()) clearTimeout(timer);
+      flightTimers.clear();
       cleanupRef.current = () => {};
     };
 

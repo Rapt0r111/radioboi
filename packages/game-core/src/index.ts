@@ -64,4 +64,9 @@ export type {
   Missile,
   RoomSettings,
 } from "./types";
-export { DEFAULT_ROOM_SETTINGS } from "./types";
+export {
+  DEFAULT_ROOM_SETTINGS,
+  MIN_ATTACK_COOLDOWN_MS,
+  MIN_GUIDED_ATTACK_COOLDOWN_MS,
+  minimumAttackCooldownMs,
+} from "./types";

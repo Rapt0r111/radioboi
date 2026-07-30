@@ -13,6 +13,7 @@ import {
   coordinateToMorseNotation,
   GameEventType,
   makeCoordinate,
+  minimumAttackCooldownMs,
   type MorseSymbol,
   parseCoordinate,
   type RoomSettings,
@@ -129,7 +130,12 @@ function readStoredRoomSettings(roomId: string): RoomSettings | undefined {
     return {
       battleMode: parsed.battleMode === "async" ? "async" : "turn-based",
       difficulty,
-      attackCooldownMs: typeof parsed.attackCooldownMs === "number" ? parsed.attackCooldownMs : 2_000,
+      attackCooldownMs: Math.max(
+        typeof parsed.attackCooldownMs === "number"
+          ? parsed.attackCooldownMs
+          : minimumAttackCooldownMs(difficulty),
+        minimumAttackCooldownMs(difficulty),
+      ),
       interceptWindowMs: typeof parsed.interceptWindowMs === "number" ? parsed.interceptWindowMs : 25_000,
       maxInterceptAttempts: typeof parsed.maxInterceptAttempts === "number" ? parsed.maxInterceptAttempts : 3,
     };
@@ -177,6 +183,7 @@ export function GameClientWrapper({ roomId }: Props) {
   const enemyBoard = useGameStore(selectEnemyBoard);
   const isMyTurn = useGameStore(selectIsMyTurn);
   const ownBoard = useGameStore(selectOwnBoard);
+  const impactVfxStartsAt = useGameStore((s) => s.impactVfxStartsAt);
   const playerId = useGameStore((s) => s.playerId);
   const setSession = useGameStore((s) => s.setSession);
   const settings = useGameStore(selectSettings);
@@ -227,6 +234,8 @@ export function GameClientWrapper({ roomId }: Props) {
   });
 
   const missileInFlightRef = useRef(false);
+  const missileFlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resolvedAttackIdRef = useRef<string | null>(null);
   const pendingAttackRef = useRef<{ id: string; target: Coordinate } | null>(null);
   const [missileInFlightUI, setMissileInFlightUI] = useState(false);
   const radarRef = useRef<RadarRef>(null);
@@ -279,11 +288,19 @@ export function GameClientWrapper({ roomId }: Props) {
 
     const stopResolve = transport.on(GameEventType.RESOLVE_HIT, (event) => {
       if (pendingAttackRef.current?.id === event.payload.missileId) {
+        // Keep the radar missile timer alive until the delayed impact sound:
+        // async results can arrive before the `flying` sample has started.
+        resolvedAttackIdRef.current = event.payload.missileId;
         pendingAttackRef.current = null;
       }
     });
     const stopIntercepted = transport.on(GameEventType.MISSILE_INTERCEPTED, (event) => {
       if (pendingAttackRef.current?.id === event.payload.missileId) {
+        if (missileFlightTimerRef.current !== null) {
+          clearTimeout(missileFlightTimerRef.current);
+          missileFlightTimerRef.current = null;
+        }
+        resolvedAttackIdRef.current = null;
         pendingAttackRef.current = null;
       }
     });
@@ -300,9 +317,14 @@ export function GameClientWrapper({ roomId }: Props) {
       };
 
       if (pending) {
+        if (missileFlightTimerRef.current !== null) {
+          clearTimeout(missileFlightTimerRef.current);
+          missileFlightTimerRef.current = null;
+        }
         useGameStore.getState().removeMissile(pending.id);
         useGameStore.getState().setAttackCooldown(0);
         void radarRef.current?.removeMissile(pending.id);
+        resolvedAttackIdRef.current = null;
         pendingAttackRef.current = null;
         missileInFlightRef.current = false;
         setMissileInFlightUI(false);
@@ -341,6 +363,11 @@ export function GameClientWrapper({ roomId }: Props) {
       resetGameLoopRuntimeState();
       setSelectedTarget(null);
       pendingAttackRef.current = null;
+      resolvedAttackIdRef.current = null;
+      if (missileFlightTimerRef.current !== null) {
+        clearTimeout(missileFlightTimerRef.current);
+        missileFlightTimerRef.current = null;
+      }
       missileInFlightRef.current = false;
       setMissileInFlightUI(false);
       setTransport(null);
@@ -460,10 +487,29 @@ export function GameClientWrapper({ roomId }: Props) {
     missileInFlightRef.current = true;
     pendingAttackRef.current = { id: missileId, target: coord };
     setMissileInFlightUI(true);
-    morseEngine?.playBattleEffect("missileLaunch");
-    void radarRef.current?.triggerEffect("rocket", radarPoint.x, radarPoint.y);
+    const launchTimeline = isExpert ? null : morseEngine?.playGuidedMissileSequence() ?? null;
+    if (isExpert) {
+      morseEngine?.playBattleEffect("missileLaunch");
+      void radarRef.current?.triggerEffect("rocket", radarPoint.x, radarPoint.y, 600);
+    }
     useGameStore.getState().addMissile({ id: missileId, launchedAt: timestamp, target: coord });
-    void radarRef.current?.updateMissile(missileId, radarPoint.x, radarPoint.y, 0);
+    if (missileFlightTimerRef.current !== null) clearTimeout(missileFlightTimerRef.current);
+    const flightDelayMs = launchTimeline?.flightStartsInMs ?? 0;
+    missileFlightTimerRef.current = setTimeout(() => {
+      missileFlightTimerRef.current = null;
+      if (
+        pendingAttackRef.current?.id !== missileId &&
+        resolvedAttackIdRef.current !== missileId
+      ) return;
+      resolvedAttackIdRef.current = null;
+      void radarRef.current?.updateMissile(
+        missileId,
+        radarPoint.x,
+        radarPoint.y,
+        0,
+        launchTimeline?.flightDurationMs,
+      );
+    }, flightDelayMs);
     transport.send({ type: GameEventType.ATTACK_PREP, payload: { missileId, target: coord } });
     transport.send({ type: GameEventType.MISSILE_LAUNCHED, payload: { missileId, morseSequence, target: coord, timestamp } });
     setSelectedTarget(null);
@@ -735,6 +781,7 @@ export function GameClientWrapper({ roomId }: Props) {
               <BoardGrid
                 board={enemyBoard}
                 isEnemy
+                impactVfxStartsAt={impactVfxStartsAt}
                 selectedCoord={selectedTarget}
                 isInteractive={canSelectEnemyTarget}
                 disabledMessage={enemyBoardDisabledMessage}
@@ -927,7 +974,7 @@ export function GameClientWrapper({ roomId }: Props) {
               </p>
             </div>
             <div className="inline-block max-w-full overflow-auto">
-              <BoardGrid board={ownBoard} isEnemy={false} />
+              <BoardGrid board={ownBoard} isEnemy={false} impactVfxStartsAt={impactVfxStartsAt} />
             </div>
 
             <div className="mt-auto grid grid-cols-2 gap-1.5 rounded border border-ocean-800/50 bg-ocean-950/35 p-2">

@@ -266,14 +266,34 @@ test("async room starts without turn or intercept gating and keeps miss markers"
   await expect(firstEnemyCell).toBeDisabled();
 });
 
-test("resolved fire and splash effects remain visible after the impact sound window", async ({
+test("resolved smoke, fire, and splash effects remain visible after the impact sound window", async ({
   page,
 }) => {
+  const roomId = "PERSIST1";
   const hitTarget = makeCoordinate(0, 0);
   const missTarget = makeCoordinate(1, 0);
+  const sunkTarget = makeCoordinate(2, 0);
 
-  await page.goto("/game/PERSIST1");
+  await page.addInitScript((id) => {
+    sessionStorage.setItem(
+      `radioboi:settings:${id}`,
+      JSON.stringify({
+        battleMode: "async",
+        difficulty: "normal",
+        attackCooldownMs: 2000,
+        interceptWindowMs: 25000,
+        maxInterceptAttempts: 3,
+      }),
+    );
+  }, roomId);
+
+  await page.goto(`/game/${roomId}`);
   await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);
+
+  await emitServerEvent(page, {
+    type: "GAME_STARTED",
+    payload: { firstTurnPlayerId: "" },
+  });
 
   await emitServerEvent(page, {
     type: "SYNC_STATE",
@@ -282,42 +302,90 @@ test("resolved fire and splash effects remain visible after the impact sound win
       ownBoard: {},
       enemyBoard: {},
       activeMissiles: [],
-      isMyTurn: true,
+      isMyTurn: false,
       shotLog: [],
+      settings: {
+        battleMode: "async",
+        difficulty: "normal",
+        attackCooldownMs: 2000,
+        interceptWindowMs: 25000,
+        maxInterceptAttempts: 3,
+      },
+      attackCooldownExpiresAt: 0,
     },
   });
+
+  const enemyBoard = page.locator('table[aria-label="Поле противника"]');
+  await expect(enemyBoard.locator(`button[data-coord="${hitTarget}"]`)).toBeEnabled();
 
   const playerId = await page.evaluate(() => sessionStorage.getItem("radioboi:playerId"));
   expect(playerId).not.toBeNull();
 
-  for (const [missileId, target, result] of [
-    ["persist-hit", hitTarget, "hit"],
-    ["persist-miss", missTarget, "miss"],
-  ] as const) {
-    await emitServerEvent(page, {
-      type: "RESOLVE_HIT",
-      payload: {
-        missileId,
-        attackerId: playerId,
-        target,
-        result,
-        nextTurnPlayerId: "",
-        isGameOver: false,
-        wasIntercepted: false,
-      },
-    });
-  }
-
-  const enemyBoard = page.locator("table").first();
-  const fire = enemyBoard.locator(`button[data-coord="${hitTarget}"] .battle-cell-vfx--hit`);
+  const hitSmoke = enemyBoard.locator(`button[data-coord="${hitTarget}"] .battle-cell-vfx--hit`);
   const splash = enemyBoard.locator(`button[data-coord="${missTarget}"] .battle-cell-vfx--miss`);
+  const sunkFire = enemyBoard.locator(`button[data-coord="${sunkTarget}"] .battle-cell-vfx--sunk`);
 
-  await expect(fire).toBeVisible();
+  await emitServerEvent(page, {
+    type: "RESOLVE_HIT",
+    payload: {
+      missileId: "persist-hit",
+      attackerId: playerId,
+      target: hitTarget,
+      result: "hit",
+      nextTurnPlayerId: "",
+      isGameOver: false,
+      wasIntercepted: false,
+    },
+  });
+  await expect(hitSmoke).toBeVisible();
+
+  await emitServerEvent(page, {
+    type: "RESOLVE_HIT",
+    payload: {
+      missileId: "persist-miss",
+      attackerId: playerId,
+      target: missTarget,
+      result: "miss",
+      nextTurnPlayerId: "",
+      isGameOver: false,
+      wasIntercepted: false,
+    },
+  });
   await expect(splash).toBeVisible();
+
+  await emitServerEvent(page, {
+    type: "RESOLVE_HIT",
+    payload: {
+      missileId: "persist-sunk",
+      attackerId: playerId,
+      target: sunkTarget,
+      result: "sunk",
+      nextTurnPlayerId: "",
+      isGameOver: false,
+      wasIntercepted: false,
+    },
+  });
+  await expect(sunkFire).toBeVisible();
+  await expect(hitSmoke.locator(".battle-smoke")).toHaveCount(4);
+  await expect(hitSmoke.locator(".battle-flame")).toHaveCount(0);
+  await expect(sunkFire.locator(".battle-flame")).toHaveCount(3);
   await page.waitForTimeout(2_200);
 
-  await expect(fire).toHaveCSS("opacity", "1");
+  await expect(hitSmoke).toHaveCSS("opacity", "1");
   await expect(splash).toHaveCSS("opacity", "1");
+  await expect(sunkFire).toHaveCSS("opacity", "1");
+  await expect(hitSmoke.locator(".battle-smoke").first()).toHaveCSS(
+    "animation-iteration-count",
+    "infinite",
+  );
+  await expect(splash.locator(".battle-splash").first()).toHaveCSS(
+    "animation-iteration-count",
+    "infinite",
+  );
+  await expect(sunkFire.locator(".battle-flame").first()).toHaveCSS(
+    "animation-iteration-count",
+    "infinite",
+  );
 });
 
 test("game over page renders the detailed battle report", async ({ page }) => {

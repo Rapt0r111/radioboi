@@ -1,15 +1,7 @@
-﻿// apps/web/src/components/BoardGrid.tsx
+// apps/web/src/components/BoardGrid.tsx
 "use client";
-//
-// PERF OVERHAUL:
-//   PERF-1: cellClass() memoized via module-level cache (string key → className).
-//           The function was called on every render for every cell (100 cells × renders).
-//   PERF-2: VFX spans reduced — hit uses 4 spans (was 8), sunk uses 8 (was 13),
-//           miss uses 5 (was 7). Each removed span = one less composited layer.
-//   PERF-3: cellVfx() result is a stable module-level constant for each state,
-//           not created fresh every render.
-//   PERF-4: BoardGrid wrapped in React.memo to prevent re-render when parent
-//           updates unrelated state.
+// Cell classes are cached and the grid is memoized. Resolved VFX have a small,
+// procedural particle budget: hit uses smoke, sunk uses fire, and misses splash.
 
 import {
   type Board,
@@ -20,7 +12,7 @@ import {
   type Coordinate,
   ROWS,
 } from "@radioboi/game-core";
-import { memo, type ReactNode } from "react";
+import { memo, useEffect, useState, type CSSProperties, type ReactElement } from "react";
 
 // ── Cell class computation ────────────────────────────────────────────────────
 
@@ -105,62 +97,199 @@ function cellSymbol(state: CellState | undefined, isEnemy: boolean, isPlacement:
   }
 }
 
-// ── VFX elements ───────────────────────────────────────────────────────────────
-// PERF-2: Reduced span counts. Each <span> is a compositor layer candidate.
-// Removed: battle-smoke--two, battle-bubble--two/three on hit,
-//          battle-flame--deep on hit, battle-bubble--three on miss.
-// PERF-3: Results are module-level constants — React reuses them across renders
-//          (referential equality → no child reconciliation needed).
+// Procedural VFX
+// Effects use fewer layers than the former fixed templates and receive fresh
+// Web Crypto entropy after each page load. Their shape, phase, and timing are
+// therefore unique for every board/session without animating layout properties.
 
-const VFX_HIT: ReactNode = (
-  <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--hit">
-    <span className="battle-flame battle-flame--left" />
-    <span className="battle-flame battle-flame--mid" />
-    <span className="battle-flame battle-flame--right" />
-    <span className="battle-smoke" />
-    <span className="battle-ember battle-ember--one" />
-    <span className="battle-ember battle-ember--two" />
-    <span className="battle-bubble battle-bubble--one" />
-  </span>
-);
+type VfxStyle = CSSProperties & Record<`--${string}`, string>;
+type ParticleKind = "bubble" | "cross" | "ember" | "flame" | "ring" | "smoke" | "splash";
+const PARTICLE_KEYS = ["alpha", "bravo", "charlie", "delta"] as const;
 
-const VFX_SUNK: ReactNode = (
-  <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--sunk">
-    <span className="battle-flame battle-flame--left" />
-    <span className="battle-flame battle-flame--mid" />
-    <span className="battle-flame battle-flame--right" />
-    <span className="battle-flame battle-flame--deep" />
-    <span className="battle-smoke" />
-    <span className="battle-smoke battle-smoke--two" />
-    <span className="battle-ember battle-ember--one" />
-    <span className="battle-ember battle-ember--two" />
-    <span className="battle-ember battle-ember--three" />
-    <span className="battle-sunk-cross" />
-  </span>
-);
+function mixSeed(seed: number): number {
+  let value = seed | 0;
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
+  return value ^ (value >>> 16);
+}
 
-const VFX_MISS: ReactNode = (
-  <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--miss">
-    <span className="battle-water-ring battle-water-ring--one" />
-    <span className="battle-water-ring battle-water-ring--two" />
-    <span className="battle-splash battle-splash--one" />
-    <span className="battle-splash battle-splash--two" />
-    <span className="battle-bubble battle-bubble--one" />
-  </span>
-);
+function proceduralUnit(seed: number, salt: number): number {
+  return (mixSeed(seed + salt) >>> 0) / 0x1_0000_0000;
+}
 
-const VFX_BLOCKED: ReactNode = (
-  <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--blocked" />
-);
-
-function cellVfx(state: CellState | undefined): ReactNode {
-  switch (state) {
-    case "hit":     return VFX_HIT;
-    case "sunk":    return VFX_SUNK;
-    case "miss":    return VFX_MISS;
-    case "blocked": return VFX_BLOCKED;
-    default:        return null;
+function createVfxSessionSeed(): number {
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const entropy = new Uint32Array(1);
+    crypto.getRandomValues(entropy);
+    return entropy[0] ?? 0;
   }
+  return (Date.now() ^ (Math.random() * 0x1_0000_0000)) >>> 0;
+}
+
+function useVfxSessionSeed(): number {
+  // Keep SSR and the initial hydration render identical, then introduce a new
+  // session seed before an animation becomes perceptible.
+  const [seed, setSeed] = useState(0);
+  useEffect(() => {
+    setSeed(createVfxSessionSeed());
+  }, []);
+  return seed;
+}
+
+function effectSeed(sessionSeed: number, coord: Coordinate, state: CellState): number {
+  let seed = sessionSeed ^ state.length;
+  for (let index = 0; index < coord.length; index++) {
+    seed = mixSeed(seed ^ coord.charCodeAt(index));
+  }
+  return seed;
+}
+
+function seconds(value: number): string {
+  return `${value.toFixed(2)}s`;
+}
+
+function particleStyle(kind: ParticleKind, seed: number, index: number): VfxStyle {
+  const random = (salt: number) => proceduralUnit(seed, index * 97 + salt);
+  const duration = 0.72 + random(2) * 1.45;
+  const timing = {
+    "--vfx-delay": seconds(random(1) * 0.22),
+    "--vfx-duration": seconds(duration),
+  };
+
+  switch (kind) {
+    case "flame":
+      return {
+        ...timing,
+        "--vfx-bottom": `${12 + random(3) * 13}%`,
+        "--vfx-height": `${42 + random(4) * 35}%`,
+        "--vfx-left": `${31 + random(5) * 38}%`,
+        "--vfx-width": `${23 + random(6) * 24}%`,
+      };
+    case "smoke":
+      return {
+        ...timing,
+        // A negative delay starts each persistent cloud at a different point
+        // in its loop, so a hit is never an empty, synchronized plume.
+        "--vfx-delay": seconds(-random(1) * duration),
+        "--smoke-drift": `${Math.round(-15 + random(7) * 30)}px`,
+        "--vfx-bottom": `${6 + random(8) * 12}%`,
+        "--vfx-height": `${42 + random(9) * 26}%`,
+        "--vfx-left": `${22 + random(10) * 56}%`,
+        "--vfx-width": `${45 + random(11) * 28}%`,
+      };
+    case "ember":
+      return {
+        ...timing,
+        "--ember-x": `${Math.round(-12 + random(12) * 24)}px`,
+        "--vfx-bottom": `${27 + random(13) * 23}%`,
+        "--vfx-height": `${2 + random(14) * 3}px`,
+        "--vfx-left": `${31 + random(15) * 40}%`,
+        "--vfx-width": `${2 + random(16) * 3}px`,
+      };
+    case "ring":
+      return {
+        ...timing,
+        "--vfx-height": `${34 + random(17) * 24}%`,
+        "--vfx-left": `${42 + random(18) * 16}%`,
+        "--vfx-top": `${43 + random(19) * 14}%`,
+        "--vfx-width": `${65 + random(20) * 26}%`,
+      };
+    case "splash":
+      return {
+        ...timing,
+        "--splash-x": `${Math.round(-12 + random(21) * 24)}px`,
+        "--vfx-bottom": `${31 + random(22) * 19}%`,
+        "--vfx-height": `${10 + random(23) * 12}px`,
+        "--vfx-left": `${32 + random(24) * 36}%`,
+        "--vfx-width": `${3 + random(25) * 4}px`,
+      };
+    case "bubble":
+      return {
+        ...timing,
+        "--bubble-x": `${Math.round(-12 + random(26) * 24)}px`,
+        "--vfx-bottom": `${12 + random(27) * 20}%`,
+        "--vfx-height": `${4 + random(28) * 5}px`,
+        "--vfx-left": `${33 + random(29) * 34}%`,
+        "--vfx-width": `${4 + random(30) * 5}px`,
+      };
+    case "cross":
+      return {
+        ...timing,
+        "--vfx-height": `${62 + random(31) * 14}%`,
+        "--vfx-left": "50%",
+        "--vfx-top": "50%",
+        "--vfx-width": `${62 + random(32) * 14}%`,
+      };
+  }
+}
+
+function particles(kind: ParticleKind, count: number, seed: number): ReactElement[] {
+  return PARTICLE_KEYS.slice(0, count).map((particleKey, index) => (
+    <span
+      key={`${kind}-${seed}-${particleKey}`}
+      className={`battle-${kind === "ring" ? "water-ring" : kind}`}
+      style={particleStyle(kind, seed, index)}
+    />
+  ));
+}
+
+type CellVfxProps = {
+  state: CellState | undefined;
+  coord: Coordinate;
+  sessionSeed: number;
+  impactStartsAt?: number | undefined;
+};
+
+function CellVfx({ state, coord, sessionSeed, impactStartsAt }: CellVfxProps) {
+  const [isVisible, setIsVisible] = useState(
+    () => impactStartsAt === undefined || impactStartsAt <= Date.now(),
+  );
+
+  useEffect(() => {
+    const delayMs = impactStartsAt === undefined ? 0 : impactStartsAt - Date.now();
+    if (delayMs <= 0) {
+      setIsVisible(true);
+      return;
+    }
+
+    setIsVisible(false);
+    const timer = setTimeout(() => setIsVisible(true), delayMs);
+    return () => clearTimeout(timer);
+  }, [impactStartsAt]);
+
+  if (!isVisible) return null;
+  if (state === "blocked") {
+    return <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--blocked" />;
+  }
+  if (state !== "hit" && state !== "miss" && state !== "sunk") return null;
+
+  const seed = effectSeed(sessionSeed, coord, state);
+  if (state === "hit") {
+    return (
+      <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--hit">
+        {particles("flame", 2, seed + 53)}
+        {particles("smoke", 4, seed)}
+      </span>
+    );
+  }
+  if (state === "sunk") {
+    return (
+      <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--sunk">
+        {particles("flame", 3, seed)}
+        {particles("smoke", 2, seed + 101)}
+        {particles("ember", 2, seed + 211)}
+        <span className="battle-sunk-cross" style={particleStyle("cross", seed + 307, 0)} />
+      </span>
+    );
+  }
+
+  return (
+    <span aria-hidden="true" className="battle-cell-vfx battle-cell-vfx--miss">
+      {particles("ring", 1, seed)}
+      {particles("splash", 2, seed + 101)}
+      {particles("bubble", 1, seed + 211)}
+    </span>
+  );
 }
 
 // ── Disabled state ────────────────────────────────────────────────────────────
@@ -186,6 +315,7 @@ type Props = {
   highlightedCoords?: ReadonlySet<Coordinate> | readonly Coordinate[];
   isInteractive?: boolean;
   disabledMessage?: string | undefined;
+  impactVfxStartsAt?: Readonly<Record<string, number>> | undefined;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -202,7 +332,9 @@ export const BoardGrid = memo(function BoardGrid({
   highlightedCoords,
   isInteractive = true,
   disabledMessage,
+  impactVfxStartsAt,
 }: Props) {
+  const vfxSessionSeed = useVfxSessionSeed();
   const highlightedSet =
     highlightedCoords instanceof Set
       ? highlightedCoords
@@ -260,7 +392,12 @@ export const BoardGrid = memo(function BoardGrid({
                     disabled={isDisabled}
                     title={!isInteractive ? disabledMessage : undefined}
                   >
-                    {cellVfx(state)}
+                    <CellVfx
+                      state={state}
+                      coord={coord}
+                      sessionSeed={vfxSessionSeed}
+                      impactStartsAt={impactVfxStartsAt?.[`${isEnemy ? "enemy" : "own"}:${coord}`]}
+                    />
                     <span className="relative z-10 drop-shadow-[0_0_8px_currentColor]">
                       {isSelected ? "\u2295" : cellSymbol(state, isEnemy, isPlacement)}
                     </span>
