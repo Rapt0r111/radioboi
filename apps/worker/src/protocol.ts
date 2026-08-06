@@ -5,7 +5,7 @@
 // NEW:  makeAttackCooldownUpdate — sent to attacker after resolve in async mode.
 
 import { decode, encode } from "@msgpack/msgpack";
-import type { RoomSettings } from "./game-logic";
+import type { PlayerSummary, RoomSettings } from "@radioboi/game-core";
 
 type RawEvent = { type: string; payload: Record<string, unknown> };
 const MAX_FRAME_BYTES = 16_384;
@@ -148,6 +148,7 @@ export function makeSyncState(
   winnerId?: string,
   settings?: RoomSettings,
   attackCooldownExpiresAt?: number,
+  players?: PlayerSummary[],
 ): Uint8Array {
   return encodeEvent({
     type: "SYNC_STATE",
@@ -161,6 +162,7 @@ export function makeSyncState(
       ...(winnerId !== undefined ? { winnerId } : {}),
       ...(settings !== undefined ? { settings } : {}),
       ...(attackCooldownExpiresAt !== undefined ? { attackCooldownExpiresAt } : {}),
+      ...(players !== undefined ? { players } : {}),
     },
   });
 }

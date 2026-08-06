@@ -5,11 +5,27 @@
 // Сервер переводит комнату в phase="placement" когда оба игрока
 // подключились (addPlayer → players.length === 2).
 
+import {
+  selectOpponentDisplayName,
+  selectPlayers,
+  selectSelfDisplayName,
+  useGameStore,
+} from "@/src/store/gameStore";
+
 type Props = {
   roomId: string;
 };
 
 export function LobbyScreen({ roomId }: Props) {
+  const selfName = useGameStore(selectSelfDisplayName);
+  const opponentName = useGameStore((s) =>
+    s.players.some((player) => player.id !== s.playerId)
+      ? selectOpponentDisplayName(s)
+      : null,
+  );
+  const players = useGameStore(selectPlayers);
+  const onlineCount = Math.max(players.length, 1);
+
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-8 px-4 bg-ocean-950">
       <header className="text-center">
@@ -40,7 +56,12 @@ export function LobbyScreen({ roomId }: Props) {
             <span className="text-radar-green">$</span> create-room --secure
           </p>
           <p className="text-miss-white/60">▸ КОМНАТА СОЗДАНА: {roomId}</p>
-          <p className="text-miss-white/40">▸ ОЖИДАНИЕ ПРОТИВНИКА...</p>
+          <p className="text-radar-green/75">▸ ОПЕРАТОР: {selfName}</p>
+          {opponentName ? (
+            <p className="text-morse-amber/70">▸ СОПЕРНИК НА СВЯЗИ: {opponentName}</p>
+          ) : (
+            <p className="text-miss-white/40">▸ ОЖИДАНИЕ ПРОТИВНИКА...</p>
+          )}
         </div>
       </div>
 
@@ -69,7 +90,10 @@ export function LobbyScreen({ roomId }: Props) {
           style={{ animation: "morse-blink 1s step-end infinite" }}
           aria-hidden="true"
         />
-        <span className="uppercase tracking-widest">1/2 игроков онлайн</span>
+        <span className="uppercase tracking-widest">
+          {onlineCount}/2 игроков онлайн
+          {selfName ? ` · ${selfName}` : ""}
+        </span>
       </div>
     </div>
   );

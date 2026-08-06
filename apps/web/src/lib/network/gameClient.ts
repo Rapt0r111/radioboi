@@ -5,6 +5,7 @@ import {
   type ClientGameEvent,
   type Coordinate,
   GameEventType,
+  normalizePlayerName,
   type RoomSettings,
   type ServerGameEvent,
 } from "@radioboi/game-core";
@@ -63,11 +64,13 @@ export class GameClient {
 
   connect(roomId: string, playerId: string, playerName: string, roomSettings?: RoomSettings): void {
     if (this.#destroyed) throw new Error("GameClient has been destroyed");
+    const normalizedPlayerName = normalizePlayerName(playerName) ?? "Player";
     this.#playerId = playerId;
-    this.#playerName = playerName;
+    this.#playerName = normalizedPlayerName;
+    useGameStore.getState().setSession(playerId, roomId, normalizedPlayerName);
     const params = new URLSearchParams({
       playerId,
-      playerName,
+      playerName: normalizedPlayerName,
     });
     if (roomSettings !== undefined) {
       params.set("settings", JSON.stringify(roomSettings));
@@ -255,6 +258,7 @@ export class GameClient {
 
     switch (event.type) {
       case GameEventType.PLAYER_JOINED:
+        store.upsertPlayer({ id: event.payload.playerId, name: event.payload.playerName });
         break;
 
       case GameEventType.GAME_STARTED:

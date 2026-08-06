@@ -10,6 +10,7 @@
 //   - #sendSyncToAll passes settings + per-player cooldown to each client
 
 import { DurableObject } from "cloudflare:workers";
+import { normalizePlayerName } from "@radioboi/game-core";
 import type { RoomSettings, RoomState } from "./game-logic";
 import {
   addAttackerTurnAlarm,
@@ -94,7 +95,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     const url = new URL(request.url);
     const roomId = url.pathname.split("/").pop() ?? "unknown";
     const playerId     = url.searchParams.get("playerId");
-    const playerName   = url.searchParams.get("playerName") ?? "Player";
+    const playerName = normalizePlayerName(url.searchParams.get("playerName")) ?? "Player";
     const roomSettings = url.searchParams.get("settings");
 
     if (!playerId) {
@@ -347,6 +348,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           undefined,
           state.settings,
           undefined,
+          state.players.map(({ id, name }) => ({ id, name })),
         ),
       );
     }
@@ -687,6 +689,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           state.winnerId ?? undefined,
           state.settings,
           cooldownExpires !== undefined && cooldownExpires > now ? cooldownExpires : 0,
+          state.players.map(({ id, name }) => ({ id, name })),
         ),
       );
     }

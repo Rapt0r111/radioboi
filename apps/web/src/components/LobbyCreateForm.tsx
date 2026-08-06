@@ -7,16 +7,22 @@ import {
   DEFAULT_ROOM_SETTINGS,
   MIN_GUIDED_ATTACK_COOLDOWN_MS,
   minimumAttackCooldownMs,
+  normalizePlayerName,
+  PLAYER_NAME_MAX_LENGTH,
   type DifficultyMode,
   type RoomSettings,
 } from "@radioboi/game-core";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { createRoomAction, joinRoomAction } from "../../app/actions";
+import {
+  readPlayerNamePreference,
+  rememberPlayerName,
+  rememberRoomSettings,
+} from "@/src/lib/clientSession";
 
 const ROOM_CODE_RE = /^[A-Z0-9]{6}$/;
-const ROOM_SETTINGS_KEY_PREFIX = "radioboi:settings:";
 
 type Props = {
   initialError?: string;
@@ -171,6 +177,7 @@ export function LobbyCreateForm({ initialError }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [showSettings, setShowSettings] = useState(false);
+  const [playerName, setPlayerName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState(initialError ?? "");
   const [isAsync, setIsAsync] = useState(DEFAULT_ROOM_SETTINGS.battleMode === "async");
@@ -178,6 +185,12 @@ export function LobbyCreateForm({ initialError }: Props) {
   const [cooldownMs, setCooldownMs] = useState(DEFAULT_ROOM_SETTINGS.attackCooldownMs);
   const [interceptMs, setInterceptMs] = useState(DEFAULT_ROOM_SETTINGS.interceptWindowMs);
   const [maxAttempts, setMaxAttempts] = useState(DEFAULT_ROOM_SETTINGS.maxInterceptAttempts);
+
+  // Prefill after mount to avoid SSR/client hydration mismatches.
+  useEffect(() => {
+    const stored = readPlayerNamePreference();
+    if (stored !== null) setPlayerName(stored);
+  }, []);
 
   function applySettings(settings: RoomSettings): void {
     setIsAsync(settings.battleMode === "async");
@@ -197,16 +210,24 @@ export function LobbyCreateForm({ initialError }: Props) {
     };
   }
 
+  function readPlayerName(): string | null {
+    const normalized = normalizePlayerName(playerName);
+    if (normalized !== null) return normalized;
+
+    setJoinError("Введите никнейм игрока.");
+    return null;
+  }
+
   function handleCreate(): void {
+    const name = readPlayerName();
+    if (name === null) return;
+
     startTransition(async () => {
       try {
         const settings = buildSettings();
         const roomId = await createRoomAction(settings);
-        try {
-          sessionStorage.setItem(`${ROOM_SETTINGS_KEY_PREFIX}${roomId}`, JSON.stringify(settings));
-        } catch {
-          // Storage is optional; the server still has the room settings.
-        }
+        rememberPlayerName(name);
+        rememberRoomSettings(roomId, settings);
         router.push(`/game/${roomId}`);
       } catch (error) {
         setJoinError(error instanceof Error ? error.message : "Не удалось создать комнату");
@@ -216,6 +237,9 @@ export function LobbyCreateForm({ initialError }: Props) {
 
   function handleJoin(event: FormEvent): void {
     event.preventDefault();
+    const name = readPlayerName();
+    if (name === null) return;
+
     const code = joinCode.trim().toUpperCase();
     if (!ROOM_CODE_RE.test(code)) {
       setJoinError("Код должен состоять из 6 букв или цифр");
@@ -224,6 +248,7 @@ export function LobbyCreateForm({ initialError }: Props) {
     startTransition(async () => {
       const result = await joinRoomAction(code);
       if ("success" in result && result.success) {
+        rememberPlayerName(name);
         router.push(`/game/${result.roomId}`);
       } else {
         setJoinError("error" in result ? result.error : "Не удалось войти в комнату");
@@ -233,6 +258,31 @@ export function LobbyCreateForm({ initialError }: Props) {
 
   return (
     <div className="flex w-full flex-col gap-5">
+      <section className="rounded border border-radar-green/20 bg-ocean-900/36 p-3 shadow-[0_0_22px_rgba(0,255,136,0.04)]">
+        <label htmlFor="player-name" className="font-mono text-xs uppercase tracking-[0.18em] text-miss-white/58">
+          Никнейм игрока
+        </label>
+        <input
+          id="player-name"
+          name="playerName"
+          type="text"
+          placeholder="Например, Моряк"
+          maxLength={PLAYER_NAME_MAX_LENGTH}
+          autoComplete="nickname"
+          spellCheck={false}
+          required
+          value={playerName}
+          onChange={(event) => {
+            setPlayerName(event.target.value);
+            setJoinError("");
+          }}
+          className="mt-2 w-full rounded border border-ocean-800 bg-ocean-950/80 px-4 py-3 font-mono text-base font-bold text-miss-white outline-none transition-colors duration-150 placeholder:text-miss-white/20 focus:border-radar-green focus-visible:ring-2 focus-visible:ring-radar-green"
+        />
+        <p className="mt-2 font-mono text-[10px] leading-4 text-miss-white/35">
+          До {PLAYER_NAME_MAX_LENGTH} символов. Никнейм увидит соперник.
+        </p>
+      </section>
+
       <section className="rounded border border-radar-green/20 bg-ocean-900/36 p-3 shadow-[0_0_22px_rgba(0,255,136,0.04)]">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>

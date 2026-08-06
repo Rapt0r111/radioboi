@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { DEFAULT_ROOM_SETTINGS, makeCoordinate } from "@radioboi/game-core";
-import { formatCoordForLog, useGameStore } from "../src/store/gameStore";
+import {
+  formatCoordForLog,
+  getOpponentDisplayName,
+  getSelfDisplayName,
+  getWinnerDisplayName,
+  useGameStore,
+} from "../src/store/gameStore";
 
 describe("game store", () => {
   beforeEach(() => {
@@ -11,7 +17,7 @@ describe("game store", () => {
     const coord = makeCoordinate(0, 0);
     const store = useGameStore.getState();
 
-    store.setSession("p1", "room");
+    store.setSession("p1", "room", "Моряк");
     store.placeShip([coord]);
     store.addMissile({ id: "m1", target: coord, launchedAt: 100 });
     store.addShotEntry({ by: "us", coord: "A1", result: "hit", ts: 1 });
@@ -22,7 +28,9 @@ describe("game store", () => {
     expect(useGameStore.getState()).toMatchObject({
       phase: "lobby",
       playerId: null,
+      playerName: "",
       roomId: null,
+      players: [],
       ownBoard: {},
       enemyBoard: {},
       activeMissiles: [],
@@ -32,6 +40,50 @@ describe("game store", () => {
       settings: DEFAULT_ROOM_SETTINGS,
       attackCooldownExpiresAt: null,
     });
+  });
+
+  test("stores the local nickname and opponent roster", () => {
+    const store = useGameStore.getState();
+    store.setSession("p1", "room", "Моряк");
+    store.syncFromServer({
+      phase: "placement",
+      ownBoard: {},
+      enemyBoard: {},
+      isMyTurn: false,
+      players: [
+        { id: "p1", name: "Моряк" },
+        { id: "p2", name: "Радио" },
+      ],
+    });
+
+    expect(useGameStore.getState().playerName).toBe("Моряк");
+    expect(useGameStore.getState().players).toEqual([
+      { id: "p1", name: "Моряк" },
+      { id: "p2", name: "Радио" },
+    ]);
+  });
+
+  test("resolves display names for self, opponent, and winner", () => {
+    useGameStore.getState().setSession("p1", "room", "Моряк");
+    useGameStore.getState().syncFromServer({
+      phase: "battle",
+      ownBoard: {},
+      enemyBoard: {},
+      isMyTurn: true,
+      players: [
+        { id: "p1", name: "Моряк" },
+        { id: "p2", name: "Радио" },
+      ],
+      winnerId: "p2",
+    });
+
+    const state = useGameStore.getState();
+    expect(getSelfDisplayName(state)).toBe("Моряк");
+    expect(getOpponentDisplayName(state)).toBe("Радио");
+    expect(getWinnerDisplayName(state)).toBe("Радио");
+
+    useGameStore.setState({ winnerId: "p1" });
+    expect(getWinnerDisplayName(useGameStore.getState())).toBe("Моряк");
   });
 
   test("applies local board mutations without leaking enemy ships", () => {

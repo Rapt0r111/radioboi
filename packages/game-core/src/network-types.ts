@@ -6,7 +6,7 @@
 //   - settings in SyncStateEvent
 //   - ATTACK_COOLDOWN_UPDATE event
 
-import type { Board, Coordinate, GamePhase, Missile, RoomSettings } from "./types";
+import type { Board, Coordinate, GamePhase, Missile, PlayerSummary, RoomSettings } from "./types";
 
 export type { RoomSettings } from "./types";
 
@@ -144,6 +144,8 @@ export type SyncStateEvent = {
     shotLog: ClientShotLogEntry[];
     /** Room settings — sent on every SYNC_STATE so client stays in sync */
     settings?: RoomSettings;
+    /** Names are shared so reconnects can restore the room roster. */
+    players?: PlayerSummary[];
     /** Async mode: unix ms when this player may attack again (0 = ready now) */
     attackCooldownExpiresAt?: number;
   };

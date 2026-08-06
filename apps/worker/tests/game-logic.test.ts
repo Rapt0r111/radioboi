@@ -92,6 +92,16 @@ describe("room lifecycle", () => {
     expect(getOpponentId(state, "p1")).toBe("p2");
   });
 
+  test("updates a player's nickname when they reconnect", () => {
+    const state = createRoomState("ROOM42");
+    addPlayer(state, { id: "p1", name: "Old name", wsTag: "old", isReady: false });
+
+    expect(addPlayer(state, { id: "p1", name: "New name", wsTag: "new", isReady: false })).toEqual({
+      ok: true,
+    });
+    expect(state.players[0]).toMatchObject({ id: "p1", name: "New name", wsTag: "new" });
+  });
+
   test("rejects invalid fleets before mutating battle state", () => {
     expect(validateShipGeometry([{ coords: [makeCoordinate(0, 0), makeCoordinate(1, 1)] }])).toContain(
       "not linear",

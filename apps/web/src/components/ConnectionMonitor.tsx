@@ -26,6 +26,7 @@ export function ConnectionMonitor() {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const playerId = useGameStore((s) => s.playerId);
+  const playerName = useGameStore((s) => s.playerName);
   const roomId = useGameStore((s) => s.roomId);
 
   // ── Подписка на статус GameClient ────────────────────────────────────────
@@ -65,7 +66,7 @@ export function ConnectionMonitor() {
     try {
       const client = getGameClient();
       if (client.status === "disconnected") {
-        client.connect(roomId, playerId, "Player");
+        client.connect(roomId, playerId, playerName || "Player");
       } else {
         client.reconnect();
       }

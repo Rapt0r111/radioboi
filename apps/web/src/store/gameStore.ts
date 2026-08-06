@@ -5,7 +5,14 @@
 // syncFromServer восстанавливает историю при реконнекте и синхронизирует
 // настройки комнаты и cooldown для async-режима.
 
-import type { Board, Coordinate, GamePhase, Missile, RoomSettings } from "@radioboi/game-core";
+import type {
+  Board,
+  Coordinate,
+  GamePhase,
+  Missile,
+  PlayerSummary,
+  RoomSettings,
+} from "@radioboi/game-core";
 import {
   BOARD_COLUMN_LABELS,
   BOARD_ROW_LABELS,
@@ -26,7 +33,9 @@ export type ShotLogEntry = {
 type GameState = {
   phase: GamePhase;
   playerId: string | null;
+  playerName: string;
   roomId: string | null;
+  players: PlayerSummary[];
   ownBoard: Board;
   enemyBoard: Board;
   activeMissiles: Missile[];
@@ -56,6 +65,7 @@ type SyncSnapshot = {
   winnerId?: string | undefined;
   shotLog?: ShotLogEntry[] | undefined;
   settings?: RoomSettings | undefined;
+  players?: PlayerSummary[] | undefined;
   /** 0 means cooldown has expired / not applicable */
   attackCooldownExpiresAt?: number | undefined;
 };
@@ -77,6 +87,7 @@ function syncStatePatch(state: GameState, snapshot: SyncSnapshot): Partial<GameS
     activeMissiles: snapshot.activeMissiles ?? state.activeMissiles,
     isMyTurn: snapshot.isMyTurn,
     winnerId: snapshot.winnerId ?? null,
+    players: snapshot.players ?? state.players,
     // Server snapshot is perspective-correct for this player; replace local optimistic log.
     shotLog: snapshot.shotLog ?? state.shotLog,
     settings: snapshot.settings ?? state.settings,
@@ -89,7 +100,8 @@ function syncStatePatch(state: GameState, snapshot: SyncSnapshot): Partial<GameS
 
 type GameActions = {
   setPhase(phase: GamePhase): void;
-  setSession(playerId: string, roomId: string): void;
+  setSession(playerId: string, roomId: string, playerName?: string): void;
+  upsertPlayer(player: PlayerSummary): void;
   placeShip(coords: Coordinate[]): void;
   addMissile(missile: Missile): void;
   removeMissile(missileId: string): void;
@@ -113,7 +125,9 @@ function makeInitialState(): GameState {
   return {
     phase: "lobby",
     playerId: null,
+    playerName: "",
     roomId: null,
+    players: [],
     ownBoard: {} as Board,
     enemyBoard: {} as Board,
     activeMissiles: [],
@@ -132,7 +146,23 @@ export const useGameStore = create<GameStore>((set) => ({
   ...makeInitialState(),
 
   setPhase(phase) { set({ phase }); },
-  setSession(playerId, roomId) { set({ playerId, roomId }); },
+  setSession(playerId, roomId, playerName = "") {
+    set({
+      playerId,
+      playerName,
+      roomId,
+      players: [{ id: playerId, name: playerName }],
+    });
+  },
+
+  upsertPlayer(player) {
+    set((state) => ({
+      players: state.players.some((entry) => entry.id === player.id)
+        ? state.players.map((entry) => (entry.id === player.id ? player : entry))
+        : [...state.players, player],
+      ...(player.id === state.playerId ? { playerName: player.name } : {}),
+    }));
+  },
 
   placeShip(coords) {
     set((state) => {
@@ -181,6 +211,7 @@ export const useGameStore = create<GameStore>((set) => ({
           deferredSyncSnapshot: snapshot,
           // Cooldown/settings are safe to update while board results remain hidden.
           settings: snapshot.settings ?? state.settings,
+          players: snapshot.players ?? state.players,
           attackCooldownExpiresAt: cooldownFromSnapshot(
             state.attackCooldownExpiresAt,
             snapshot.attackCooldownExpiresAt,
@@ -233,6 +264,8 @@ export const useGameStore = create<GameStore>((set) => ({
 // ── Selectors ─────────────────────────────────────────────────────────────────
 
 export const selectPhase            = (s: GameStore) => s.phase;
+export const selectPlayerName       = (s: GameStore) => s.playerName;
+export const selectPlayers          = (s: GameStore) => s.players;
 export const selectOwnBoard         = (s: GameStore) => s.ownBoard;
 export const selectEnemyBoard       = (s: GameStore) => s.enemyBoard;
 export const selectActiveMissiles   = (s: GameStore) => s.activeMissiles;
@@ -241,6 +274,49 @@ export const selectWinnerId         = (s: GameStore) => s.winnerId;
 export const selectShotLog          = (s: GameStore) => s.shotLog;
 export const selectSettings         = (s: GameStore) => s.settings;
 export const selectCooldownExpiresAt = (s: GameStore) => s.attackCooldownExpiresAt;
+
+// ── Display names ─────────────────────────────────────────────────────────────
+
+const DEFAULT_SELF_NAME = "Вы";
+const DEFAULT_OPPONENT_NAME = "Соперник";
+
+function cleanDisplayName(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Local player's nickname for UI labels. */
+export function getSelfDisplayName(
+  state: Pick<GameState, "playerName">,
+  fallback: string = DEFAULT_SELF_NAME,
+): string {
+  return cleanDisplayName(state.playerName) ?? fallback;
+}
+
+/** Opponent nickname from the room roster, if known. */
+export function getOpponentDisplayName(
+  state: Pick<GameState, "playerId" | "players">,
+  fallback: string = DEFAULT_OPPONENT_NAME,
+): string {
+  const opponent = state.players.find((player) => player.id !== state.playerId);
+  return cleanDisplayName(opponent?.name) ?? fallback;
+}
+
+/** Winner nickname for game-over banners. */
+export function getWinnerDisplayName(
+  state: Pick<GameState, "playerId" | "playerName" | "players" | "winnerId">,
+): string | null {
+  if (state.winnerId === null) return null;
+  if (state.winnerId === state.playerId) return getSelfDisplayName(state);
+
+  const fromRoster = state.players.find((player) => player.id === state.winnerId);
+  return cleanDisplayName(fromRoster?.name) ?? getOpponentDisplayName(state);
+}
+
+export const selectSelfDisplayName = (s: GameStore) => getSelfDisplayName(s);
+export const selectOpponentDisplayName = (s: GameStore) => getOpponentDisplayName(s);
+export const selectWinnerDisplayName = (s: GameStore) => getWinnerDisplayName(s);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

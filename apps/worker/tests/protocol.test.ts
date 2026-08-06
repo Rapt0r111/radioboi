@@ -92,6 +92,28 @@ describe("worker protocol event builders", () => {
     });
   });
 
+  test("includes the room roster in sync snapshots when provided", () => {
+    expect(
+      decode(
+        makeSyncState(
+          "lobby",
+          {},
+          {},
+          [],
+          false,
+          [],
+          undefined,
+          undefined,
+          undefined,
+          [{ id: "p1", name: "Моряк" }],
+        ),
+      ),
+    ).toMatchObject({
+      type: "SYNC_STATE",
+      payload: { players: [{ id: "p1", name: "Моряк" }] },
+    });
+  });
+
   test("builds attack cooldown update events", () => {
     expect(decode(makeAttackCooldownUpdate(456))).toEqual({
       type: "ATTACK_COOLDOWN_UPDATE",

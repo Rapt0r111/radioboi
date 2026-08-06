@@ -188,12 +188,18 @@ function findShipByCoord(ships: readonly PlacedShip[], coord: Coordinate): Place
 type Props = {
   transport: GameClient | null;
   playerId: string | null;
+  playerName?: string | undefined;
   onPlaced: () => void;
 };
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }: Props) {
+export function ShipPlacementScreen({
+  transport,
+  playerId: _playerId,
+  playerName,
+  onPlaced,
+}: Props) {
   const [ships, setShips] = useState<PlacedShip[]>(() => {
     try { return randomPlacement(); } catch { return buildFleet(); }
   });
@@ -310,6 +316,11 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
         >
           ▸ РАССТАНОВКА ФЛОТА
         </h1>
+        {playerName ? (
+          <p className="mt-2 font-mono text-xs uppercase tracking-[0.22em] text-radar-green/70">
+            Оператор · {playerName}
+          </p>
+        ) : null}
         <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.3em] text-miss-white/40">
           Выбери корабль из ангара → кликни клетку · ↔↕ поворот · ✕ убрать
         </p>
@@ -326,7 +337,7 @@ export function ShipPlacementScreen({ transport, playerId: _playerId, onPlaced }
         {/* ── Доска ─────────────────────────────────────────────────── */}
         <div className="rounded border border-ocean-800 bg-ocean-900/80 p-4">
           <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.25em] text-radar-green/60">
-            Ваш сектор
+            {playerName ? `Сектор · ${playerName}` : "Ваш сектор"}
             {selectedShipId && (
               <span className="ml-2 text-morse-amber">
                 — кликните на клетку для размещения

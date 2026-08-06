@@ -62,6 +62,7 @@ export type {
   DifficultyMode,
   GamePhase,
   Missile,
+  PlayerSummary,
   RoomSettings,
 } from "./types";
 export {
@@ -69,4 +70,6 @@ export {
   MIN_ATTACK_COOLDOWN_MS,
   MIN_GUIDED_ATTACK_COOLDOWN_MS,
   minimumAttackCooldownMs,
+  normalizePlayerName,
+  PLAYER_NAME_MAX_LENGTH,
 } from "./types";

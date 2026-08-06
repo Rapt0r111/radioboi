@@ -4,11 +4,23 @@
 // Экран ожидания — показывается после расстановки кораблей, пока
 // второй игрок не расставит свои. CRT-терминал с анимацией Морзе.
 
+import {
+  selectOpponentDisplayName,
+  selectSelfDisplayName,
+  useGameStore,
+} from "@/src/store/gameStore";
+
 type Props = {
   roomId: string;
 };
 
 export function WaitingScreen({ roomId }: Props) {
+  const selfName = useGameStore(selectSelfDisplayName);
+  const hasOpponent = useGameStore((s) =>
+    s.players.some((player) => player.id !== s.playerId),
+  );
+  const opponentName = useGameStore(selectOpponentDisplayName);
+
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-8 px-4 bg-ocean-950">
       <div className="w-full max-w-md rounded border border-radar-green/30 bg-ocean-900/80 p-8">
@@ -27,7 +39,15 @@ export function WaitingScreen({ roomId }: Props) {
           <p className="text-radar-green/80">
             <span className="text-radar-green">$</span> await opponent --ready
           </p>
-          <p className="text-miss-white/70">▸ ФЛОТ РАССТАВЛЕН. ОЖИДАНИЕ ПРОТИВНИКА...</p>
+          <p className="text-radar-green/70">▸ ОПЕРАТОР: {selfName}</p>
+          <p className="text-miss-white/70">▸ ФЛОТ {selfName} РАССТАВЛЕН</p>
+          {hasOpponent ? (
+            <p className="text-morse-amber/70">
+              ▸ ОЖИДАНИЕ РАССТАНОВКИ: {opponentName}
+            </p>
+          ) : (
+            <p className="text-miss-white/70">▸ ОЖИДАНИЕ ПРОТИВНИКА...</p>
+          )}
           <p className="text-miss-white/40">▸ СИНХРОНИЗАЦИЯ РАДАРНОГО КАНАЛА...</p>
 
           {/* Анимированные точки */}

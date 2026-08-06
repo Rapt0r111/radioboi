@@ -13,10 +13,8 @@ import {
   coordinateToMorseNotation,
   GameEventType,
   makeCoordinate,
-  minimumAttackCooldownMs,
   type MorseSymbol,
   parseCoordinate,
-  type RoomSettings,
 } from "@radioboi/game-core";
 import { MORSE_ALPHABET, MorseEngine } from "@radioboi/morse-engine";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -37,6 +35,15 @@ import {
   useGameLoop,
 } from "@/src/hooks/useGameLoop";
 import { useNow } from "@/src/hooks/useNow";
+import {
+  clearShipsPlaced,
+  createClientId,
+  getOrCreatePlayerId,
+  hasShipsPlaced,
+  markShipsPlaced,
+  readStoredRoomSettings,
+  resolvePlayerName,
+} from "@/src/lib/clientSession";
 import type { GameClient } from "@/src/lib/network/gameClient";
 import { destroyGameClient, getGameClient } from "@/src/lib/network/gameClient";
 import {
@@ -45,16 +52,13 @@ import {
   selectEnemyBoard,
   selectIsMyTurn,
   selectOwnBoard,
+  selectPlayerName,
+  selectPlayers,
   selectPhase,
   selectSettings,
   useGameStore,
 } from "@/src/store/gameStore";
 
-const PLAYER_ID_KEY = "radioboi:playerId";
-const TAB_ID_KEY = "radioboi:tabId";
-const TAB_NAME_PREFIX = "radioboi-tab:";
-const PLACED_KEY_PREFIX = "radioboi:placed:";
-const ROOM_SETTINGS_KEY_PREFIX = "radioboi:settings:";
 const ATTACKER_TURN_TIMEOUT_S = 60;
 const ATTEMPT_DOT_KEYS = ["attempt-1", "attempt-2", "attempt-3", "attempt-4", "attempt-5"] as const;
 
@@ -69,81 +73,6 @@ type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   incomingMissileTarget?: Coordinate | null;
   lastInterceptWrong?: boolean;
 };
-
-function createClientId(): string {
-  if (typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  const bytes = new Uint8Array(16);
-  if (typeof crypto.getRandomValues === "function") {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
-  return [
-    hex.slice(0, 4).join(""),
-    hex.slice(4, 6).join(""),
-    hex.slice(6, 8).join(""),
-    hex.slice(8, 10).join(""),
-    hex.slice(10, 16).join(""),
-  ].join("-");
-}
-
-function getOrCreateTabId(): string {
-  if (window.name.startsWith(TAB_NAME_PREFIX)) {
-    return window.name.slice(TAB_NAME_PREFIX.length);
-  }
-  const next = createClientId();
-  window.name = `${TAB_NAME_PREFIX}${next}`;
-  return next;
-}
-
-function getOrCreatePlayerId(): string {
-  const tabId = getOrCreateTabId();
-  const storedTabId = sessionStorage.getItem(TAB_ID_KEY);
-  const stored = sessionStorage.getItem(PLAYER_ID_KEY);
-  if (stored !== null && storedTabId === tabId) return stored;
-  const next = createClientId();
-  sessionStorage.setItem(TAB_ID_KEY, tabId);
-  sessionStorage.setItem(PLAYER_ID_KEY, next);
-  return next;
-}
-
-function readStoredRoomSettings(roomId: string): RoomSettings | undefined {
-  try {
-    const raw = sessionStorage.getItem(`${ROOM_SETTINGS_KEY_PREFIX}${roomId}`);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<RoomSettings> & { beginnerMode?: boolean };
-    const difficulty =
-      parsed.difficulty === "beginner" || parsed.difficulty === "normal" || parsed.difficulty === "expert"
-        ? parsed.difficulty
-        : parsed.beginnerMode === true
-          ? "beginner"
-          : "normal";
-    return {
-      battleMode: parsed.battleMode === "async" ? "async" : "turn-based",
-      difficulty,
-      attackCooldownMs: Math.max(
-        typeof parsed.attackCooldownMs === "number"
-          ? parsed.attackCooldownMs
-          : minimumAttackCooldownMs(difficulty),
-        minimumAttackCooldownMs(difficulty),
-      ),
-      interceptWindowMs: typeof parsed.interceptWindowMs === "number" ? parsed.interceptWindowMs : 25_000,
-      maxInterceptAttempts: typeof parsed.maxInterceptAttempts === "number" ? parsed.maxInterceptAttempts : 3,
-    };
-  } catch {
-    return undefined;
-  }
-}
 
 function toMorseSequence(coord: Coordinate): MorseSymbol[] {
   const { digit, letter } = coordinateToMorseNotation(coord);
@@ -186,6 +115,8 @@ export function GameClientWrapper({ roomId }: Props) {
   const ownBoard = useGameStore(selectOwnBoard);
   const impactVfxStartsAt = useGameStore((s) => s.impactVfxStartsAt);
   const playerId = useGameStore((s) => s.playerId);
+  const playerName = useGameStore(selectPlayerName);
+  const players = useGameStore(selectPlayers);
   const setSession = useGameStore((s) => s.setSession);
   const settings = useGameStore(selectSettings);
   const cooldownExpiresAt = useGameStore(selectCooldownExpiresAt);
@@ -193,6 +124,7 @@ export function GameClientWrapper({ roomId }: Props) {
 
   const isAsync = settings.battleMode === "async";
   const isExpert = settings.difficulty === "expert";
+  const opponentName = players.find((player) => player.id !== playerId)?.name ?? "Ожидание соперника";
 
   const incomingMissileAttempts = useGameStore(
     (s) => (s as RuntimeCarrier).incomingMissileAttempts ?? 0,
@@ -230,10 +162,8 @@ export function GameClientWrapper({ roomId }: Props) {
   const [symbolGapMs, setSymbolGapMs] = useState(500);
   const [morseResetToken, setMorseResetToken] = useState(0);
   const [attackerTurnStart, setAttackerTurnStart] = useState<number | null>(null);
-  const [hasPlaced, setHasPlaced] = useState(() => {
-    try { return sessionStorage.getItem(`${PLACED_KEY_PREFIX}${roomId}`) === "1"; }
-    catch { return false; }
-  });
+  // Start false for SSR/hydration parity; restore from sessionStorage after mount.
+  const [hasPlaced, setHasPlaced] = useState(false);
 
   const missileInFlightRef = useRef(false);
   const missileFlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -261,9 +191,11 @@ export function GameClientWrapper({ roomId }: Props) {
   // ── Effects ─────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (phase === "battle") {
-      try { sessionStorage.removeItem(`${PLACED_KEY_PREFIX}${roomId}`); } catch { /* noop */ }
-    }
+    if (hasShipsPlaced(roomId)) setHasPlaced(true);
+  }, [roomId]);
+
+  useEffect(() => {
+    if (phase === "battle") clearShipsPlaced(roomId);
   }, [phase, roomId]);
 
   useEffect(() => {
@@ -355,17 +287,18 @@ export function GameClientWrapper({ roomId }: Props) {
   useEffect(() => {
     useGameStore.getState().reset();
     const nextPlayerId = getOrCreatePlayerId();
+    const nextPlayerName = resolvePlayerName(nextPlayerId);
     const client = getGameClient();
     const engine = new MorseEngine();
     const storedRoomSettings = readStoredRoomSettings(roomId);
 
-    setSession(nextPlayerId, roomId);
+    setSession(nextPlayerId, roomId, nextPlayerName);
     if (storedRoomSettings !== undefined) {
       useGameStore.setState({ settings: storedRoomSettings });
     }
     setTransport(client);
     setMorseEngine(engine);
-    client.connect(roomId, nextPlayerId, `Player-${nextPlayerId.slice(0, 4)}`, storedRoomSettings);
+    client.connect(roomId, nextPlayerId, nextPlayerName, storedRoomSettings);
 
     return () => {
       resetGameLoopRuntimeState();
@@ -569,9 +502,10 @@ export function GameClientWrapper({ roomId }: Props) {
         <ShipPlacementScreen
           transport={transport}
           playerId={playerId}
+          playerName={playerName || undefined}
           onPlaced={() => {
             setHasPlaced(true);
-            try { sessionStorage.setItem(`${PLACED_KEY_PREFIX}${roomId}`, "1"); } catch { /* noop */ }
+            markShipsPlaced(roomId);
           }}
         />
       </>
@@ -609,8 +543,8 @@ export function GameClientWrapper({ roomId }: Props) {
       ? `⏳ ПЕРЕЗАРЯДКА ${cooldownSecondsLeft ?? ""}с`
       : "⚡ ОГОНЬ ОТКРЫТ"
     : isMyTurn
-      ? "▸ ВАШ ХОД"
-      : "◃ Ожидание противника";
+      ? `▸ ХОД · ${playerName || "Вы"}`
+      : `◃ Ожидание · ${opponentName}`;
 
   const turnBadgeClass = isAsync
     ? isOnCooldown
@@ -634,7 +568,7 @@ export function GameClientWrapper({ roomId }: Props) {
             : "Канал атаки готов"
           : isMyTurn
             ? "Канал атаки готов"
-            : "Ожидайте ход противника"
+            : `Ожидайте ход · ${opponentName}`
       : isAsync
         ? isOnCooldown
           ? "Перезарядка орудия"
@@ -643,9 +577,9 @@ export function GameClientWrapper({ roomId }: Props) {
             : "Передайте выбранную цель"
         : isMyTurn
           ? selectedTarget === null
-            ? "Выберите цель на поле противника"
+            ? `Выберите цель на поле · ${opponentName}`
             : "Передайте выбранную цель"
-          : "Ожидайте ход противника";
+          : `Ожидайте ход · ${opponentName}`;
 
   const actionDetail =
     hasTurnBasedIncomingMissile
@@ -657,18 +591,18 @@ export function GameClientWrapper({ roomId }: Props) {
             : "Сигнал готов."
           : isMyTurn
             ? "Сигнал готов."
-            : "Пока соперник атакует, следите за своим полем."
+            : `Пока ${opponentName} атакует, следите за своим полем.`
       : isAsync
         ? isOnCooldown
           ? `Орудие перезаряжается. Осталось ${cooldownSecondsLeft ?? "?"}с. В ASYNC нет перехвата — следите за полем и готовьте следующий выстрел.`
           : selectedTarget === null
-            ? "Кликните по клетке противника. Оба игрока атакуют независимо."
+            ? `Кликните по клетке · ${opponentName}. Оба игрока атакуют независимо.`
             : `Зажмите ключ и передайте: ${targetMorse ? `${targetMorse.letter} / ${targetMorse.digit}` : "—"}`
         : isMyTurn
           ? selectedTarget === null
             ? "Кликните по свободной клетке. После выбора появится код Морзе."
             : `Зажмите телеграфный ключ и передайте: ${targetMorseLabel}.`
-          : "Пока соперник атакует, следите за своим полем.";
+          : `Пока ${opponentName} атакует, следите за своим полем.`;
 
   const enemyBoardDisabledMessage =
     hasTurnBasedIncomingMissile
@@ -680,7 +614,7 @@ export function GameClientWrapper({ roomId }: Props) {
             ? "Ракета уже в полёте."
             : undefined
         : !isMyTurn
-          ? "Сейчас ход противника."
+          ? `Сейчас ход · ${opponentName}`
           : missileInFlightUI
             ? "Ракета уже в полёте."
             : undefined;
@@ -769,7 +703,7 @@ export function GameClientWrapper({ roomId }: Props) {
               </div>
 
               <div className="battle-status-chip rounded border border-ocean-800 px-3 py-1.5 text-miss-white/25">
-                {playerId ? playerId.slice(0, 8) : "..."}
+                {playerName || "..."}
               </div>
             </div>
           </div>
@@ -783,7 +717,7 @@ export function GameClientWrapper({ roomId }: Props) {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="font-mono text-sm uppercase tracking-normal text-radar-green">
-                  Вражеский сектор
+                  Вражеский сектор · {opponentName}
                 </h2>
                 <p className="font-mono text-[10px] leading-relaxed text-miss-white/45">
                   {canSelectEnemyTarget
@@ -990,8 +924,8 @@ export function GameClientWrapper({ roomId }: Props) {
           {/* ── Own board ───────────────────────────────────────────────── */}
           <section className="battle-panel flex flex-col gap-3 rounded border p-4">
             <div>
-              <h2 className="font-mono text-sm uppercase tracking-[0.28em] text-radar-green">
-                Собственный сектор
+              <h2 className="font-mono text-sm uppercase tracking-normal text-radar-green">
+                Собственный сектор · {playerName || "Вы"}
               </h2>
               <p className="font-mono text-[9px] text-miss-white/30">
                 Входящие удары отображаются автоматически

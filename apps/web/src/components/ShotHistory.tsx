@@ -5,9 +5,13 @@
 // Данные берутся из gameStore.shotLog, который заполняется в useGameLoop
 // при каждом RESOLVE_HIT-событии.
 
-import type { ShotLogEntry } from "@/src/store/gameStore";
-import { useGameStore } from "@/src/store/gameStore";
 import { useEffect, useRef } from "react";
+import {
+  selectOpponentDisplayName,
+  selectSelfDisplayName,
+  type ShotLogEntry,
+  useGameStore,
+} from "@/src/store/gameStore";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,6 +38,8 @@ function resultIcon(result: ShotLogEntry["result"]): string {
 
 export function ShotHistory() {
   const shotLog = useGameStore((s) => s.shotLog);
+  const selfName = useGameStore(selectSelfDisplayName);
+  const opponentName = useGameStore(selectOpponentDisplayName);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Авто-прокрутка вниз при появлении нового хода
@@ -78,6 +84,7 @@ export function ShotHistory() {
             const { text, color } = resultLabel(entry.result);
             const icon = resultIcon(entry.result);
             const isByMe = entry.by === "us";
+            const shooterName = isByMe ? selfName : opponentName;
 
             return (
               <div
@@ -95,14 +102,14 @@ export function ShotHistory() {
 
                 {/* Кто стрелял */}
                 <span
-                  className={`w-4 shrink-0 text-center text-[9px] uppercase ${
+                  className={`w-18 shrink-0 truncate text-[9px] uppercase tracking-wide ${
                     isByMe
                       ? "text-radar-green/70"
-                      : "text-miss-white/30"
+                      : "text-miss-white/40"
                   }`}
-                  title={isByMe ? "Ваш выстрел" : "Выстрел противника"}
+                  title={isByMe ? `Выстрел: ${selfName}` : `Выстрел: ${opponentName}`}
                 >
-                  {isByMe ? "Я" : "∇"}
+                  {shooterName}
                 </span>
 
                 {/* Координата */}

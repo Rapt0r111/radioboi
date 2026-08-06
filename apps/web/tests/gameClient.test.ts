@@ -117,6 +117,7 @@ describe("GameClient", () => {
     expect(socket).toBeDefined();
     expect(socket?.url).toContain("ws://unit.test/room/ROOM1?");
     expect(socket?.url).toContain("playerId=p1");
+    expect(socket?.url).toContain("playerName=Player+1");
     expect(socket?.url).toContain("settings=");
 
     socket?.emitOpen();
@@ -129,6 +130,36 @@ describe("GameClient", () => {
       type: GameEventType.JOIN_ROOM,
       payload: { playerId: "p1", playerName: "Player 1" },
     });
+  });
+
+  test("restores player names from roster sync events", async () => {
+    const client = new GameClient();
+    client.connect("ROOM-NAME", "p1", "Моряк");
+    sockets[0]?.emitOpen();
+    sockets[0]?.emitMessage(
+      encodeServerFrame({
+        type: GameEventType.SYNC_STATE,
+        payload: {
+          phase: "placement",
+          ownBoard: {},
+          enemyBoard: {},
+          activeMissiles: [],
+          isMyTurn: false,
+          shotLog: [],
+          players: [
+            { id: "p1", name: "Моряк" },
+            { id: "p2", name: "Радио" },
+          ],
+        },
+      }),
+    );
+    await Promise.resolve();
+
+    expect(useGameStore.getState().playerName).toBe("Моряк");
+    expect(useGameStore.getState().players).toEqual([
+      { id: "p1", name: "Моряк" },
+      { id: "p2", name: "Радио" },
+    ]);
   });
 
   test("queues non-join events while disconnected and flushes after open", () => {

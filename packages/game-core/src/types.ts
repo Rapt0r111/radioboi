@@ -4,6 +4,32 @@ export type Coordinate = string & { readonly __brand: "Coordinate" };
 
 export type GamePhase = "lobby" | "placement" | "battle" | "gameOver";
 
+export type PlayerSummary = {
+  id: string;
+  name: string;
+};
+
+export const PLAYER_NAME_MAX_LENGTH = 24;
+
+/** Normalizes a user-provided player name for use in the game protocol. */
+export function normalizePlayerName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  if (
+    Array.from(value).some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+    })
+  ) {
+    return null;
+  }
+
+  const normalized = value.trim().replace(/\s+/gu, " ");
+  const length = Array.from(normalized).length;
+  if (length === 0 || length > PLAYER_NAME_MAX_LENGTH) return null;
+
+  return normalized;
+}
+
 export type CellState = "empty" | "ship" | "hit" | "miss" | "sunk" | "blocked";
 
 export type Board = Record<Coordinate, CellState>;

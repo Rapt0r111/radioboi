@@ -314,7 +314,7 @@ export function addPlayer(
   if (state.players.some((p) => p.id === player.id)) {
     const idx = state.players.findIndex((p) => p.id === player.id);
     const existing = state.players[idx];
-    if (existing) state.players[idx] = { ...existing, wsTag: player.wsTag };
+    if (existing) state.players[idx] = { ...existing, name: player.name, wsTag: player.wsTag };
     return { ok: true };
   }
   if (state.players.length >= 2) return { ok: false, reason: "ROOM_FULL" };

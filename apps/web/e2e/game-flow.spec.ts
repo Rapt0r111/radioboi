@@ -6,6 +6,81 @@ test.beforeEach(async ({ page }) => {
   await installFakeGameServer(page);
 });
 
+test("uses the stored nickname in the room connection and roster", async ({ page }) => {
+  await page.addInitScript(() => {
+    // Shared browser default (localStorage) — also works from a brand-new window.
+    localStorage.setItem("radioboi:playerName", "Моряк");
+  });
+
+  await page.goto("/game/NICK01");
+  await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);
+
+  const playerName = await page.evaluate(() => {
+    const url = new URL(window.__radioboiFakeServer.urls.at(-1) ?? "");
+    return url.searchParams.get("playerName");
+  });
+  expect(playerName).toBe("Моряк");
+
+  // Pin into this tab's session for subsequent refreshes.
+  const storage = await page.evaluate(() => ({
+    playerId: sessionStorage.getItem("radioboi:playerId"),
+    sessionName: sessionStorage.getItem("radioboi:playerName"),
+    localName: localStorage.getItem("radioboi:playerName"),
+  }));
+  expect(storage.playerId).not.toBeNull();
+  expect(storage.sessionName).toBe("Моряк");
+  expect(storage.localName).toBe("Моряк");
+
+  await emitServerEvent(page, {
+    type: "SYNC_STATE",
+    payload: {
+      phase: "battle",
+      ownBoard: {},
+      enemyBoard: {},
+      activeMissiles: [],
+      isMyTurn: true,
+      shotLog: [],
+      players: [
+        { id: storage.playerId ?? "local", name: "Моряк" },
+        { id: "enemy", name: "Радио" },
+      ],
+    },
+  });
+
+  await expect(page.locator("body")).toContainText("Моряк");
+  await expect(page.locator("body")).toContainText("Радио");
+});
+
+test("keeps the same playerId and nickname after a full page reload", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("radioboi:playerName", "Капитан");
+  });
+
+  await page.goto("/game/RELOAD1");
+  await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);
+
+  const before = await page.evaluate(() => ({
+    playerId: sessionStorage.getItem("radioboi:playerId"),
+    playerName: new URL(window.__radioboiFakeServer.urls.at(-1) ?? "").searchParams.get("playerName"),
+    windowName: window.name,
+  }));
+  expect(before.playerId).not.toBeNull();
+  expect(before.playerName).toBe("Капитан");
+  expect(before.windowName.startsWith("radioboi-tab:")).toBe(true);
+
+  await page.reload();
+  await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() >= 1);
+
+  const after = await page.evaluate(() => ({
+    playerId: sessionStorage.getItem("radioboi:playerId"),
+    playerName: new URL(window.__radioboiFakeServer.urls.at(-1) ?? "").searchParams.get("playerName"),
+    windowName: window.name,
+  }));
+  expect(after.playerId).toBe(before.playerId);
+  expect(after.playerName).toBe("Капитан");
+  expect(after.windowName).toBe(before.windowName);
+});
+
 test("game page connects, enters placement, and submits a ready fleet", async ({ page }) => {
   await page.goto("/game/E2E123");
   await page.waitForFunction(() => window.__radioboiFakeServer.socketCount() === 1);

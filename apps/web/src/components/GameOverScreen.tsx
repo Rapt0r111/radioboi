@@ -12,6 +12,9 @@ import {
 } from "@radioboi/game-core";
 import { useMemo } from "react";
 import {
+  getOpponentDisplayName,
+  getSelfDisplayName,
+  getWinnerDisplayName,
   selectEnemyBoard,
   selectOwnBoard,
   selectSettings,
@@ -308,7 +311,7 @@ function StatsPanel({
 
   return (
     <section className="battle-panel rounded border p-4">
-      <SectionHeader label={title} value={isAttack ? "ваш огонь" : "оборона"} />
+      <SectionHeader label={title} value={isAttack ? "атака" : "оборона"} />
       <div className="space-y-1">
         <StatLine label="Выстрелы" value={stats.shots} />
         <StatLine label="Попадания" value={stats.hits} tone={isAttack ? "good" : "danger"} />
@@ -440,7 +443,15 @@ function MiniBoard({
   );
 }
 
-function ShotTimeline({ shotLog }: { shotLog: ShotLogEntry[] }) {
+function ShotTimeline({
+  shotLog,
+  selfName,
+  opponentName,
+}: {
+  shotLog: ShotLogEntry[];
+  selfName: string;
+  opponentName: string;
+}) {
   const shots = shotLog.slice().reverse();
 
   return (
@@ -455,6 +466,7 @@ function ShotTimeline({ shotLog }: { shotLog: ShotLogEntry[] }) {
           {shots.map((entry, index) => {
             const absoluteIndex = shotLog.length - index;
             const isUs = entry.by === "us";
+            const shooterName = isUs ? selfName : opponentName;
 
             return (
               <div
@@ -465,8 +477,15 @@ function ShotTimeline({ shotLog }: { shotLog: ShotLogEntry[] }) {
                 <span className="w-6 text-right font-mono text-[10px] tabular-nums text-miss-white/25">
                   {absoluteIndex}
                 </span>
-                <span className={isUs ? "font-mono text-[10px] uppercase tracking-[0.18em] text-radar-green/70" : "font-mono text-[10px] uppercase tracking-[0.18em] text-hit-red/70"}>
-                  {isUs ? "Мы" : "Они"}
+                <span
+                  className={
+                    isUs
+                      ? "max-w-28 truncate font-mono text-[10px] uppercase tracking-[0.14em] text-radar-green/70"
+                      : "max-w-28 truncate font-mono text-[10px] uppercase tracking-[0.14em] text-hit-red/70"
+                  }
+                  title={shooterName}
+                >
+                  {shooterName}
                 </span>
                 <span className="min-w-12 font-mono text-sm font-bold tabular-nums text-miss-white/78">
                   {entry.coord}
@@ -487,11 +506,18 @@ function ShotTimeline({ shotLog }: { shotLog: ShotLogEntry[] }) {
 
 export function GameOverScreen({ roomId }: Props) {
   const playerId = useGameStore((s) => s.playerId);
+  const playerName = useGameStore((s) => s.playerName);
+  const players = useGameStore((s) => s.players);
   const winnerId = useGameStore(selectWinnerId);
   const shotLog = useGameStore(selectShotLog);
   const ownBoard = useGameStore(selectOwnBoard);
   const enemyBoard = useGameStore(selectEnemyBoard);
   const settings = useGameStore(selectSettings);
+
+  const nameState = { playerId, playerName, players, winnerId };
+  const selfName = getSelfDisplayName(nameState);
+  const opponentName = getOpponentDisplayName(nameState);
+  const winnerName = getWinnerDisplayName(nameState);
 
   const report = useMemo(() => {
     const outcome = getOutcome(winnerId, playerId);
@@ -567,6 +593,17 @@ export function GameOverScreen({ roomId }: Props) {
                   <p className="mt-2 max-w-2xl font-mono text-xs leading-5 text-miss-white/48">
                     {copy.summary}
                   </p>
+                  <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-miss-white/42">
+                    {selfName}
+                    <span className="mx-2 text-miss-white/20">vs</span>
+                    {opponentName}
+                    {winnerName ? (
+                      <>
+                        <span className="mx-2 text-miss-white/20">·</span>
+                        <span className={copy.accent}>Победитель: {winnerName}</span>
+                      </>
+                    ) : null}
+                  </p>
                 </div>
               </div>
             </div>
@@ -595,13 +632,13 @@ export function GameOverScreen({ roomId }: Props) {
           <MetricCard
             label="Разница урона"
             value={damageDelta > 0 ? `+${damageDelta}` : String(damageDelta)}
-            detail="Ваши попадания минус попадания противника"
+            detail={`Попадания ${selfName} минус попадания ${opponentName}`}
             tone={damageDelta > 0 ? "good" : damageDelta < 0 ? "danger" : "warn"}
           />
           <MetricCard
-            label="Точность"
+            label={`Точность · ${selfName}`}
             value={formatPercent(report.ownFire.accuracy)}
-            detail={`Противник: ${formatPercent(report.enemyFire.accuracy)}`}
+            detail={`${opponentName}: ${formatPercent(report.enemyFire.accuracy)}`}
             tone={accuracyDelta >= 0 ? "good" : "danger"}
           />
           <MetricCard
@@ -614,7 +651,7 @@ export function GameOverScreen({ roomId }: Props) {
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,1.1fr)_minmax(0,0.95fr)]">
           <StatsPanel
-            title="Огонь по противнику"
+            title={`Огонь · ${selfName}`}
             stats={report.ownFire}
             boardStats={report.enemyBoardStats}
             variant="attack"
@@ -623,19 +660,19 @@ export function GameOverScreen({ roomId }: Props) {
           <section className="battle-panel rounded border p-4">
             <SectionHeader label="Финальная карта боя" value="100 клеток" />
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-              <MiniBoard title="Поле противника" board={enemyBoard} revealShips={false} />
-              <MiniBoard title="Ваш флот" board={ownBoard} revealShips />
+              <MiniBoard title={`Поле · ${opponentName}`} board={enemyBoard} revealShips={false} />
+              <MiniBoard title={`Флот · ${selfName}`} board={ownBoard} revealShips />
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 rounded border border-ocean-800/60 bg-ocean-950/44 p-3 sm:grid-cols-4">
-              <StatLine label="Ваши целые" value={report.ownBoardStats.activeShips} tone="good" />
-              <StatLine label="Ваши пробоины" value={report.ownBoardStats.damagedCells} tone="danger" />
-              <StatLine label="Враг потоплен" value={report.ownFire.sunk} tone="danger" />
+              <StatLine label={`${selfName}: целые`} value={report.ownBoardStats.activeShips} tone="good" />
+              <StatLine label={`${selfName}: пробоины`} value={report.ownBoardStats.damagedCells} tone="danger" />
+              <StatLine label={`${opponentName}: потоплен`} value={report.ownFire.sunk} tone="danger" />
               <StatLine label="Зоны вскрыты" value={report.enemyBoardStats.blockedCells} />
             </div>
           </section>
 
           <StatsPanel
-            title="Огонь противника"
+            title={`Огонь · ${opponentName}`}
             stats={report.enemyFire}
             boardStats={report.ownBoardStats}
             variant="defense"
@@ -654,7 +691,11 @@ export function GameOverScreen({ roomId }: Props) {
               battleTempo={report.tempo}
               duration={report.duration}
             />
-            <ShotTimeline shotLog={shotLog} />
+            <ShotTimeline
+              shotLog={shotLog}
+              selfName={selfName}
+              opponentName={opponentName}
+            />
           </div>
 
           <aside className="battle-panel rounded border p-4">
@@ -662,15 +703,15 @@ export function GameOverScreen({ roomId }: Props) {
             <div className="space-y-3 font-mono text-xs leading-5 text-miss-white/52">
               <p>
                 {report.outcome === "win"
-                  ? "Преимущество удержано за счёт точного огня и давления по кораблям противника."
+                  ? `${selfName} удержал преимущество за счёт точного огня и давления по флоту ${opponentName}.`
                   : report.outcome === "loss"
-                    ? "Критический разрыв появился в обороне. Проверьте клетки с серией попаданий противника."
+                    ? `Критический разрыв в обороне ${selfName}. Проверьте клетки с серией попаданий ${opponentName}.`
                     : "Баланс огня почти равный. Следующий бой решит точность первых залпов."}
               </p>
               <div className="rounded border border-ocean-800/60 bg-ocean-950/45 p-3">
                 <StatLine label="Перевес точности" value={accuracyDelta > 0 ? `+${accuracyDelta}%` : `${accuracyDelta}%`} tone={accuracyDelta >= 0 ? "good" : "danger"} />
                 <StatLine label="Перевес залпов" value={report.ownFire.shots - report.enemyFire.shots} tone="warn" />
-                <StatLine label="Принято ударов" value={report.enemyFire.hits} tone="danger" />
+                <StatLine label={`Удары ${opponentName}`} value={report.enemyFire.hits} tone="danger" />
               </div>
             </div>
 
