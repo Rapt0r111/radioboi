@@ -36,10 +36,11 @@ import {
   resetGameLoopRuntimeState,
   useGameLoop,
 } from "@/src/hooks/useGameLoop";
+import { useNow } from "@/src/hooks/useNow";
 import type { GameClient } from "@/src/lib/network/gameClient";
 import { destroyGameClient, getGameClient } from "@/src/lib/network/gameClient";
-import { useNow } from "@/src/hooks/useNow";
 import {
+  selectActiveMissiles,
   selectCooldownExpiresAt,
   selectEnemyBoard,
   selectIsMyTurn,
@@ -188,6 +189,7 @@ export function GameClientWrapper({ roomId }: Props) {
   const setSession = useGameStore((s) => s.setSession);
   const settings = useGameStore(selectSettings);
   const cooldownExpiresAt = useGameStore(selectCooldownExpiresAt);
+  const activeMissiles = useGameStore(selectActiveMissiles);
 
   const isAsync = settings.battleMode === "async";
   const isExpert = settings.difficulty === "expert";
@@ -236,6 +238,7 @@ export function GameClientWrapper({ roomId }: Props) {
   const missileInFlightRef = useRef(false);
   const missileFlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resolvedAttackIdRef = useRef<string | null>(null);
+  const localAttackIdRef = useRef<string | null>(null);
   const pendingAttackRef = useRef<{ id: string; target: Coordinate } | null>(null);
   const [missileInFlightUI, setMissileInFlightUI] = useState(false);
   const radarRef = useRef<RadarRef>(null);
@@ -301,7 +304,11 @@ export function GameClientWrapper({ roomId }: Props) {
           missileFlightTimerRef.current = null;
         }
         resolvedAttackIdRef.current = null;
+        localAttackIdRef.current = null;
         pendingAttackRef.current = null;
+        missileInFlightRef.current = false;
+        setMissileInFlightUI(false);
+        setStatusLine("Ракета перехвачена. Можно атаковать снова.");
       }
     });
     const stopError = transport.on(GameEventType.ERROR, (event) => {
@@ -325,6 +332,7 @@ export function GameClientWrapper({ roomId }: Props) {
         useGameStore.getState().setAttackCooldown(0);
         void radarRef.current?.removeMissile(pending.id);
         resolvedAttackIdRef.current = null;
+        localAttackIdRef.current = null;
         pendingAttackRef.current = null;
         missileInFlightRef.current = false;
         setMissileInFlightUI(false);
@@ -364,6 +372,7 @@ export function GameClientWrapper({ roomId }: Props) {
       setSelectedTarget(null);
       pendingAttackRef.current = null;
       resolvedAttackIdRef.current = null;
+      localAttackIdRef.current = null;
       if (missileFlightTimerRef.current !== null) {
         clearTimeout(missileFlightTimerRef.current);
         missileFlightTimerRef.current = null;
@@ -402,14 +411,28 @@ export function GameClientWrapper({ roomId }: Props) {
     setStatusLine("Время перехвата истекло. Ракета ушла на расчет результата.");
   }, [incomingMissileDeadline, incomingMissileId, incomingMissileMaxAttempts, isAsync, now, transport]);
 
-  const activeMissilesCount = useGameStore((s) => s.activeMissiles.length);
-
   useEffect(() => {
-    if (activeMissilesCount === 0) {
-      missileInFlightRef.current = false;
-      setMissileInFlightUI(false);
+    const localAttackId = localAttackIdRef.current;
+    if (
+      localAttackId === null ||
+      activeMissiles.some((missile) => missile.id === localAttackId)
+    ) {
+      return;
     }
-  }, [activeMissilesCount]);
+
+    // The server/game loop has removed our missile, so the attack is fully
+    // complete. Clear the transient lock and replace stale validation text.
+    localAttackIdRef.current = null;
+    missileInFlightRef.current = false;
+    setMissileInFlightUI(false);
+    setStatusLine(
+      isExpert
+        ? "Канал готов."
+        : isAsync
+          ? "Атака завершена. Можно готовить следующий выстрел."
+          : "Выберите цель на вражеской сетке и передайте её по Морзе.",
+    );
+  }, [activeMissiles, isAsync, isExpert]);
 
   useEffect(() => {
     if (!isAsync && (!isMyTurn || incomingMissileId !== null || phase !== "battle")) {
@@ -485,6 +508,7 @@ export function GameClientWrapper({ roomId }: Props) {
     const radarPoint = toRadarPoint(coord);
 
     missileInFlightRef.current = true;
+    localAttackIdRef.current = missileId;
     pendingAttackRef.current = { id: missileId, target: coord };
     setMissileInFlightUI(true);
     const launchTimeline = isExpert ? null : morseEngine?.playGuidedMissileSequence() ?? null;

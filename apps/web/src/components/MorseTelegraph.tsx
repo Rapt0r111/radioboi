@@ -265,6 +265,9 @@ export function MorseTelegraph({
 
   function isInteractiveTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
+    // A selected radar cell is a button for keyboard accessibility, but Space
+    // must remain the Morse telegraph key after the cell has received focus.
+    if (target.closest(".battle-cell") !== null) return false;
     return (
       target.isContentEditable ||
       target.closest("input, textarea, select, button, a, [role='button'], [role='slider']") !== null
