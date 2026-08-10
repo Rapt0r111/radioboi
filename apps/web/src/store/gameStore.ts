@@ -17,6 +17,7 @@ import {
   BOARD_COLUMN_LABELS,
   BOARD_ROW_LABELS,
   DEFAULT_ROOM_SETTINGS,
+  makeLocalPlayerSummary,
   parseCoordinate,
 } from "@radioboi/game-core";
 import { create } from "zustand";
@@ -79,6 +80,34 @@ function cooldownFromSnapshot(
   return current;
 }
 
+/** Accept only full wire-shaped roster entries (server SYNC_STATE contract). */
+function isCompletePlayerSummary(value: unknown): value is PlayerSummary {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.id === "string" &&
+    typeof entry.name === "string" &&
+    typeof entry.connected === "boolean" &&
+    typeof entry.reconnectBudgetMs === "number" &&
+    Number.isFinite(entry.reconnectBudgetMs) &&
+    (entry.reconnectDeadlineAt === null ||
+      (typeof entry.reconnectDeadlineAt === "number" && Number.isFinite(entry.reconnectDeadlineAt)))
+  );
+}
+
+/**
+ * SYNC_STATE roster: all-or-nothing. Any incomplete entry rejects the whole
+ * roster so we never show a half-updated room or invent presence defaults.
+ */
+function applyRosterFromSync(
+  players: PlayerSummary[] | undefined,
+  fallback: PlayerSummary[],
+): PlayerSummary[] {
+  if (!players) return fallback;
+  if (!players.every(isCompletePlayerSummary)) return fallback;
+  return players;
+}
+
 function syncStatePatch(state: GameState, snapshot: SyncSnapshot): Partial<GameState> {
   return {
     phase: snapshot.phase,
@@ -87,7 +116,7 @@ function syncStatePatch(state: GameState, snapshot: SyncSnapshot): Partial<GameS
     activeMissiles: snapshot.activeMissiles ?? state.activeMissiles,
     isMyTurn: snapshot.isMyTurn,
     winnerId: snapshot.winnerId ?? null,
-    players: snapshot.players ?? state.players,
+    players: applyRosterFromSync(snapshot.players, state.players),
     // Server snapshot is perspective-correct for this player; replace local optimistic log.
     shotLog: snapshot.shotLog ?? state.shotLog,
     settings: snapshot.settings ?? state.settings,
@@ -151,14 +180,18 @@ export const useGameStore = create<GameStore>((set) => ({
       playerId,
       playerName,
       roomId,
-      players: [{ id: playerId, name: playerName }],
+      players: [makeLocalPlayerSummary(playerId, playerName)],
     });
   },
 
   upsertPlayer(player) {
+    // Callers must pass a full PlayerSummary (e.g. makeLocalPlayerSummary).
+    if (!isCompletePlayerSummary(player)) return;
     set((state) => ({
       players: state.players.some((entry) => entry.id === player.id)
-        ? state.players.map((entry) => (entry.id === player.id ? player : entry))
+        ? state.players.map((entry) =>
+            entry.id === player.id ? player : entry,
+          )
         : [...state.players, player],
       ...(player.id === state.playerId ? { playerName: player.name } : {}),
     }));
@@ -211,7 +244,7 @@ export const useGameStore = create<GameStore>((set) => ({
           deferredSyncSnapshot: snapshot,
           // Cooldown/settings are safe to update while board results remain hidden.
           settings: snapshot.settings ?? state.settings,
-          players: snapshot.players ?? state.players,
+          players: applyRosterFromSync(snapshot.players, state.players),
           attackCooldownExpiresAt: cooldownFromSnapshot(
             state.attackCooldownExpiresAt,
             snapshot.attackCooldownExpiresAt,
@@ -302,6 +335,15 @@ export function getOpponentDisplayName(
   const opponent = state.players.find((player) => player.id !== state.playerId);
   return cleanDisplayName(opponent?.name) ?? fallback;
 }
+
+/** Opponent roster entry (connection + reconnect budget). */
+export function getOpponentSummary(
+  state: Pick<GameState, "playerId" | "players">,
+): PlayerSummary | null {
+  return state.players.find((player) => player.id !== state.playerId) ?? null;
+}
+
+export const selectOpponentSummary = (s: GameStore) => getOpponentSummary(s);
 
 /** Winner nickname for game-over banners. */
 export function getWinnerDisplayName(

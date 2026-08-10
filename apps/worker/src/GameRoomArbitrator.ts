@@ -10,7 +10,12 @@
 //   - #sendSyncToAll passes settings + per-player cooldown to each client
 
 import { DurableObject } from "cloudflare:workers";
-import { normalizePlayerName } from "@radioboi/game-core";
+import {
+  ATTACKER_TURN_TIMEOUT_MS,
+  FATAL_WS_CLOSE_CODE,
+  FatalCloseReason,
+  normalizePlayerName,
+} from "@radioboi/game-core";
 import type { RoomSettings, RoomState } from "./game-logic";
 import {
   addAttackerTurnAlarm,
@@ -31,11 +36,19 @@ import {
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
-  replacePlayerId,
   resolveHit,
   validateShipGeometry,
 } from "./game-logic";
 import { validateMorseForCoord } from "./morse";
+import {
+  applyReconnectTimeout,
+  expireDisconnectedPlayers,
+  makePlayerRecord,
+  markPlayerDisconnected,
+  markPlayerReconnected,
+  normalizePlayerRecord,
+  rosterFromPlayers,
+} from "./player-presence";
 import {
   decodeEvent,
   makeAttackCooldownUpdate,
@@ -53,7 +66,6 @@ import { closeWebSocketSafely } from "./websocket";
 
 const STATE_KEY = "room:state";
 const WS_TAG_PREFIX = "player:";
-const ATTACKER_TURN_TIMEOUT_MS = 90_000;
 
 function parseEncodedRoomSettings(encodedSettings?: string | null): RoomSettings | null {
   if (!encodedSettings) return null;
@@ -106,33 +118,44 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, [`${WS_TAG_PREFIX}${playerId}`]);
 
     const roomState = await this.#loadState(roomId, roomSettings);
+    const now = Date.now();
+
+    // Expire stale offline seats before join (budget already spent).
+    expireDisconnectedPlayers(roomState, now);
+
+    if (roomState.phase === "gameOver" && !roomState.players.some((p) => p.id === playerId)) {
+      server.close(FATAL_WS_CLOSE_CODE, FatalCloseReason.GAME_OVER);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
     const isReconnect = roomState.players.some((p) => p.id === playerId);
-    const playerRecord = {
+    // Single normalize path: makePlayerRecord → addPlayer (addPlayer does not re-normalize).
+    const playerRecord = makePlayerRecord({
       id: playerId,
       name: playerName,
       wsTag: `${WS_TAG_PREFIX}${playerId}`,
       isReady: roomState.players.find((p) => p.id === playerId)?.isReady ?? false,
-    };
+    });
 
-    let addResult = addPlayer(roomState, playerRecord);
-
-    if (!addResult.ok && addResult.reason === "ROOM_FULL") {
-      const disconnectedPlayer = roomState.players.find(
-        (p) => this.ctx.getWebSockets(`${WS_TAG_PREFIX}${p.id}`).length === 0,
-      );
-      if (disconnectedPlayer) {
-        if (replacePlayerId(roomState, disconnectedPlayer.id, playerRecord)) {
-          addResult = { ok: true };
-        }
-      }
-    }
+    // Only the same playerId may reclaim a seat — no third-party slot steal.
+    const addResult = addPlayer(roomState, playerRecord);
 
     if (!addResult.ok) {
-      server.close(4001, addResult.reason);
+      server.close(FATAL_WS_CLOSE_CODE, addResult.reason);
       return new Response(null, { status: 101, webSocket: client });
     }
 
+    // Single live connection per player: drop prior sockets for this id.
+    // Close handlers re-check OPEN sockets and will no-op while this one is live.
+    for (const existing of this.ctx.getWebSockets(`${WS_TAG_PREFIX}${playerId}`)) {
+      if (existing !== server) {
+        closeWebSocketSafely(existing, 1000, "Replaced by new connection");
+      }
+    }
+
+    markPlayerReconnected(roomState, playerId, now);
     await this.#saveState(roomState);
+    await this.#rescheduleAlarm(roomState);
 
     if (!isReconnect) {
       this.#broadcast(
@@ -181,10 +204,52 @@ export class GameRoomArbitrator extends DurableObject<Env> {
 
   override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
     closeWebSocketSafely(ws, code, reason);
+    await this.#onPlayerSocketGone(ws);
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
+    // Presence is applied once in webSocketClose; error only forces a clean close.
     closeWebSocketSafely(ws, 1011, "WebSocket error");
+  }
+
+  /** Open sockets tagged for a player, optionally excluding one (the closing socket). */
+  #openSocketsFor(playerId: string, exclude: WebSocket | null = null): WebSocket[] {
+    return this.ctx
+      .getWebSockets(`${WS_TAG_PREFIX}${playerId}`)
+      .filter((socket) => socket !== exclude && socket.readyState === WebSocket.OPEN);
+  }
+
+  /**
+   * When a player's last live socket is gone, start (or continue) their reconnect budget.
+   * Repeated disconnects do not refill or reset remaining budget.
+   * Settled games (gameOver) ignore late closes to avoid save/sync noise.
+   */
+  async #onPlayerSocketGone(ws: WebSocket): Promise<void> {
+    const tag = this.ctx.getTags(ws).find((t) => t.startsWith(WS_TAG_PREFIX));
+    if (!tag) return;
+    const playerId = tag.slice(WS_TAG_PREFIX.length);
+
+    if (this.#openSocketsFor(playerId, ws).length > 0) return;
+
+    const state = await this.#loadState();
+    // Settled rooms: markPlayerDisconnected is also a no-op on gameOver; skip early
+    // to avoid pointless save/sync after forfeit closes.
+    if (state.phase === "gameOver") return;
+
+    // Re-check after load: a concurrent reconnect may already be OPEN.
+    if (this.#openSocketsFor(playerId, ws).length > 0) return;
+
+    const now = Date.now();
+    const result = markPlayerDisconnected(state, playerId, now);
+    // alreadyExpired ⇒ apply forfeit/remove; shouldPersist covers first offline + expiry.
+    if (result.alreadyExpired) {
+      applyReconnectTimeout(state, playerId, now);
+    }
+    if (!result.shouldPersist) return;
+
+    await this.#saveState(state);
+    await this.#rescheduleAlarm(state);
+    this.#sendSyncToAll(state);
   }
 
   // ── DO Alarm — unified multi-alarm handler ─────────────────────────────────
@@ -200,17 +265,27 @@ export class GameRoomArbitrator extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     const state = await this.#loadState();
     const expired = popExpiredAlarms(state);
+    /** Only roster mutations need a client push (not reschedule/noop). */
+    let rosterMutated = false;
 
     for (const alarmEntry of expired) {
       if (alarmEntry.type === "intercept_timeout" && alarmEntry.missileId) {
         await this.#handleInterceptTimeout(state, alarmEntry.missileId, alarmEntry.attackerId);
       } else if (alarmEntry.type === "attacker_turn_timeout") {
         await this.#handleAttackerTimeout(state);
+      } else if (alarmEntry.type === "reconnect_timeout" && alarmEntry.playerId) {
+        const outcome = applyReconnectTimeout(state, alarmEntry.playerId);
+        if (outcome === "forfeit" || outcome === "removed") {
+          rosterMutated = true;
+        }
       }
     }
 
     await this.#saveState(state);
     await this.#rescheduleAlarm(state);
+    if (rosterMutated) {
+      this.#sendSyncToAll(state);
+    }
   }
 
   // ── Attacker turn timeout (turn-based only) ────────────────────────────────
@@ -348,7 +423,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           undefined,
           state.settings,
           undefined,
-          state.players.map(({ id, name }) => ({ id, name })),
+          rosterFromPlayers(state.players),
         ),
       );
     }
@@ -689,7 +764,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           state.winnerId ?? undefined,
           state.settings,
           cooldownExpires !== undefined && cooldownExpires > now ? cooldownExpires : 0,
-          state.players.map(({ id, name }) => ({ id, name })),
+          rosterFromPlayers(state.players, now),
         ),
       );
     }
@@ -716,6 +791,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       if (!stored.activeMissiles) stored.activeMissiles = [];
       if (!stored.shotLog) stored.shotLog = [];
       if (!stored.attackCooldowns) stored.attackCooldowns = {};
+      stored.players = (stored.players ?? []).map((player) => normalizePlayerRecord(player));
       stored.settings = stored.settings
         ? clampRoomSettings(stored.settings)
         : { ...DEFAULT_SETTINGS };

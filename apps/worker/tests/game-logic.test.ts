@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { BOARD_COLUMN_LABELS, BOARD_ROW_LABELS, makeCoordinate } from "@radioboi/game-core";
+import {
+  BOARD_COLUMN_LABELS,
+  BOARD_ROW_LABELS,
+  makeCoordinate,
+  RECONNECT_BUDGET_MS,
+} from "@radioboi/game-core";
 import {
   addAttackerTurnAlarm,
   addInterceptAlarm,
@@ -16,10 +21,21 @@ import {
   prepareAttack,
   processInterceptAttempt,
   recordMorseSequence,
-  replacePlayerId,
   resolveHit,
   validateShipGeometry,
 } from "../src/game-logic";
+import {
+  applyReconnectTimeout,
+  makePlayerRecord,
+  markPlayerDisconnected,
+  markPlayerReconnected,
+  remainingReconnectBudgetMs,
+  toRosterEntry,
+} from "../src/player-presence";
+
+function seat(id: string, name: string, wsTag: string, isReady = false) {
+  return makePlayerRecord({ id, name, wsTag, isReady });
+}
 import {
   charToMorse,
   coordIndicesToMorse,
@@ -47,8 +63,8 @@ function validFleet() {
 
 function roomReadyForBattle() {
   const state = createRoomState("ROOM42");
-  addPlayer(state, { id: "p1", name: "P1", wsTag: "a", isReady: false });
-  addPlayer(state, { id: "p2", name: "P2", wsTag: "b", isReady: false });
+  addPlayer(state, seat("p1", "P1", "a"));
+  addPlayer(state, seat("p2", "P2", "b"));
   applyShipsPlaced(state, "p1", validFleet());
   applyShipsPlaced(state, "p2", validFleet());
   state.currentTurnId = "p1";
@@ -81,11 +97,11 @@ describe("room lifecycle", () => {
   test("moves from lobby to placement when the second player joins", () => {
     const state = createRoomState("ROOM42");
 
-    expect(addPlayer(state, { id: "p1", name: "P1", wsTag: "a", isReady: false })).toEqual({
+    expect(addPlayer(state, seat("p1", "P1", "a"))).toEqual({
       ok: true,
     });
     expect(state.phase).toBe("lobby");
-    expect(addPlayer(state, { id: "p2", name: "P2", wsTag: "b", isReady: false })).toEqual({
+    expect(addPlayer(state, seat("p2", "P2", "b"))).toEqual({
       ok: true,
     });
     expect(state.phase).toBe("placement");
@@ -94,9 +110,9 @@ describe("room lifecycle", () => {
 
   test("updates a player's nickname when they reconnect", () => {
     const state = createRoomState("ROOM42");
-    addPlayer(state, { id: "p1", name: "Old name", wsTag: "old", isReady: false });
+    addPlayer(state, seat("p1", "Old name", "old"));
 
-    expect(addPlayer(state, { id: "p1", name: "New name", wsTag: "new", isReady: false })).toEqual({
+    expect(addPlayer(state, seat("p1", "New name", "new"))).toEqual({
       ok: true,
     });
     expect(state.players[0]).toMatchObject({ id: "p1", name: "New name", wsTag: "new" });
@@ -108,40 +124,120 @@ describe("room lifecycle", () => {
     );
   });
 
-  test("can claim a disconnected full-room slot without losing state", () => {
-    const state = roomReadyForBattle();
-    const oldTarget = makeCoordinate(0, 8);
-    state.attackCooldowns.p1 = 12345;
-    state.pendingAttacks.p1 = {
-      attackerId: "p1",
-      attempts: 1,
-      missileId: "m-reconnect",
-      morseSequence: ["."],
-      target: oldTarget,
-    };
-    state.pendingAlarms.push({
-      type: "intercept_timeout",
-      attackerId: "p1",
-      missileId: "m-reconnect",
-      fireAt: Date.now() + 1000,
+  test("reconnect budget freezes on rejoin and resumes on next leave", () => {
+    const state = createRoomState("ROOM42");
+    addPlayer(state, seat("p1", "P1", "a"));
+    const t0 = 1_000_000;
+
+    const firstLeave = markPlayerDisconnected(state, "p1", t0);
+    expect(firstLeave.shouldPersist).toBe(true);
+    expect(firstLeave.deadlineAt).toBe(t0 + RECONNECT_BUDGET_MS);
+
+    // Flapping while offline must not reset the deadline.
+    const flap = markPlayerDisconnected(state, "p1", t0 + 30_000);
+    expect(flap.shouldPersist).toBe(false);
+    expect(flap.deadlineAt).toBe(t0 + RECONNECT_BUDGET_MS);
+
+    // After 5 minutes offline, 5 minutes remain.
+    const rejoin = markPlayerReconnected(state, "p1", t0 + 5 * 60_000);
+    expect(rejoin.budgetLeft).toBe(RECONNECT_BUDGET_MS - 5 * 60_000);
+    expect(state.players[0]?.disconnectedAt).toBeNull();
+
+    const secondLeave = markPlayerDisconnected(state, "p1", t0 + 6 * 60_000);
+    expect(secondLeave.deadlineAt).toBe(t0 + 6 * 60_000 + (RECONNECT_BUDGET_MS - 5 * 60_000));
+    expect(remainingReconnectBudgetMs(state.players[0]!, t0 + 6 * 60_000)).toBe(
+      RECONNECT_BUDGET_MS - 5 * 60_000,
+    );
+  });
+
+  test("reconnect timeout forfeits in battle and frees seat in lobby", () => {
+    const battle = roomReadyForBattle();
+    const t0 = 2_000_000;
+    markPlayerDisconnected(battle, "p2", t0);
+    // Exhaust budget
+    battle.players.find((p) => p.id === "p2")!.reconnectBudgetMs = 0;
+    battle.players.find((p) => p.id === "p2")!.disconnectedAt = t0;
+
+    expect(applyReconnectTimeout(battle, "p2", t0 + 1)).toBe("forfeit");
+    expect(battle.phase).toBe("gameOver");
+    expect(battle.winnerId).toBe("p1");
+
+    const lobby = createRoomState("LOBBY1");
+    addPlayer(lobby, seat("host", "Host", "h"));
+    addPlayer(lobby, seat("guest", "Guest", "g"));
+    expect(lobby.phase).toBe("placement");
+    markPlayerDisconnected(lobby, "guest", t0);
+    lobby.players.find((p) => p.id === "guest")!.reconnectBudgetMs = 0;
+
+    expect(applyReconnectTimeout(lobby, "guest", t0 + 1)).toBe("removed");
+    expect(lobby.players.map((p) => p.id)).toEqual(["host"]);
+    expect(lobby.phase).toBe("lobby");
+  });
+
+  test("roster entry exposes required presence fields", () => {
+    const state = createRoomState("ROOM42");
+    addPlayer(state, seat("p1", "P1", "a"));
+    const t0 = 3_000_000;
+    markPlayerDisconnected(state, "p1", t0);
+
+    expect(toRosterEntry(state.players[0]!, t0)).toEqual({
+      id: "p1",
+      name: "P1",
+      connected: false,
+      reconnectBudgetMs: RECONNECT_BUDGET_MS,
+      reconnectDeadlineAt: t0 + RECONNECT_BUDGET_MS,
     });
+  });
 
-    expect(
-      replacePlayerId(state, "p1", {
-        id: "p1-new",
-        name: "P1 reconnected",
-        wsTag: "new",
-        isReady: false,
-      }),
-    ).toBe(true);
+  test("zero remaining budget on disconnect stamps offline and allows expiry", () => {
+    const battle = roomReadyForBattle();
+    const t0 = 4_000_000;
+    // Simulate rejoin at the last instant: budget frozen at 0 while connected.
+    const p2 = battle.players.find((p) => p.id === "p2")!;
+    p2.reconnectBudgetMs = 0;
+    p2.disconnectedAt = null;
 
-    expect(state.players.some((p) => p.id === "p1-new" && p.isReady)).toBe(true);
-    expect(state.boards["p1-new"]).toBeDefined();
-    expect(state.boards.p1).toBeUndefined();
-    expect(state.currentTurnId).toBe("p1-new");
-    expect(state.attackCooldowns["p1-new"]).toBe(12345);
-    expect(state.pendingAttacks["p1-new"]?.attackerId).toBe("p1-new");
-    expect(state.pendingAlarms[0]?.attackerId).toBe("p1-new");
+    const mark = markPlayerDisconnected(battle, "p2", t0);
+    expect(mark.shouldPersist).toBe(true);
+    expect(mark.alreadyExpired).toBe(true);
+    expect(mark.deadlineAt).toBe(t0);
+    expect(p2.disconnectedAt).toBe(t0);
+
+    expect(applyReconnectTimeout(battle, "p2", t0)).toBe("forfeit");
+    expect(battle.phase).toBe("gameOver");
+    expect(battle.winnerId).toBe("p1");
+  });
+
+  test("zero budget disconnect frees lobby seat", () => {
+    const lobby = createRoomState("LOBBY0");
+    addPlayer(lobby, seat("host", "Host", "h"));
+    addPlayer(lobby, seat("guest", "Guest", "g"));
+    const t0 = 5_000_000;
+    const guest = lobby.players.find((p) => p.id === "guest")!;
+    guest.reconnectBudgetMs = 0;
+    guest.disconnectedAt = null;
+
+    const mark = markPlayerDisconnected(lobby, "guest", t0);
+    expect(mark.alreadyExpired).toBe(true);
+    expect(guest.disconnectedAt).toBe(t0);
+
+    expect(applyReconnectTimeout(lobby, "guest", t0)).toBe("removed");
+    expect(lobby.players.map((p) => p.id)).toEqual(["host"]);
+    expect(lobby.phase).toBe("lobby");
+  });
+
+  test("ignores disconnect marks after gameOver (no post-forfeit churn)", () => {
+    const battle = roomReadyForBattle();
+    const t0 = 6_000_000;
+    markPlayerDisconnected(battle, "p2", t0);
+    battle.players.find((p) => p.id === "p2")!.reconnectBudgetMs = 0;
+    expect(applyReconnectTimeout(battle, "p2", t0 + 1)).toBe("forfeit");
+    expect(battle.phase).toBe("gameOver");
+
+    const late = markPlayerDisconnected(battle, "p2", t0 + 60_000);
+    expect(late.shouldPersist).toBe(false);
+    expect(late.alreadyExpired).toBe(false);
+    expect(applyReconnectTimeout(battle, "p2", t0 + 60_000)).toBe("noop");
   });
 });
 

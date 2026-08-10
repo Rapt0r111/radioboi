@@ -4,10 +4,37 @@ export type Coordinate = string & { readonly __brand: "Coordinate" };
 
 export type GamePhase = "lobby" | "placement" | "battle" | "gameOver";
 
+/**
+ * Room roster entry on the wire (SYNC_STATE) and in the client store.
+ * Presence fields are always populated by the server so clients never tri-state.
+ */
 export type PlayerSummary = {
   id: string;
   name: string;
+  /** false while the player has no live WebSocket */
+  connected: boolean;
+  /** Remaining offline reconnect budget in ms (frozen while online) */
+  reconnectBudgetMs: number;
+  /** Absolute unix ms when offline budget hits zero; null while online */
+  reconnectDeadlineAt: number | null;
 };
+
+/** Total offline reconnect budget per player per room (does not reset on rejoin). */
+export const RECONNECT_BUDGET_MS = 10 * 60 * 1000;
+
+/** Turn-based attacker turn timeout (server + client UI). */
+export const ATTACKER_TURN_TIMEOUT_MS = 90_000;
+
+/** Local optimistic roster entry before the first SYNC_STATE. */
+export function makeLocalPlayerSummary(id: string, name: string): PlayerSummary {
+  return {
+    id,
+    name,
+    connected: true,
+    reconnectBudgetMs: RECONNECT_BUDGET_MS,
+    reconnectDeadlineAt: null,
+  };
+}
 
 export const PLAYER_NAME_MAX_LENGTH = 24;
 

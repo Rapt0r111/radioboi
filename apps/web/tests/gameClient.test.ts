@@ -147,8 +147,8 @@ describe("GameClient", () => {
           isMyTurn: false,
           shotLog: [],
           players: [
-            { id: "p1", name: "Моряк" },
-            { id: "p2", name: "Радио" },
+            { id: "p1", name: "Моряк", connected: true, reconnectBudgetMs: 600_000, reconnectDeadlineAt: null },
+            { id: "p2", name: "Радио", connected: true, reconnectBudgetMs: 600_000, reconnectDeadlineAt: null },
           ],
         },
       }),
@@ -156,9 +156,9 @@ describe("GameClient", () => {
     await Promise.resolve();
 
     expect(useGameStore.getState().playerName).toBe("Моряк");
-    expect(useGameStore.getState().players).toEqual([
-      { id: "p1", name: "Моряк" },
-      { id: "p2", name: "Радио" },
+    expect(useGameStore.getState().players).toMatchObject([
+      { id: "p1", name: "Моряк", connected: true, reconnectDeadlineAt: null },
+      { id: "p2", name: "Радио", connected: true, reconnectDeadlineAt: null },
     ]);
   });
 

@@ -4,7 +4,10 @@
 import {
   type ClientGameEvent,
   type Coordinate,
+  FATAL_WS_CLOSE_CODE,
   GameEventType,
+  makeLocalPlayerSummary,
+  messageForFatalCloseReason,
   normalizePlayerName,
   type RoomSettings,
   type ServerGameEvent,
@@ -32,7 +35,6 @@ const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS  = 30_000;
 const RECONNECT_JITTER  = 0.2;
 const MAX_OUTBOX_EVENTS = 32;
-const FATAL_CLOSE_CODES = new Set([4001]);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,6 +57,7 @@ export class GameClient {
   #url = "";
   #playerId = "";
   #playerName = "";
+  #fatalReason: string | null = null;
   readonly #outbox: ClientGameEvent[] = [];
 
   readonly #handlers: HandlerMap = {};
@@ -93,10 +96,14 @@ export class GameClient {
     this.#ws?.close(1000, "Client destroyed");
     this.#ws = null;
     this.#outbox.length = 0;
+    this.#fatalReason = null;
     this.#setStatus("disconnected");
   }
 
   get status(): ConnectionStatus { return this.#status; }
+
+  /** Human-readable reason after a permanent close (e.g. ROOM_FULL). */
+  get fatalReason(): string | null { return this.#fatalReason; }
 
   // ── Sending ───────────────────────────────────────────────────────────────
 
@@ -172,6 +179,7 @@ export class GameClient {
       ws.addEventListener("open", () => {
         if (ws !== this.#ws) return;
         this.#reconnectDelay = RECONNECT_BASE_MS;
+        this.#fatalReason = null;
         this.#setStatus("connected");
         this.#sendNow({
           type: GameEventType.JOIN_ROOM,
@@ -189,10 +197,11 @@ export class GameClient {
       ws.addEventListener("close", (ev) => {
         if (ws !== this.#ws) return;
         this.#ws = null;
-        if (!this.#destroyed && !FATAL_CLOSE_CODES.has(ev.code)) {
+        if (!this.#destroyed && ev.code !== FATAL_WS_CLOSE_CODE) {
           console.info(`[GameClient] socket closed (${ev.code}); reconnecting...`);
           this.#scheduleReconnect();
-        } else if (FATAL_CLOSE_CODES.has(ev.code)) {
+        } else if (ev.code === FATAL_WS_CLOSE_CODE) {
+          this.#fatalReason = messageForFatalCloseReason(ev.reason ?? "");
           console.warn(`[GameClient] socket closed permanently (${ev.code}): ${ev.reason}`);
           this.#setStatus("disconnected");
         }
@@ -258,7 +267,10 @@ export class GameClient {
 
     switch (event.type) {
       case GameEventType.PLAYER_JOINED:
-        store.upsertPlayer({ id: event.payload.playerId, name: event.payload.playerName });
+        // Optimistic local roster; authoritative presence arrives via SYNC_STATE.
+        store.upsertPlayer(
+          makeLocalPlayerSummary(event.payload.playerId, event.payload.playerName),
+        );
         break;
 
       case GameEventType.GAME_STARTED:

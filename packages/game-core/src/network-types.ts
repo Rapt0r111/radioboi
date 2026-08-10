@@ -169,6 +169,7 @@ export type ErrorEvent = {
 
 export const ErrorCode = {
   ROOM_FULL: "ROOM_FULL",
+  GAME_OVER: "GAME_OVER",
   INVALID_PLACEMENT: "INVALID_PLACEMENT",
   NOT_YOUR_TURN: "NOT_YOUR_TURN",
   ATTACK_ON_COOLDOWN: "ATTACK_ON_COOLDOWN",
@@ -182,6 +183,29 @@ export const ErrorCode = {
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
+
+/** WebSocket close codes the client treats as permanent (no auto-reconnect). */
+export const FATAL_WS_CLOSE_CODE = 4001;
+
+/** Close reasons sent with FATAL_WS_CLOSE_CODE. */
+export const FatalCloseReason = {
+  ROOM_FULL: "ROOM_FULL",
+  GAME_OVER: "GAME_OVER",
+} as const;
+
+export type FatalCloseReason = (typeof FatalCloseReason)[keyof typeof FatalCloseReason];
+
+const FATAL_CLOSE_MESSAGES: Record<string, string> = {
+  [FatalCloseReason.ROOM_FULL]: "Комната заполнена. Слот занят другим игроком.",
+  [FatalCloseReason.GAME_OVER]: "Игра уже завершена.",
+};
+
+export function messageForFatalCloseReason(reason: string): string {
+  const key = reason.trim();
+  if (key in FATAL_CLOSE_MESSAGES) return FATAL_CLOSE_MESSAGES[key] as string;
+  if (key.length > 0) return `Подключение отклонено: ${key}`;
+  return "Подключение отклонено сервером.";
+}
 
 // ── Discriminated unions ──────────────────────────────────────────────────────
 

@@ -41,8 +41,20 @@ test("uses the stored nickname in the room connection and roster", async ({ page
       isMyTurn: true,
       shotLog: [],
       players: [
-        { id: storage.playerId ?? "local", name: "Моряк" },
-        { id: "enemy", name: "Радио" },
+        {
+          id: storage.playerId ?? "local",
+          name: "Моряк",
+          connected: true,
+          reconnectBudgetMs: 10 * 60 * 1000,
+          reconnectDeadlineAt: null,
+        },
+        {
+          id: "enemy",
+          name: "Радио",
+          connected: true,
+          reconnectBudgetMs: 10 * 60 * 1000,
+          reconnectDeadlineAt: null,
+        },
       ],
     },
   });

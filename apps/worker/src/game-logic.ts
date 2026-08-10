@@ -33,6 +33,13 @@ export type PlayerRecord = {
   name: string;
   wsTag: string;
   isReady: boolean;
+  /**
+   * Remaining offline allowance (ms). Shrinks only while disconnected.
+   * Reconnect freezes the budget; the next disconnect resumes with what is left.
+   */
+  reconnectBudgetMs: number;
+  /** Set when the player has no live sockets; null while connected. */
+  disconnectedAt: number | null;
 };
 
 export type PendingAttack = {
@@ -99,11 +106,13 @@ export function clampRoomSettings(raw: unknown): RoomSettings {
 }
 
 export type PendingAlarm = {
-  type: "intercept_timeout" | "attacker_turn_timeout";
+  type: "intercept_timeout" | "attacker_turn_timeout" | "reconnect_timeout";
   /** Present for intercept_timeout */
   missileId?: string;
   /** Present for intercept_timeout — who attacked */
   attackerId?: string;
+  /** Present for reconnect_timeout */
+  playerId?: string;
   fireAt: number;
 };
 
@@ -307,14 +316,25 @@ export function createRoomState(roomId: string, settings?: RoomSettings): RoomSt
 
 // ── Player management ─────────────────────────────────────────────────────────
 
+/**
+ * Join or update a seat. Callers must pass a complete PlayerRecord
+ * (use `makePlayerRecord` from player-presence for construction / legacy repair).
+ */
 export function addPlayer(
   state: RoomState,
   player: PlayerRecord,
-): { ok: true } | { ok: false; reason: "ROOM_FULL" | "ALREADY_JOINED" } {
+): { ok: true } | { ok: false; reason: "ROOM_FULL" } {
   if (state.players.some((p) => p.id === player.id)) {
     const idx = state.players.findIndex((p) => p.id === player.id);
     const existing = state.players[idx];
-    if (existing) state.players[idx] = { ...existing, name: player.name, wsTag: player.wsTag };
+    if (existing) {
+      // Name/wsTag only — never reset reconnect budget or ready from a reconnect packet.
+      state.players[idx] = {
+        ...existing,
+        name: player.name,
+        wsTag: player.wsTag,
+      };
+    }
     return { ok: true };
   }
   if (state.players.length >= 2) return { ok: false, reason: "ROOM_FULL" };
@@ -329,50 +349,36 @@ export function getOpponentId(state: RoomState, playerId: string): string | null
   return state.players.find((p) => p.id !== playerId)?.id ?? null;
 }
 
-export function replacePlayerId(
-  state: RoomState,
-  fromId: string,
-  nextPlayer: PlayerRecord,
-): boolean {
-  if (fromId === nextPlayer.id) return true;
-  if (state.players.some((p) => p.id === nextPlayer.id)) return false;
+/**
+ * End battle with the opponent as winner (disconnect budget exhausted or surrender).
+ * Returns winnerId or null if forfeit is not applicable.
+ */
+export function forfeitPlayer(state: RoomState, playerId: string): string | null {
+  if (state.phase !== "battle") return null;
+  const winnerId = getOpponentId(state, playerId);
+  if (!winnerId) return null;
 
-  const idx = state.players.findIndex((p) => p.id === fromId);
-  const existing = state.players[idx];
-  if (!existing) return false;
+  state.phase = "gameOver";
+  state.winnerId = winnerId;
+  state.pendingAttacks = {};
+  state.activeMissiles = [];
+  state.currentTurnId = null;
 
-  state.players[idx] = { ...existing, ...nextPlayer, isReady: existing.isReady };
-
-  if (state.boards[fromId] !== undefined) {
-    state.boards[nextPlayer.id] = state.boards[fromId];
-    delete state.boards[fromId];
-  }
-  if (state.ships[fromId] !== undefined) {
-    state.ships[nextPlayer.id] = state.ships[fromId];
-    delete state.ships[fromId];
-  }
-  if (state.attackCooldowns[fromId] !== undefined) {
-    state.attackCooldowns[nextPlayer.id] = state.attackCooldowns[fromId];
-    delete state.attackCooldowns[fromId];
-  }
-
-  const pending = state.pendingAttacks[fromId];
-  if (pending !== undefined) {
-    state.pendingAttacks[nextPlayer.id] = { ...pending, attackerId: nextPlayer.id };
-    delete state.pendingAttacks[fromId];
-  }
-
-  if (state.currentTurnId === fromId) state.currentTurnId = nextPlayer.id;
-  if (state.winnerId === fromId) state.winnerId = nextPlayer.id;
-
-  state.shotLog = state.shotLog.map((entry) =>
-    entry.attackerId === fromId ? { ...entry, attackerId: nextPlayer.id } : entry,
-  );
-  state.pendingAlarms = state.pendingAlarms.map((alarm) =>
-    alarm.attackerId === fromId ? { ...alarm, attackerId: nextPlayer.id } : alarm,
+  // Drop combat + reconnect alarms; room is settled.
+  state.pendingAlarms = state.pendingAlarms.filter(
+    (alarm) =>
+      alarm.type !== "intercept_timeout" &&
+      alarm.type !== "attacker_turn_timeout" &&
+      alarm.type !== "reconnect_timeout",
   );
 
-  return true;
+  const leaver = state.players.find((p) => p.id === playerId);
+  if (leaver) {
+    leaver.reconnectBudgetMs = 0;
+    leaver.disconnectedAt = leaver.disconnectedAt ?? Date.now();
+  }
+
+  return winnerId;
 }
 
 // ── Ship placement ────────────────────────────────────────────────────────────

@@ -89,27 +89,27 @@ describe("clientSession", () => {
   });
 
   test("dual-writes nickname to session and local storage", () => {
-    rememberPlayerName("  Моряк  ");
+    rememberPlayerName("  ??????????  ");
 
-    expect(sessionStorage.getItem(PLAYER_NAME_KEY)).toBe("Моряк");
-    expect(localStorage.getItem(PLAYER_NAME_KEY)).toBe("Моряк");
-    expect(readPlayerNamePreference()).toBe("Моряк");
+    expect(sessionStorage.getItem(PLAYER_NAME_KEY)).toBe("??????????");
+    expect(localStorage.getItem(PLAYER_NAME_KEY)).toBe("??????????");
+    expect(readPlayerNamePreference()).toBe("??????????");
   });
 
   test("prefers this tab's session nickname over shared local nickname", () => {
-    localStorage.setItem(PLAYER_NAME_KEY, "Локальный");
-    sessionStorage.setItem(PLAYER_NAME_KEY, "Сессионный");
+    localStorage.setItem(PLAYER_NAME_KEY, "??????????????????");
+    sessionStorage.setItem(PLAYER_NAME_KEY, "????????????????????");
 
-    expect(readPlayerNamePreference()).toBe("Сессионный");
+    expect(readPlayerNamePreference()).toBe("????????????????????");
   });
 
   test("falls back to localStorage when session has no nickname", () => {
-    localStorage.setItem(PLAYER_NAME_KEY, "Моряк");
+    localStorage.setItem(PLAYER_NAME_KEY, "??????????");
 
-    expect(readPlayerNamePreference()).toBe("Моряк");
-    expect(resolvePlayerName("abcdef12-....")).toBe("Моряк");
+    expect(readPlayerNamePreference()).toBe("??????????");
+    expect(resolvePlayerName("abcdef12-....")).toBe("??????????");
     // Pin shared name into this tab for refresh stability.
-    expect(sessionStorage.getItem(PLAYER_NAME_KEY)).toBe("Моряк");
+    expect(sessionStorage.getItem(PLAYER_NAME_KEY)).toBe("??????????");
   });
 
   test("does not persist generated fallback nicknames to localStorage", () => {

@@ -35,7 +35,13 @@ export type {
   SyncStateEvent,
 } from "./network-types";
 
-export { ErrorCode, GameEventType } from "./network-types";
+export {
+  ErrorCode,
+  FATAL_WS_CLOSE_CODE,
+  FatalCloseReason,
+  GameEventType,
+  messageForFatalCloseReason,
+} from "./network-types";
 
 export type { PlacementError, PlacementResult } from "./ship-placement";
 export {
@@ -66,10 +72,13 @@ export type {
   RoomSettings,
 } from "./types";
 export {
+  ATTACKER_TURN_TIMEOUT_MS,
   DEFAULT_ROOM_SETTINGS,
+  makeLocalPlayerSummary,
   MIN_ATTACK_COOLDOWN_MS,
   MIN_GUIDED_ATTACK_COOLDOWN_MS,
   minimumAttackCooldownMs,
   normalizePlayerName,
   PLAYER_NAME_MAX_LENGTH,
+  RECONNECT_BUDGET_MS,
 } from "./types";

@@ -139,7 +139,7 @@ export function rememberPlayerName(name: string): void {
 }
 
 /**
- * Preference order: this tab's session name → shared local name.
+ * Preference order: this tab's session name ??? shared local name.
  * Used by the lobby form prefill and game-room connection.
  */
 export function readPlayerNamePreference(): string | null {

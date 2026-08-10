@@ -9,6 +9,7 @@
 //   - Async has no intercept phase: both players fire independently after reload
 
 import {
+  ATTACKER_TURN_TIMEOUT_MS,
   type Coordinate,
   coordinateToMorseNotation,
   GameEventType,
@@ -25,6 +26,7 @@ import { GameControls } from "@/src/components/GameControls";
 import { GameOverScreen } from "@/src/components/GameOverScreen";
 import { LobbyScreen } from "@/src/components/LobbyScreen";
 import { MorseTelegraph } from "@/src/components/MorseTelegraph";
+import { OpponentPresenceBanner } from "@/src/components/OpponentPresenceBanner";
 import { RadarCanvas, type RadarRef } from "@/src/components/RadarCanvas";
 import { ShipPlacementScreen } from "@/src/components/ShipPlacementScreen";
 import { ShotHistory } from "@/src/components/ShotHistory";
@@ -59,8 +61,18 @@ import {
   useGameStore,
 } from "@/src/store/gameStore";
 
-const ATTACKER_TURN_TIMEOUT_S = 60;
+const ATTACKER_TURN_TIMEOUT_S = ATTACKER_TURN_TIMEOUT_MS / 1000;
 const ATTEMPT_DOT_KEYS = ["attempt-1", "attempt-2", "attempt-3", "attempt-4", "attempt-5"] as const;
+
+/** Fixed stack so connection + opponent banners never cover each other. */
+function SessionChrome() {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-100 flex flex-col [&>*]:pointer-events-auto">
+      <ConnectionMonitor layout="stack" />
+      <OpponentPresenceBanner layout="stack" />
+    </div>
+  );
+}
 
 type Props = { roomId: string };
 
@@ -481,7 +493,7 @@ export function GameClientWrapper({ roomId }: Props) {
   if (phase === "lobby") {
     return (
       <>
-        <ConnectionMonitor />
+        <SessionChrome />
         <LobbyScreen roomId={roomId} />
       </>
     );
@@ -491,14 +503,14 @@ export function GameClientWrapper({ roomId }: Props) {
     if (hasPlaced) {
       return (
         <>
-          <ConnectionMonitor />
+          <SessionChrome />
           <WaitingScreen roomId={roomId} />
         </>
       );
     }
     return (
       <>
-        <ConnectionMonitor />
+        <SessionChrome />
         <ShipPlacementScreen
           transport={transport}
           playerId={playerId}
@@ -622,7 +634,7 @@ export function GameClientWrapper({ roomId }: Props) {
   return (
     <div className="battle-shell relative min-h-dvh text-miss-white">
       {morseEngine ? <AudioUnlocker engine={morseEngine} /> : null}
-      <ConnectionMonitor />
+      <SessionChrome />
 
       <main className="crt-scanlines mx-auto flex min-h-dvh w-full max-w-400 flex-col gap-4 px-4 py-4 lg:px-6 lg:py-6">
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { DEFAULT_ROOM_SETTINGS, makeCoordinate } from "@radioboi/game-core";
+import { DEFAULT_ROOM_SETTINGS, makeCoordinate, RECONNECT_BUDGET_MS } from "@radioboi/game-core";
 import {
   formatCoordForLog,
   getOpponentDisplayName,
@@ -51,16 +51,46 @@ describe("game store", () => {
       enemyBoard: {},
       isMyTurn: false,
       players: [
-        { id: "p1", name: "Моряк" },
-        { id: "p2", name: "Радио" },
+        { id: "p1", name: "Моряк", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
+        { id: "p2", name: "Радио", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
       ],
     });
 
     expect(useGameStore.getState().playerName).toBe("Моряк");
     expect(useGameStore.getState().players).toEqual([
-      { id: "p1", name: "Моряк" },
-      { id: "p2", name: "Радио" },
+      { id: "p1", name: "Моряк", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
+      { id: "p2", name: "Радио", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
     ]);
+  });
+
+  test("rejects partial SYNC roster all-or-nothing and keeps previous players", () => {
+    const store = useGameStore.getState();
+    store.setSession("p1", "room", "Моряк");
+    store.syncFromServer({
+      phase: "placement",
+      ownBoard: {},
+      enemyBoard: {},
+      isMyTurn: false,
+      players: [
+        { id: "p1", name: "Моряк", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
+        { id: "p2", name: "Радио", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
+      ],
+    });
+
+    const before = useGameStore.getState().players;
+    store.syncFromServer({
+      phase: "placement",
+      ownBoard: {},
+      enemyBoard: {},
+      isMyTurn: false,
+      // One complete + one incomplete → whole roster rejected.
+      players: [
+        { id: "p1", name: "Моряк", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
+        { id: "p2", name: "Радио" } as never,
+      ],
+    });
+
+    expect(useGameStore.getState().players).toEqual(before);
   });
 
   test("resolves display names for self, opponent, and winner", () => {
@@ -71,8 +101,8 @@ describe("game store", () => {
       enemyBoard: {},
       isMyTurn: true,
       players: [
-        { id: "p1", name: "Моряк" },
-        { id: "p2", name: "Радио" },
+        { id: "p1", name: "Моряк", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
+        { id: "p2", name: "Радио", connected: true, reconnectBudgetMs: RECONNECT_BUDGET_MS, reconnectDeadlineAt: null },
       ],
       winnerId: "p2",
     });

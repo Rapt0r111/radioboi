@@ -105,12 +105,30 @@ describe("worker protocol event builders", () => {
           undefined,
           undefined,
           undefined,
-          [{ id: "p1", name: "Моряк" }],
+          [
+            {
+              id: "p1",
+              name: "Моряк",
+              connected: true,
+              reconnectBudgetMs: 600_000,
+              reconnectDeadlineAt: null,
+            },
+          ],
         ),
       ),
     ).toMatchObject({
       type: "SYNC_STATE",
-      payload: { players: [{ id: "p1", name: "Моряк" }] },
+      payload: {
+        players: [
+          {
+            id: "p1",
+            name: "Моряк",
+            connected: true,
+            reconnectBudgetMs: 600_000,
+            reconnectDeadlineAt: null,
+          },
+        ],
+      },
     });
   });
 
