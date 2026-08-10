@@ -1,0 +1,106 @@
+=== Radioboi LAN server ===
+Web port:    3000
+Worker port: 8787
+
+Using bun:  C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\runtime\bun.exe
+Using node: C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\runtime\node\node.exe
+Mode: offline
+App:  C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app
+Offline marker path/lock mismatch - re-linking dependencies for this location.
+Installing/repairing dependencies offline (no internet required)...
+  app:   C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app
+  cache: C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\cache
+Removing previous workspace node_modules (path re-link)...
+  removing C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\node_modules
+  removing C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\node_modules
+  removing C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\worker\node_modules
+  removing C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\packages\game-core\node_modules
+bun install v1.3.14 (0d9b296a)
+
++ @biomejs/biome@2.4.15
++ turbo@2.9.14
++ typescript@6.0.3
+
+738 packages installed [3.49s]
+Offline dependencies installed.
+Web mode: production (standalone)
+ПРЕДУПРЕЖДЕНИЕ: Windows Firewall may block LAN clients on TCP 3000, 8787. Run 'powershell -ExecutionPolicy Bypass -File
+ scripts/allow-lan-firewall.ps1 -WebPort 3000 -WorkerPort 8787' from an elevated PowerShell window (or
+local-server\allow-firewall.bat).
+Using existing production build: C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\server.js
+(pass -ForceBuild to rebuild with current WS settings)
+Web server did not start listening on port 3000 within 60 seconds.
+$ node scripts/start-standalone.mjs
+node:internal/modules/cjs/loader:1502
+  const err = new Error(message);
+              ^
+Error: Cannot find module '@swc/helpers/_/_interop_require_default'
+Require stack:
+- C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\shared\lib\constants.js
+- C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\server\config.js
+- C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\server\next.js
+- C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\server.js
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1502:15)
+    at C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\server\require-hook.js:68:36
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1073:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1097:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1118:12)
+    at Module._load (node:internal/modules/cjs/loader:1287:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1602:12)
+    at mod.require (C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\server\require-hook.js:
+79:28)
+    at require (node:internal/modules/helpers:191:16) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+    'C:\\Users\\Aquarius\\Pictures\\Radioboi-LAN-Offline-win64-20260810-093143\\app\\apps\\web\\.next\\standalone\\apps\\web\\node_modules\\next\\dist\\shared\\lib\\constants.
+js',
+    'C:\\Users\\Aquarius\\Pictures\\Radioboi-LAN-Offline-win64-20260810-093143\\app\\apps\\web\\.next\\standalone\\apps\\web\\node_modules\\next\\dist\\server\\config.js',
+    'C:\\Users\\Aquarius\\Pictures\\Radioboi-LAN-Offline-win64-20260810-093143\\app\\apps\\web\\.next\\standalone\\apps\\web\\node_modules\\next\\dist\\server\\next.js',
+    'C:\\Users\\Aquarius\\Pictures\\Radioboi-LAN-Offline-win64-20260810-093143\\app\\apps\\web\\.next\\standalone\\apps\\web\\server.js'
+  ]
+}
+Node.js v26.1.0
+error: script "start" exited with code 1
+C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\scripts\start-local.ps1:287 знак:5
++     throw "Web server did not start listening on port $WebPort within ...
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Web server did ...ted with code 1:String) [], RuntimeException
+    + FullyQualifiedErrorId : Web server did not start listening on port 3000 within 60 seconds.
+$ node scripts/start-standalone.mjs
+node:internal/modules/cjs/loader:1502
+  const err = new Error(message);
+              ^
+Error: Cannot find module '@swc/helpers/_/_interop_require_default'
+Require stack:
+- C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\shared\lib\constants.js
+- C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\server\config.js
+- C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\server\next.js
+- C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\server.js
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1502:15)
+    at C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\server\require-hook.js:68:36
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1073:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1097:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1118:12)
+    at Module._load (node:internal/modules/cjs/loader:1287:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1602:12)
+        at mod.require (C:\Users\Aquarius\Pictures\Radioboi-LAN-Offline-win64-20260810-093143\app\apps\web\.next\standalone\apps\web\node_modules\next\dist\server\require-hoo
+   k.js:79:28)
+    at require (node:internal/modules/helpers:191:16) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+        'C:\\Users\\Aquarius\\Pictures\\Radioboi-LAN-Offline-win64-20260810-093143\\app\\apps\\web\\.next\\standalone\\apps\\web\\node_modules\\next\\dist\\shared\\lib\\const
+   ants.js',
+        'C:\\Users\\Aquarius\\Pictures\\Radioboi-LAN-Offline-win64-20260810-093143\\app\\apps\\web\\.next\\standalone\\apps\\web\\node_modules\\next\\dist\\server\\config.js'
+   ,
+        'C:\\Users\\Aquarius\\Pictures\\Radioboi-LAN-Offline-win64-20260810-093143\\app\\apps\\web\\.next\\standalone\\apps\\web\\node_modules\\next\\dist\\server\\next.js',
+
+    'C:\\Users\\Aquarius\\Pictures\\Radioboi-LAN-Offline-win64-20260810-093143\\app\\apps\\web\\.next\\standalone\\apps\\web\\server.js'
+  ]
+}
+Node.js v26.1.0
+error: script "start" exited with code 1
+
+
+Start failed with code 1.

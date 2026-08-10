@@ -17,20 +17,31 @@ import { decodeServerEvent, encodeClientEvent, FrameDecodeError } from "./msgpac
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-function getDefaultWsUrl(): string {
-  if (process.env.NEXT_PUBLIC_WS_URL) {
-    return process.env.NEXT_PUBLIC_WS_URL;
+/**
+ * Resolve the Worker WebSocket base URL.
+ *
+ * Order:
+ * 1. Explicit `NEXT_PUBLIC_WS_URL` (Cloudflare deploy / fixed override).
+ * 2. Same hostname the page was opened with + `NEXT_PUBLIC_WS_PORT` (default 8787).
+ *    This keeps LAN play working no matter which local IP the player types.
+ * 3. Loopback fallback for non-browser contexts.
+ */
+export function resolveWsBaseUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_WS_URL?.trim();
+  if (configured) {
+    return configured.replace(/\/$/, "");
   }
 
-  if (typeof window !== "undefined") {
+  const port = process.env.NEXT_PUBLIC_WS_PORT?.trim() || "8787";
+
+  if (typeof window !== "undefined" && window.location?.hostname) {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${window.location.hostname}:8787`;
+    return `${protocol}//${window.location.hostname}:${port}`;
   }
 
-  return "ws://localhost:8787";
+  return `ws://127.0.0.1:${port}`;
 }
 
-const DEFAULT_WS_URL = getDefaultWsUrl();
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS  = 30_000;
 const RECONNECT_JITTER  = 0.2;
@@ -78,7 +89,7 @@ export class GameClient {
     if (roomSettings !== undefined) {
       params.set("settings", JSON.stringify(roomSettings));
     }
-    this.#url = `${DEFAULT_WS_URL}/room/${roomId}?${params.toString()}`;
+    this.#url = `${resolveWsBaseUrl()}/room/${roomId}?${params.toString()}`;
     this.#openSocket();
   }
 

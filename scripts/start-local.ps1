@@ -2,7 +2,15 @@ param(
   [int]$WebPort = 3000,
   [int]$WorkerPort = 8787,
   [switch]$Lan,
-  [string]$PublicHost = ""
+  [string]$PublicHost = "",
+  # When set with -Lan, bake a fixed WS host into NEXT_PUBLIC_WS_URL (legacy).
+  # Default LAN mode is IP-agnostic: the browser uses the same hostname it opened.
+  [switch]$BakeWsUrl,
+  # Run Next.js standalone production server instead of `next dev`.
+  # Worker still uses local wrangler (Durable Objects need the CF runtime).
+  [switch]$Production,
+  # Force `bun run build` before production start (also rebuilds when missing).
+  [switch]$ForceBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,8 +21,9 @@ New-Item -ItemType Directory -Force -Path $stateDir, $logDir | Out-Null
 
 $pidFile = Join-Path $stateDir "pids.json"
 $runStamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$workerLog = Join-Path $logDir "worker-dev-$runStamp.log"
-$webLog = Join-Path $logDir "web-dev-$runStamp.log"
+$modeTag = if ($Production) { "prod" } else { "dev" }
+$workerLog = Join-Path $logDir "worker-$modeTag-$runStamp.log"
+$webLog = Join-Path $logDir "web-$modeTag-$runStamp.log"
 
 function Stop-ProcessTree([int]$ProcessId) {
   $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue
@@ -43,8 +52,13 @@ function Stop-ExistingFromPidFile {
 }
 
 function Test-PortFree([int]$Port) {
-  $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  return $null -eq $listeners
+  try {
+    $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    return $null -eq $listeners
+  } catch {
+    # Windows 8 / restricted environments: assume free if probe fails.
+    return $true
+  }
 }
 
 function Wait-ForPort([int]$Port, [int]$TimeoutSeconds = 30) {
@@ -62,66 +76,106 @@ function Get-LogTail([string]$Path) {
   return (Get-Content $Path -Tail 40) -join [Environment]::NewLine
 }
 
-function Get-LocalLanAddress {
-  $addresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.IPAddress -notlike "127.*" -and
-      $_.IPAddress -notlike "169.254.*" -and
-      $_.IPAddress -ne "0.0.0.0" -and
-      $_.AddressState -eq "Preferred" -and
-      $_.PrefixOrigin -ne "WellKnown"
-    })
+function Test-IsUsableLanIPv4([string]$Address) {
+  if ([string]::IsNullOrWhiteSpace($Address)) { return $false }
+  if ($Address -like "127.*") { return $false }
+  if ($Address -like "169.254.*") { return $false }
+  if ($Address -eq "0.0.0.0") { return $false }
+  return $Address -match '^\d{1,3}(\.\d{1,3}){3}$'
+}
 
-  if ($addresses.Count -eq 0) {
-    throw "Could not auto-detect a preferred LAN IPv4 address. Pass -PublicHost, for example -PublicHost 192.168.206.1."
+function Get-AllLocalLanAddresses {
+  $found = New-Object System.Collections.Generic.List[string]
+
+  try {
+    $netAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+      Where-Object {
+        (Test-IsUsableLanIPv4 $_.IPAddress) -and
+        ($_.AddressState -eq "Preferred" -or -not $_.PSObject.Properties["AddressState"]) -and
+        ($_.PrefixOrigin -ne "WellKnown")
+      } |
+      Sort-Object -Property InterfaceIndex)
+
+    foreach ($entry in $netAddresses) {
+      if (-not $found.Contains($entry.IPAddress)) {
+        $found.Add($entry.IPAddress)
+      }
+    }
+  } catch {
+    # Fall through to WMI/CIM path (Windows 8 / older PowerShell modules).
   }
 
-  # Prefer the interface carrying the active default route. This avoids using
-  # disconnected, tentative, VPN, or virtual-adapter addresses when several
-  # 192.168.*.* interfaces exist on the machine.
-  $defaultRoutes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
-    Where-Object { $_.NextHop -ne "0.0.0.0" } |
-    Sort-Object -Property RouteMetric, InterfaceMetric)
-
-  foreach ($route in $defaultRoutes) {
-    $candidate = $addresses |
-      Where-Object { $_.InterfaceIndex -eq $route.InterfaceIndex } |
-      Select-Object -First 1
-    if ($null -ne $candidate) { return $candidate.IPAddress }
+  if ($found.Count -eq 0) {
+    try {
+      $adapters = @(Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction Stop |
+        Where-Object { $_.IPEnabled -eq $true })
+      foreach ($adapter in $adapters) {
+        foreach ($ip in @($adapter.IPAddress)) {
+          if ((Test-IsUsableLanIPv4 $ip) -and -not $found.Contains($ip)) {
+            $found.Add($ip)
+          }
+        }
+      }
+    } catch {
+      # Ignore and try route preference below / throw later.
+    }
   }
 
-  # Hotspot and isolated LAN adapters may have no default route. Prefer an
-  # explicitly connected interface before falling back to interface order.
-  $connectedInterfaces = @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object { $_.ConnectionState -eq "Connected" } |
-    Sort-Object -Property InterfaceMetric, InterfaceIndex)
+  return @($found)
+}
 
-  foreach ($interface in $connectedInterfaces) {
-    $candidate = $addresses |
-      Where-Object { $_.InterfaceIndex -eq $interface.InterfaceIndex } |
-      Select-Object -First 1
-    if ($null -ne $candidate) { return $candidate.IPAddress }
+function Get-PreferredLanAddress([string[]]$Addresses) {
+  if ($Addresses.Count -eq 0) {
+    throw "Could not auto-detect a LAN IPv4 address. Pass -PublicHost, for example -PublicHost 192.168.1.10."
   }
 
-  $candidate = $addresses | Sort-Object -Property SkipAsSource, InterfaceIndex | Select-Object -First 1
+  # Prefer the interface carrying the active default route when available.
+  try {
+    $defaultRoutes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
+      Where-Object { $_.NextHop -ne "0.0.0.0" } |
+      Sort-Object -Property RouteMetric, InterfaceMetric)
 
-  if ($null -eq $candidate) {
-    throw "Could not auto-detect a LAN IPv4 address. Pass -PublicHost, for example -PublicHost 192.168.206.1."
+    $netAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+      Where-Object { $Addresses -contains $_.IPAddress })
+
+    foreach ($route in $defaultRoutes) {
+      $candidate = $netAddresses |
+        Where-Object { $_.InterfaceIndex -eq $route.InterfaceIndex } |
+        Select-Object -First 1
+      if ($null -ne $candidate) { return $candidate.IPAddress }
+    }
+
+    $connectedInterfaces = @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+      Where-Object { $_.ConnectionState -eq "Connected" } |
+      Sort-Object -Property InterfaceMetric, InterfaceIndex)
+
+    foreach ($interface in $connectedInterfaces) {
+      $candidate = $netAddresses |
+        Where-Object { $_.InterfaceIndex -eq $interface.InterfaceIndex } |
+        Select-Object -First 1
+      if ($null -ne $candidate) { return $candidate.IPAddress }
+    }
+  } catch {
+    # Route helpers may be missing on older Windows; fall back to first address.
   }
 
-  return $candidate.IPAddress
+  return $Addresses[0]
 }
 
 function Warn-IfLanFirewallRulesMissing([int[]]$Ports) {
   $missingPorts = @()
   foreach ($port in $Ports) {
-    $rule = Get-NetFirewallRule -DisplayName "Radioboi LAN TCP $port" -ErrorAction SilentlyContinue |
-      Where-Object { $_.Enabled -eq "True" -and $_.Action -eq "Allow" }
-    if ($null -eq $rule) { $missingPorts += $port }
+    try {
+      $rule = Get-NetFirewallRule -DisplayName "Radioboi LAN TCP $port" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Enabled -eq "True" -and $_.Action -eq "Allow" }
+      if ($null -eq $rule) { $missingPorts += $port }
+    } catch {
+      $missingPorts += $port
+    }
   }
 
   if ($missingPorts.Count -gt 0) {
-    Write-Warning "Windows Firewall may block LAN clients on TCP $($missingPorts -join ', '). Run 'powershell -ExecutionPolicy Bypass -File scripts/allow-lan-firewall.ps1 -WebPort $WebPort -WorkerPort $WorkerPort' from an elevated PowerShell window."
+    Write-Warning "Windows Firewall may block LAN clients on TCP $($missingPorts -join ', '). Run 'powershell -ExecutionPolicy Bypass -File scripts/allow-lan-firewall.ps1 -WebPort $WebPort -WorkerPort $WorkerPort' from an elevated PowerShell window (or local-server\allow-firewall.bat)."
   }
 }
 
@@ -133,36 +187,104 @@ if (!(Test-PortFree $WebPort)) { throw "Port $WebPort is already in use. Stop th
 $workerDir = Join-Path $root "apps\worker"
 $webDir = Join-Path $root "apps\web"
 $bindHost = if ($Lan) { "0.0.0.0" } else { "127.0.0.1" }
+
+$lanAddresses = @()
+if ($Lan) {
+  $lanAddresses = @(Get-AllLocalLanAddresses)
+}
+
 $publicHostValue = if ($PublicHost.Trim().Length -gt 0) {
   $PublicHost.Trim()
 } elseif ($Lan) {
-  Get-LocalLanAddress
+  Get-PreferredLanAddress -Addresses $lanAddresses
 } else {
   "127.0.0.1"
 }
-$wsUrl = "ws://${publicHostValue}:$WorkerPort"
+
+# IP-agnostic LAN: do not bake a machine IP into the client bundle.
+# The browser connects to ws://<page-hostname>:<worker-port>.
+$useDynamicWs = $Lan -and -not $BakeWsUrl
+if ($useDynamicWs) {
+  $wsUrl = "ws://<same-host-as-page>:$WorkerPort"
+} else {
+  $wsUrl = "ws://${publicHostValue}:$WorkerPort"
+}
+
+$allowedOriginHosts = @("127.0.0.1", "localhost")
+if ($publicHostValue -and ($allowedOriginHosts -notcontains $publicHostValue)) {
+  $allowedOriginHosts += $publicHostValue
+}
+foreach ($address in $lanAddresses) {
+  if ($allowedOriginHosts -notcontains $address) {
+    $allowedOriginHosts += $address
+  }
+}
+$allowedOrigins = ($allowedOriginHosts -join ",")
 
 if ($Lan) {
   Warn-IfLanFirewallRulesMissing @($WebPort, $WorkerPort)
 }
 
+# ── Production web build (standalone) ─────────────────────────────────────────
+# NEXT_PUBLIC_* are inlined at build time. For IP-agnostic LAN leave WS_URL unset
+# so the client uses page hostname + WS_PORT. For Cloudflare deploy, bake wss://...
+$standaloneServer = Join-Path $webDir ".next\standalone\apps\web\server.js"
+if ($Production) {
+  $needBuild = $ForceBuild -or -not (Test-Path $standaloneServer)
+  if ($needBuild) {
+    Write-Host "Building production web (standalone)..."
+    Push-Location $root
+    try {
+      if ($useDynamicWs) {
+        Remove-Item Env:\NEXT_PUBLIC_WS_URL -ErrorAction SilentlyContinue
+        $env:NEXT_PUBLIC_WS_PORT = "$WorkerPort"
+      } else {
+        $env:NEXT_PUBLIC_WS_URL = $wsUrl
+        Remove-Item Env:\NEXT_PUBLIC_WS_PORT -ErrorAction SilentlyContinue
+      }
+      bun run build
+      if ($LASTEXITCODE -ne 0) {
+        throw "Production build failed with exit code $LASTEXITCODE."
+      }
+    } finally {
+      Pop-Location
+    }
+    if (!(Test-Path $standaloneServer)) {
+      throw "Production build finished but standalone server is missing: $standaloneServer"
+    }
+  } else {
+    Write-Host "Using existing production build: $standaloneServer"
+    Write-Host "(pass -ForceBuild to rebuild with current WS settings)"
+  }
+}
+
 $workerCmd = "cd /d `"$workerDir`" && bun run dev -- --port $WorkerPort --ip $bindHost > `"$workerLog`" 2>&1"
-$webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_URL=$wsUrl`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$publicHostValue`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
+
+if ($Production) {
+  # Node standalone: HOSTNAME defaults to 0.0.0.0 in Next's server.js; set explicitly.
+  # Room create/join works without Cloudflare KV (see apps/web/app/actions.ts).
+  $webCmd = "cd /d `"$webDir`" && set `"PORT=$WebPort`" && set `"HOSTNAME=$bindHost`" && bun run start > `"$webLog`" 2>&1"
+} elseif ($useDynamicWs) {
+  $webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_PORT=$WorkerPort`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$allowedOrigins`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
+} else {
+  $webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_URL=$wsUrl`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$allowedOrigins`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
+}
 
 $worker = $null
 $web = $null
+$webWaitSeconds = if ($Production) { 60 } else { 30 }
 
 try {
   $worker = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $workerCmd) -PassThru -WindowStyle Hidden
 
   if (!(Wait-ForPort $WorkerPort)) {
-    throw "Worker dev server did not start listening on port $WorkerPort within 30 seconds.$([Environment]::NewLine)$(Get-LogTail $workerLog)"
+    throw "Worker server did not start listening on port $WorkerPort within 30 seconds.$([Environment]::NewLine)$(Get-LogTail $workerLog)"
   }
 
   $web = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $webCmd) -PassThru -WindowStyle Hidden
 
-  if (!(Wait-ForPort $WebPort)) {
-    throw "Web dev server did not start listening on port $WebPort within 30 seconds.$([Environment]::NewLine)$(Get-LogTail $webLog)"
+  if (!(Wait-ForPort -Port $WebPort -TimeoutSeconds $webWaitSeconds)) {
+    throw "Web server did not start listening on port $WebPort within $webWaitSeconds seconds.$([Environment]::NewLine)$(Get-LogTail $webLog)"
   }
 } catch {
   foreach ($process in @($web, $worker)) {
@@ -180,6 +302,9 @@ $state = [ordered]@{
   webPort = $WebPort
   bindHost = $bindHost
   publicHost = $publicHostValue
+  lanAddresses = $lanAddresses
+  dynamicWs = [bool]$useDynamicWs
+  production = [bool]$Production
   wsUrl = $wsUrl
   webUrl = "http://${publicHostValue}:$WebPort"
   workerLog = $workerLog
@@ -189,11 +314,33 @@ $state = [ordered]@{
 $state | ConvertTo-Json | Set-Content -Encoding UTF8 $pidFile
 
 Write-Host "Radioboi local stack started."
-Write-Host "Web:    http://${publicHostValue}:$WebPort"
-Write-Host "Worker: http://${publicHostValue}:$WorkerPort"
-Write-Host "WS:     $wsUrl"
 Write-Host "Bind:   $bindHost"
+$runMode = if ($Production) { "production (standalone web + wrangler worker)" } else { "development (next dev + wrangler)" }
+Write-Host "Run:    $runMode"
+if ($Lan) {
+  Write-Host "Mode:   LAN (IP-agnostic WebSocket = page hostname:$WorkerPort)"
+  Write-Host ""
+  Write-Host "Open the game from any of these addresses on this PC or LAN clients:"
+  Write-Host "  http://${publicHostValue}:$WebPort   (preferred)"
+  foreach ($address in $lanAddresses) {
+    if ($address -ne $publicHostValue) {
+      Write-Host "  http://${address}:$WebPort"
+    }
+  }
+  Write-Host "  http://127.0.0.1:$WebPort   (this machine only)"
+  Write-Host ""
+  Write-Host "WebSocket: same host as the page, port $WorkerPort"
+  Write-Host "  Example: ws://${publicHostValue}:$WorkerPort"
+  if ($BakeWsUrl) {
+    Write-Host "  (fixed WS URL baked: $wsUrl)"
+  }
+} else {
+  Write-Host "Web:    http://${publicHostValue}:$WebPort"
+  Write-Host "Worker: http://${publicHostValue}:$WorkerPort"
+  Write-Host "WS:     $wsUrl"
+}
+Write-Host ""
 Write-Host "Logs:"
 Write-Host "  $workerLog"
 Write-Host "  $webLog"
-Write-Host "Stop: bun run stop:local"
+Write-Host "Stop: bun run stop:local   (or local-server\stop.bat)"

@@ -6,6 +6,7 @@
     "dev": "next dev --turbopack",
     "dev:e2e": "next dev --turbopack --hostname 127.0.0.1 -p 3100",
     "build": "next build",
+    "repair:standalone": "node scripts/repair-standalone.mjs",
     "start": "node scripts/start-standalone.mjs",
     "lint": "biome lint ./app ./src",
     "test": "bun test tests",

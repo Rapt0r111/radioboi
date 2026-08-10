@@ -1,9 +1,16 @@
 // apps/web/next.config.ts
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import type { NextConfig } from "next";
 
 initOpenNextCloudflareForDev();
+
+// Monorepo / offline-package root (apps/web -> ../..). Pinning this prevents
+// Next from walking up to a parent lockfile when building inside
+// local-server/offline/app (nested under the real monorepo).
+const monorepoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 const allowedDevOrigins =
   process.env.NEXT_ALLOWED_DEV_ORIGINS?.split(",")
@@ -13,6 +20,10 @@ const allowedDevOrigins =
 const nextConfig: NextConfig = {
   reactCompiler: true,
   output: "standalone",
+  outputFileTracingRoot: monorepoRoot,
+  turbopack: {
+    root: monorepoRoot,
+  },
   allowedDevOrigins,
 
   async headers() {

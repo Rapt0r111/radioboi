@@ -83,7 +83,7 @@ Object.defineProperty(globalThis, "WebSocket", {
 
 process.env.NEXT_PUBLIC_WS_URL = "ws://unit.test";
 
-const { GameClient } = await import("../src/lib/network/gameClient");
+const { GameClient, resolveWsBaseUrl } = await import("../src/lib/network/gameClient");
 
 function encodeServerFrame(event: ServerGameEvent): ArrayBuffer {
   const bytes = encode(event);
@@ -93,6 +93,53 @@ function encodeServerFrame(event: ServerGameEvent): ArrayBuffer {
 function decodeClientFrame(frame: ArrayBuffer): ClientGameEvent {
   return decode(new Uint8Array(frame)) as ClientGameEvent;
 }
+
+describe("resolveWsBaseUrl", () => {
+  test("prefers explicit NEXT_PUBLIC_WS_URL", () => {
+    expect(resolveWsBaseUrl()).toBe("ws://unit.test");
+  });
+
+  test("uses page hostname when NEXT_PUBLIC_WS_URL is unset", () => {
+    const previousUrl = process.env.NEXT_PUBLIC_WS_URL;
+    const previousPort = process.env.NEXT_PUBLIC_WS_PORT;
+    delete process.env.NEXT_PUBLIC_WS_URL;
+    process.env.NEXT_PUBLIC_WS_PORT = "8787";
+
+    const previousWindow = (globalThis as { window?: unknown }).window;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          protocol: "http:",
+          hostname: "192.168.10.55",
+        },
+      },
+    });
+
+    try {
+      expect(resolveWsBaseUrl()).toBe("ws://192.168.10.55:8787");
+    } finally {
+      if (previousUrl === undefined) {
+        delete process.env.NEXT_PUBLIC_WS_URL;
+      } else {
+        process.env.NEXT_PUBLIC_WS_URL = previousUrl;
+      }
+      if (previousPort === undefined) {
+        delete process.env.NEXT_PUBLIC_WS_PORT;
+      } else {
+        process.env.NEXT_PUBLIC_WS_PORT = previousPort;
+      }
+      if (previousWindow === undefined) {
+        Reflect.deleteProperty(globalThis, "window");
+      } else {
+        Object.defineProperty(globalThis, "window", {
+          configurable: true,
+          value: previousWindow,
+        });
+      }
+    }
+  });
+});
 
 describe("GameClient", () => {
   beforeEach(() => {

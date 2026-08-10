@@ -53,24 +53,71 @@ Open:
 http://127.0.0.1:3000
 ```
 
-### LAN startup from another laptop
+### LAN server (any local IP)
 
-If another laptop opens the game by IP, start the stack in LAN mode so both the
-web server and Worker/WebSocket server listen on the network:
+For a Windows machine that hosts the game for other devices on the LAN, use the
+dedicated entry folder:
+
+```text
+local-server\
+```
+
+**Offline production server (no internet on the target PC):** build a portable
+package on a machine that has internet, then copy the result:
+
+```powershell
+bun run server:pack
+bun run server:verify
+bun run server:verify:smoke
+```
+
+That writes `local-server/offline/` (optional zip under `local-server/offline-zip/`)
+containing:
+
+- `runtime/` — Bun + Node binaries (no system install on the server)
+- `cache/` — Bun package cache for offline `bun install`
+- `app/` — full project + lockfile + `node_modules` + **production** standalone build
+- `start.bat` / `stop.bat` / `verify.bat` / `allow-firewall.bat`
+
+Copy **the entire `offline` folder** to the air-gapped host and run `start.bat`.
+After the folder is moved, the first start re-links workspace dependencies from
+`cache/` without the network (standalone build is preserved).  
+Full guide (RU): `local-server/PRODUCTION-OFFLINE.md` · short: `local-server/README.md`.
+
+**Online / monorepo host:** double-click `local-server\start.bat`, or:
+
+```powershell
+bun run server:start
+# production web (standalone) + local worker:
+bun run server:start:prod
+# or: bun run dev:lan:prod
+```
+
+Offline packages prefer **production** web when a prebuilt standalone exists
+(created by `server:pack`). Use `start.ps1 -Dev` to force `next dev`.
+
+LAN mode is **IP-agnostic**:
+
+- Web and Worker bind to `0.0.0.0` (all interfaces).
+- The client opens a WebSocket to **the same hostname** the page was loaded from
+  (`ws://<page-host>:8787`). You do not need to hardcode a machine IP.
+- Players may open any of this PC's addresses (`192.168.*`, `10.*`, etc.).
+
+Equivalent from the repo root:
 
 ```powershell
 bun run dev:lan
 ```
 
-The script prints the LAN URLs to use, for example:
+The script prints every detected local URL, for example:
 
 ```text
-http://192.168.206.1:3000
-ws://192.168.206.1:8787
+http://192.168.206.1:3000   (preferred)
+http://10.0.0.15:3000
+http://127.0.0.1:3000
 ```
 
-If Windows has multiple network adapters and the script picks the wrong address,
-pass the address explicitly:
+To only prefer a display address (clients can still use any IP):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1 -Lan -PublicHost 192.168.206.1
@@ -85,6 +132,8 @@ and run:
 bun run lan:firewall
 ```
 
+Or double-click `local-server\allow-firewall.bat` as Administrator.
+
 This allows TCP `3000` and `8787` only from the local subnet on the Private
 network profile. To remove the rules later:
 
@@ -97,6 +146,8 @@ Stop both processes:
 ```powershell
 bun run stop:local
 ```
+
+Or `local-server\stop.bat` / `bun run server:stop`.
 
 The script prints the exact log paths. Logs are written under `.omx/logs/` as
 `worker-dev-*.log` and `web-dev-*.log`.
@@ -126,11 +177,19 @@ $env:NEXT_PUBLIC_WS_URL = "ws://127.0.0.1:8787"
 bun run dev -- --hostname 127.0.0.1 -p 3000
 ```
 
-For manual LAN startup, replace `127.0.0.1` with `0.0.0.0` for bind arguments
-and set `NEXT_PUBLIC_WS_URL` to the reachable host IP:
+For manual LAN startup, bind both sides to `0.0.0.0` and leave
+`NEXT_PUBLIC_WS_URL` unset (or set only `NEXT_PUBLIC_WS_PORT`) so the browser
+uses the same host as the page:
 
 ```powershell
-$env:NEXT_PUBLIC_WS_URL = "ws://192.168.206.1:8787"
+cd apps/worker
+bun run dev -- --port 8787 --ip 0.0.0.0
+
+# other terminal
+cd apps/web
+$env:NEXT_PUBLIC_WS_PORT = "8787"
+# do not set NEXT_PUBLIC_WS_URL for multi-IP LAN
+bun run dev -- --hostname 0.0.0.0 -p 3000
 ```
 
 ## Release Verification
@@ -170,14 +229,28 @@ Start the standalone web server:
 bun run start:web
 ```
 
-The standalone web server validates the Next production build only. Real gameplay still needs a deployed or locally running Worker reachable through `NEXT_PUBLIC_WS_URL`.
-
-For a production web build, set the WebSocket URL before building because `NEXT_PUBLIC_*` values are embedded into the client bundle:
+The standalone web server validates the Next production build only. Real gameplay
+still needs a Worker (local wrangler or Cloudflare). Full local production stack:
 
 ```powershell
-$env:NEXT_PUBLIC_WS_URL = "wss://<your-worker-host>"
-bun run build
+bun run server:start:prod
 ```
+
+### WebSocket URL at build time
+
+`NEXT_PUBLIC_*` values are embedded into the client bundle:
+
+| Target | Before `bun run build` |
+|--------|-------------------------|
+| Cloudflare production | `$env:NEXT_PUBLIC_WS_URL = "wss://<your-worker-host>"` |
+| LAN / offline (any IP) | **leave unset**; optional `$env:NEXT_PUBLIC_WS_PORT = "8787"` |
+
+When `NEXT_PUBLIC_WS_URL` is unset, the browser connects to
+`ws(s)://<page-hostname>:<NEXT_PUBLIC_WS_PORT|8787>`.
+
+Room create/join also works without Cloudflare KV (Node standalone / offline):
+the Worker creates the room on first WebSocket connect; settings come from the
+creator's client session.
 
 ## Worker Deploy
 

@@ -20,4 +20,8 @@ dev-server.*.log
 
 graphify-out/
 
+# Offline LAN portable package (built by local-server/pack.ps1)
+local-server/offline/
+local-server/offline-zip/
+
 .codex/
