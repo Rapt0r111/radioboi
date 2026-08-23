@@ -5,6 +5,8 @@
 "use client";
 
 import { useEffect } from "react";
+import { AttributionWatermark } from "@/src/components/AttributionWatermark";
+import "./globals.css";
 
 type Props = {
   error: Error & { digest?: string };
@@ -31,6 +33,7 @@ export default function GlobalError({ error, reset }: Props) {
           padding: "1rem",
         }}
       >
+        <AttributionWatermark />
         <div
           style={{
             width: "100%",

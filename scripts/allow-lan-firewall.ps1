@@ -6,9 +6,36 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  throw "Run this script from an elevated PowerShell window (Run as Administrator)."
+function Test-RadioboiIsAdministrator {
+  $principal = New-Object Security.Principal.WindowsPrincipal(
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+  )
+  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+if (-not (Test-RadioboiIsAdministrator)) {
+  # Self-elevate so direct calls (scripts\allow-lan-firewall.ps1) also work.
+  # Avoid `net session` — it fails when the Server service is stopped (NET 2114).
+  $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -WebPort $WebPort -WorkerPort $WorkerPort"
+  if ($Remove) {
+    $argList += " -Remove"
+  }
+
+  Write-Host "Administrator rights required. Requesting elevation (UAC)..."
+  try {
+    $proc = Start-Process -FilePath "powershell.exe" `
+      -Verb RunAs `
+      -ArgumentList $argList `
+      -Wait `
+      -PassThru
+  } catch {
+    throw "Administrator elevation was cancelled or failed. Run from an elevated PowerShell window (Run as Administrator)."
+  }
+
+  if ($null -eq $proc) {
+    throw "Administrator elevation failed (no process started)."
+  }
+  exit $proc.ExitCode
 }
 
 $rulePrefix = "Radioboi LAN"

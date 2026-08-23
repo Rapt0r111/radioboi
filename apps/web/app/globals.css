@@ -40,6 +40,24 @@
     outline: 2px solid var(--color-radar-green);
     outline-offset: 2px;
   }
+
+  /* Незаметный авторский водяной знак поверх всех экранов.
+     pointer-events: none — не блокирует клики, ввод Морзе и баннеры. */
+  .attribution-watermark {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483000;
+    pointer-events: none;
+    user-select: none;
+    overflow: hidden;
+    background-image: url("/watermark.svg");
+    background-repeat: repeat;
+    background-size: 44rem 25rem;
+    opacity: 0.15;
+    mix-blend-mode: normal;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
 }
 
 /* ── Анимации ────────────────────────────────────────────────────────────────
