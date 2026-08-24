@@ -148,6 +148,8 @@ export type SyncStateEvent = {
     players?: PlayerSummary[];
     /** Async mode: unix ms when this player may attack again (0 = ready now) */
     attackCooldownExpiresAt?: number;
+    /** Private reconnect secret for this player only. Never placed on the roster. */
+    seatToken?: string;
   };
 };
 
@@ -191,6 +193,7 @@ export const FATAL_WS_CLOSE_CODE = 4001;
 export const FatalCloseReason = {
   ROOM_FULL: "ROOM_FULL",
   GAME_OVER: "GAME_OVER",
+  AUTH_FAILED: "AUTH_FAILED",
 } as const;
 
 export type FatalCloseReason = (typeof FatalCloseReason)[keyof typeof FatalCloseReason];
@@ -198,6 +201,7 @@ export type FatalCloseReason = (typeof FatalCloseReason)[keyof typeof FatalClose
 const FATAL_CLOSE_MESSAGES: Record<string, string> = {
   [FatalCloseReason.ROOM_FULL]: "Комната заполнена. Слот занят другим игроком.",
   [FatalCloseReason.GAME_OVER]: "Игра уже завершена.",
+  [FatalCloseReason.AUTH_FAILED]: "Не удалось подтвердить место в комнате.",
 };
 
 export function messageForFatalCloseReason(reason: string): string {

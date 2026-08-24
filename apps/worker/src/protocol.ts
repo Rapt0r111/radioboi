@@ -149,6 +149,7 @@ export function makeSyncState(
   settings?: RoomSettings,
   attackCooldownExpiresAt?: number,
   players?: PlayerSummary[],
+  seatToken?: string,
 ): Uint8Array {
   return encodeEvent({
     type: "SYNC_STATE",
@@ -163,6 +164,7 @@ export function makeSyncState(
       ...(settings !== undefined ? { settings } : {}),
       ...(attackCooldownExpiresAt !== undefined ? { attackCooldownExpiresAt } : {}),
       ...(players !== undefined ? { players } : {}),
+      ...(seatToken !== undefined && seatToken.length > 0 ? { seatToken } : {}),
     },
   });
 }

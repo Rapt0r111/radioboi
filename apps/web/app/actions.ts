@@ -11,7 +11,7 @@
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import type { RoomSettings } from "@radioboi/game-core";
-import { DEFAULT_ROOM_SETTINGS } from "@radioboi/game-core";
+import { clampRoomSettings, ROOM_CODE_RE } from "@radioboi/game-core";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -21,15 +21,23 @@ type RoomRecord = {
 };
 
 type JoinResult = { success: true; roomId: string } | { error: string };
-const ROOM_CODE_RE = /^[A-Z0-9]{6}$/;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function generateRoomCode(): string {
   const CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => CHARS[b % CHARS.length]).join("");
+  const chars: string[] = [];
+  while (chars.length < 6) {
+    const bytes = new Uint8Array(6 - chars.length);
+    crypto.getRandomValues(bytes);
+    for (const byte of bytes) {
+      // 252 is the largest multiple of 36 below 256 — reject the remainder to
+      // avoid modulo bias on the 36-character alphabet.
+      if (byte < 252) chars.push(CHARS[byte % 36] as string);
+      if (chars.length === 6) break;
+    }
+  }
+  return chars.join("");
 }
 
 /**
@@ -47,40 +55,8 @@ function tryGetKV(): KVNamespace | null {
   }
 }
 
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
 function clampSettings(raw: Partial<RoomSettings>): RoomSettings {
-  const legacy = raw as Partial<RoomSettings> & { beginnerMode?: boolean };
-  const difficulty = legacy.difficulty === "beginner" || legacy.difficulty === "normal" || legacy.difficulty === "expert"
-    ? legacy.difficulty
-    : legacy.beginnerMode === true
-      ? "beginner"
-      : DEFAULT_ROOM_SETTINGS.difficulty;
-  return {
-    battleMode: raw.battleMode === "async" ? "async" : "turn-based",
-    difficulty,
-    attackCooldownMs: clampNumber(
-      raw.attackCooldownMs,
-      2_000,
-      60_000,
-      DEFAULT_ROOM_SETTINGS.attackCooldownMs,
-    ),
-    interceptWindowMs: clampNumber(
-      raw.interceptWindowMs,
-      10_000,
-      60_000,
-      DEFAULT_ROOM_SETTINGS.interceptWindowMs,
-    ),
-    maxInterceptAttempts: clampNumber(
-      raw.maxInterceptAttempts,
-      1,
-      5,
-      DEFAULT_ROOM_SETTINGS.maxInterceptAttempts,
-    ),
-  };
+  return clampRoomSettings(raw);
 }
 
 // ── Server Actions ────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 // apps/web/src/lib/network/msgpack.ts
 
 import { decode, encode } from "@msgpack/msgpack";
-import type { ClientGameEvent, ServerGameEvent } from "@radioboi/game-core";
+import { parseServerGameEvent, type ClientGameEvent, type ServerGameEvent } from "@radioboi/game-core";
 
 // ── Encode (client → server) ──────────────────────────────────────────────────
 
@@ -46,17 +46,12 @@ export async function decodeServerEvent(data: ArrayBuffer | Blob): Promise<Serve
   try {
     const buffer = data instanceof Blob ? await data.arrayBuffer() : data;
     const decoded = decode(new Uint8Array(buffer));
-
-    // FIX(useLiteralKeys): (decoded as Record<string, unknown>)["type"] → .type
-    if (
-      typeof decoded !== "object" ||
-      decoded === null ||
-      typeof (decoded as Record<string, unknown>).type !== "string"
-    ) {
-      throw new FrameDecodeError("Frame missing `type` field", data);
+    const event = parseServerGameEvent(decoded);
+    if (event === null) {
+      throw new FrameDecodeError("Frame missing `type` field or failed server-event schema", data);
     }
 
-    return decoded as ServerGameEvent;
+    return event;
   } catch (err) {
     if (err instanceof FrameDecodeError) throw err;
     throw new FrameDecodeError(`MessagePack decode failed: ${String(err)}`, data);

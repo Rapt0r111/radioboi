@@ -3,6 +3,7 @@ import {
   COLUMN_MORSE_DIGITS,
   morseNotationToCoordinate,
   type Coordinate,
+  type DifficultyMode,
   type MorseSymbol,
 } from "@radioboi/game-core";
 import { MORSE_ALPHABET } from "@radioboi/morse-engine";
@@ -70,4 +71,13 @@ export function decodeBoardMorseSequence(sequence: readonly MorseSymbol[]): Coor
   }
 
   return null;
+}
+
+/** Expert mode must not learn the cell from the incoming Morse payload. */
+export function decodeIncomingMissileTarget(
+  sequence: readonly MorseSymbol[],
+  difficulty: DifficultyMode,
+): Coordinate | null {
+  if (difficulty === "expert") return null;
+  return decodeBoardMorseSequence(sequence);
 }

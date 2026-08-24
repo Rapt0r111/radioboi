@@ -20,7 +20,7 @@ import {
 import { type RefObject, useEffect, useRef } from "react";
 import type { RadarRef } from "@/src/components/RadarCanvas";
 import type { GameClient } from "@/src/lib/network/gameClient";
-import { decodeBoardMorseSequence } from "@/src/lib/morseInput";
+import { decodeIncomingMissileTarget } from "@/src/lib/morseInput";
 import { formatCoordForLog, useGameStore } from "@/src/store/gameStore";
 
 const INTERCEPT_WINDOW_MS = 25_000;
@@ -180,7 +180,10 @@ export function useGameLoop(
       const windowMs = settings?.interceptWindowMs ?? INTERCEPT_WINDOW_MS;
 
       const playbackSequence = toPlaybackSequence(event.payload.morseSequence);
-      const incomingTarget = decodeBoardMorseSequence(event.payload.morseSequence);
+      const incomingTarget = decodeIncomingMissileTarget(
+        event.payload.morseSequence,
+        settings.difficulty,
+      );
       scheduleFlight(event.payload.missileId, launchTimeline, () => {
         if (incomingTarget !== null) {
           const point = toRadarPoint(incomingTarget);
@@ -212,7 +215,7 @@ export function useGameLoop(
         incomingMissileId: event.payload.missileId,
         incomingMissileMaxAttempts: event.payload.maxAttempts,
         incomingMissileSequence: playbackSequence,
-        incomingMissileTarget: decodeBoardMorseSequence(event.payload.morseSequence),
+        incomingMissileTarget: incomingTarget,
         lastInterceptWrong: false,
       });
 

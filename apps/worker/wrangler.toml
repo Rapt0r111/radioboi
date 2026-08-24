@@ -38,9 +38,19 @@ new_sqlite_classes = ["GameRoomArbitrator"]
 
 # ── Observability (логи + трейсы в Cloudflare Dashboard) ─────────────────────
 [observability]
-enabled           = true
-head_sampling_rate = 1
+enabled            = true
+head_sampling_rate = 0.1
+
+# ── Vars (default = LAN / wrangler dev: any 6-char room, any Origin) ──────────
+[vars]
+REQUIRE_ROOM_REGISTRY = "false"
+ALLOWED_ORIGINS = ""
 
 # ── Среды ─────────────────────────────────────────────────────────────────────
 [env.production]
 name = "radioboi-worker-prod"
+
+[env.production.vars]
+REQUIRE_ROOM_REGISTRY = "true"
+# Comma-separated browser Origins for WebSocket upgrades, e.g. https://game.example
+ALLOWED_ORIGINS = ""

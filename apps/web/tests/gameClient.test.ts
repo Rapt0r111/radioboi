@@ -166,6 +166,7 @@ describe("GameClient", () => {
     expect(socket?.url).toContain("playerId=p1");
     expect(socket?.url).toContain("playerName=Player+1");
     expect(socket?.url).toContain("settings=");
+    expect(socket?.url).not.toContain("seatToken=");
 
     socket?.emitOpen();
 
@@ -177,6 +178,61 @@ describe("GameClient", () => {
       type: GameEventType.JOIN_ROOM,
       payload: { playerId: "p1", playerName: "Player 1" },
     });
+  });
+
+  test("reconnects with a seat token and omits creator settings", () => {
+    const client = new GameClient();
+    client.connect(
+      "ROOM1",
+      "p1",
+      "Player 1",
+      {
+        battleMode: "async",
+        difficulty: "normal",
+        attackCooldownMs: 10_000,
+        interceptWindowMs: 20_000,
+        maxInterceptAttempts: 2,
+      },
+      "seat-secret-1",
+    );
+
+    const socket = sockets[0];
+    expect(socket?.url).toContain("seatToken=seat-secret-1");
+    expect(socket?.url).toContain("settings=");
+  });
+
+  test("stores a private seat token from SYNC_STATE for later reconnects", async () => {
+    const client = new GameClient();
+    client.connect("ROOM1", "p1", "Player 1");
+    sockets[0]?.emitOpen();
+    sockets[0]?.emitMessage(
+      encodeServerFrame({
+        type: GameEventType.SYNC_STATE,
+        payload: {
+          phase: "lobby",
+          ownBoard: {},
+          enemyBoard: {},
+          activeMissiles: [],
+          isMyTurn: false,
+          shotLog: [],
+          seatToken: "issued-token",
+          players: [
+            {
+              id: "p1",
+              name: "Player 1",
+              connected: true,
+              reconnectBudgetMs: 600_000,
+              reconnectDeadlineAt: null,
+            },
+          ],
+        },
+      }),
+    );
+    await Promise.resolve();
+
+    client.reconnect();
+    expect(sockets[1]?.url).toContain("seatToken=issued-token");
+    expect(sockets[1]?.url).not.toContain("settings=");
   });
 
   test("restores player names from roster sync events", async () => {

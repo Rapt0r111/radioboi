@@ -9,6 +9,7 @@ import {
   minimumAttackCooldownMs,
   normalizePlayerName,
   PLAYER_NAME_MAX_LENGTH,
+  ROOM_CODE_RE,
   type DifficultyMode,
   type RoomSettings,
 } from "@radioboi/game-core";
@@ -21,8 +22,6 @@ import {
   rememberPlayerName,
   rememberRoomSettings,
 } from "@/src/lib/clientSession";
-
-const ROOM_CODE_RE = /^[A-Z0-9]{6}$/;
 
 type Props = {
   initialError?: string;

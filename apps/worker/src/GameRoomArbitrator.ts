@@ -14,7 +14,9 @@ import {
   ATTACKER_TURN_TIMEOUT_MS,
   FATAL_WS_CLOSE_CODE,
   FatalCloseReason,
+  isValidPlayerId,
   normalizePlayerName,
+  normalizeRoomId,
 } from "@radioboi/game-core";
 import type { RoomSettings, RoomState } from "./game-logic";
 import {
@@ -42,13 +44,17 @@ import {
 import { validateMorseForCoord } from "./morse";
 import {
   applyReconnectTimeout,
+  claimSeat,
   expireDisconnectedPlayers,
+  findSeatByToken,
   makePlayerRecord,
   markPlayerDisconnected,
   markPlayerReconnected,
   normalizePlayerRecord,
   rosterFromPlayers,
+  seatTokenForJoin,
 } from "./player-presence";
+import { isOriginAllowed, MessageRateLimiter } from "./security";
 import {
   decodeEvent,
   makeAttackCooldownUpdate,
@@ -96,6 +102,7 @@ function roomSettingsDiffer(left: RoomSettings, right: RoomSettings): boolean {
 }
 
 export class GameRoomArbitrator extends DurableObject<Env> {
+  readonly #rateLimiter = new MessageRateLimiter();
 
   // ── HTTP upgrade → WebSocket ───────────────────────────────────────────────
 
@@ -104,14 +111,22 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
 
+    if (!isOriginAllowed(request.headers.get("Origin"), this.env.ALLOWED_ORIGINS)) {
+      return new Response("Origin not allowed", { status: 403 });
+    }
+
     const url = new URL(request.url);
-    const roomId = url.pathname.split("/").pop() ?? "unknown";
-    const playerId     = url.searchParams.get("playerId");
+    const roomId = normalizeRoomId(url.pathname.split("/").pop() ?? "");
+    const playerId = url.searchParams.get("playerId");
     const playerName = normalizePlayerName(url.searchParams.get("playerName")) ?? "Player";
+    const presentedToken = url.searchParams.get("seatToken");
     const roomSettings = url.searchParams.get("settings");
 
-    if (!playerId) {
-      return new Response("Missing playerId query param", { status: 400 });
+    if (roomId === null) {
+      return new Response("Invalid room id", { status: 400 });
+    }
+    if (playerId === null || !isValidPlayerId(playerId)) {
+      return new Response("Invalid playerId query param", { status: 400 });
     }
 
     const { 0: client, 1: server } = new WebSocketPair();
@@ -123,21 +138,29 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     // Expire stale offline seats before join (budget already spent).
     expireDisconnectedPlayers(roomState, now);
 
-    if (roomState.phase === "gameOver" && !roomState.players.some((p) => p.id === playerId)) {
+    const isSeatedPlayer =
+      roomState.players.some((player) => player.id === playerId) ||
+      findSeatByToken(roomState.players, presentedToken) !== undefined;
+    if (roomState.phase === "gameOver" && !isSeatedPlayer) {
       server.close(FATAL_WS_CLOSE_CODE, FatalCloseReason.GAME_OVER);
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    const isReconnect = roomState.players.some((p) => p.id === playerId);
-    // Single normalize path: makePlayerRecord → addPlayer (addPlayer does not re-normalize).
+    const claim = claimSeat(roomState, playerId, presentedToken);
+    if (claim.kind === "reject") {
+      server.close(FATAL_WS_CLOSE_CODE, claim.reason);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    const isReconnect = claim.kind === "reconnect";
     const playerRecord = makePlayerRecord({
       id: playerId,
       name: playerName,
       wsTag: `${WS_TAG_PREFIX}${playerId}`,
-      isReady: roomState.players.find((p) => p.id === playerId)?.isReady ?? false,
+      isReady: isReconnect ? (claim.player.isReady) : false,
+      seatToken: isReconnect ? claim.player.seatToken : seatTokenForJoin(presentedToken),
     });
 
-    // Only the same playerId may reclaim a seat — no third-party slot steal.
     const addResult = addPlayer(roomState, playerRecord);
 
     if (!addResult.ok) {
@@ -145,8 +168,12 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    // Single live connection per player: drop prior sockets for this id.
-    // Close handlers re-check OPEN sockets and will no-op while this one is live.
+    const seated = roomState.players.find((player) => player.id === playerId);
+    if (seated && seated.seatToken.length === 0) {
+      seated.seatToken = playerRecord.seatToken;
+    }
+
+    // Replace the live socket only after seat auth succeeds.
     for (const existing of this.ctx.getWebSockets(`${WS_TAG_PREFIX}${playerId}`)) {
       if (existing !== server) {
         closeWebSocketSafely(existing, 1000, "Replaced by new connection");
@@ -179,6 +206,10 @@ export class GameRoomArbitrator extends DurableObject<Env> {
     const tag = this.ctx.getTags(ws).find((t) => t.startsWith(WS_TAG_PREFIX));
     if (!tag) return;
     const senderId = tag.slice(WS_TAG_PREFIX.length);
+    if (!this.#rateLimiter.allow(senderId)) {
+      ws.send(makeError("INTERNAL", "Too many messages"));
+      return;
+    }
 
     const roomState = await this.#loadState();
 
@@ -424,6 +455,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           state.settings,
           undefined,
           rosterFromPlayers(state.players),
+          state.players.find((player) => player.id === playerId)?.seatToken,
         ),
       );
     }
@@ -765,6 +797,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
           state.settings,
           cooldownExpires !== undefined && cooldownExpires > now ? cooldownExpires : 0,
           rosterFromPlayers(state.players, now),
+          player.seatToken,
         ),
       );
     }
@@ -798,6 +831,7 @@ export class GameRoomArbitrator extends DurableObject<Env> {
       const incomingSettings = parseEncodedRoomSettings(encodedSettings);
       if (
         incomingSettings &&
+        stored.players.length === 0 &&
         canReconcileStoredSettings(stored) &&
         roomSettingsDiffer(stored.settings, incomingSettings)
       ) {

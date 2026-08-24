@@ -105,3 +105,39 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   interceptWindowMs: 25_000,
   maxInterceptAttempts: 3,
 };
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/** Clamp untrusted lobby/WS settings to the live game contract. */
+export function clampRoomSettings(raw: unknown): RoomSettings {
+  const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const difficulty =
+    record.difficulty === "beginner" ||
+    record.difficulty === "normal" ||
+    record.difficulty === "expert"
+      ? record.difficulty
+      : record.beginnerMode === true
+        ? "beginner"
+        : DEFAULT_ROOM_SETTINGS.difficulty;
+  const cooldownMin = minimumAttackCooldownMs(difficulty);
+  return {
+    battleMode: record.battleMode === "async" ? "async" : "turn-based",
+    difficulty,
+    attackCooldownMs: clampNumber(record.attackCooldownMs, cooldownMin, 60_000, cooldownMin),
+    interceptWindowMs: clampNumber(
+      record.interceptWindowMs,
+      10_000,
+      60_000,
+      DEFAULT_ROOM_SETTINGS.interceptWindowMs,
+    ),
+    maxInterceptAttempts: clampNumber(
+      record.maxInterceptAttempts,
+      1,
+      5,
+      DEFAULT_ROOM_SETTINGS.maxInterceptAttempts,
+    ),
+  };
+}

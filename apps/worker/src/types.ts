@@ -11,4 +11,8 @@ import type { GameRoomArbitrator } from "./GameRoomArbitrator";
 export interface Env {
   ROOM_STATE: KVNamespace;
   GAME_ROOM: DurableObjectNamespace<GameRoomArbitrator>;
+  /** When true, unknown room codes are rejected (Cloudflare production). */
+  REQUIRE_ROOM_REGISTRY?: string;
+  /** Comma-separated Origin allowlist. Empty = any origin (LAN / local). */
+  ALLOWED_ORIGINS?: string;
 }

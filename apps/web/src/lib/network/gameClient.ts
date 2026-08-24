@@ -13,6 +13,7 @@ import {
   type ServerGameEvent,
 } from "@radioboi/game-core";
 import { useGameStore } from "@/src/store/gameStore";
+import { readStoredSeatToken, rememberSeatToken } from "@/src/lib/clientSession";
 import { decodeServerEvent, encodeClientEvent, FrameDecodeError } from "./msgpack";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -66,8 +67,10 @@ export class GameClient {
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #destroyed = false;
   #url = "";
+  #roomId = "";
   #playerId = "";
   #playerName = "";
+  #seatToken = "";
   #fatalReason: string | null = null;
   readonly #outbox: ClientGameEvent[] = [];
 
@@ -76,21 +79,43 @@ export class GameClient {
 
   // ── Connection lifecycle ──────────────────────────────────────────────────
 
-  connect(roomId: string, playerId: string, playerName: string, roomSettings?: RoomSettings): void {
+  connect(
+    roomId: string,
+    playerId: string,
+    playerName: string,
+    roomSettings?: RoomSettings,
+    seatToken?: string,
+  ): void {
     if (this.#destroyed) throw new Error("GameClient has been destroyed");
     const normalizedPlayerName = normalizePlayerName(playerName) ?? "Player";
+    this.#roomId = roomId;
     this.#playerId = playerId;
     this.#playerName = normalizedPlayerName;
+    this.#seatToken = seatToken ?? readStoredSeatToken(roomId) ?? "";
     useGameStore.getState().setSession(playerId, roomId, normalizedPlayerName);
+    this.#url = this.#buildUrl(roomSettings);
+    this.#openSocket();
+  }
+
+  #buildUrl(roomSettings?: RoomSettings): string {
     const params = new URLSearchParams({
-      playerId,
-      playerName: normalizedPlayerName,
+      playerId: this.#playerId,
+      playerName: this.#playerName,
     });
+    if (this.#seatToken.length > 0) {
+      params.set("seatToken", this.#seatToken);
+    }
     if (roomSettings !== undefined) {
       params.set("settings", JSON.stringify(roomSettings));
     }
-    this.#url = `${resolveWsBaseUrl()}/room/${roomId}?${params.toString()}`;
-    this.#openSocket();
+    return `${resolveWsBaseUrl()}/room/${this.#roomId}?${params.toString()}`;
+  }
+
+  #captureSeatToken(token: string): void {
+    if (token.length === 0 || token === this.#seatToken) return;
+    this.#seatToken = token;
+    rememberSeatToken(this.#roomId, token);
+    this.#url = this.#buildUrl();
   }
 
   reconnect(): void {
@@ -326,6 +351,9 @@ export class GameClient {
         break;
 
       case GameEventType.SYNC_STATE:
+        if (typeof event.payload.seatToken === "string") {
+          this.#captureSeatToken(event.payload.seatToken);
+        }
         store.syncFromServer(event.payload);
         break;
 

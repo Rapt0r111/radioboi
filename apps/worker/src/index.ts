@@ -6,22 +6,38 @@
 // getByName() — современный рекомендуемый API (меньше кода, яснее намерение).
 
 import { DurableObject } from "cloudflare:workers";
+import { normalizeRoomId } from "@radioboi/game-core";
+import { envFlagEnabled } from "./security";
+import type { Env } from "./types";
+
 export { GameRoomArbitrator } from "./GameRoomArbitrator";
 export type { Env } from "./types";
 
 void DurableObject;
 
-import type { Env } from "./types";
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    const roomMatch = url.pathname.match(/^\/room\/([a-zA-Z0-9_-]+)$/);
+    const roomMatch = url.pathname.match(/^\/room\/([^/]+)$/);
     if (roomMatch) {
-      // FIX: getByName() — современный детерминированный роутинг.
-      // Заменяет idFromName() + get() — идентично по поведению, чище по синтаксису.
-      const stub = env.GAME_ROOM.getByName(roomMatch[1] as string);
+      const roomId = normalizeRoomId(roomMatch[1] ?? "");
+      if (roomId === null) {
+        return new Response("Invalid room id", { status: 400 });
+      }
+
+      if (envFlagEnabled(env.REQUIRE_ROOM_REGISTRY)) {
+        try {
+          const record = await env.ROOM_STATE.get(roomId);
+          if (record === null) {
+            return new Response("Room not found", { status: 404 });
+          }
+        } catch {
+          return new Response("Room registry unavailable", { status: 503 });
+        }
+      }
+
+      const stub = env.GAME_ROOM.getByName(roomId);
       return stub.fetch(request);
     }
 

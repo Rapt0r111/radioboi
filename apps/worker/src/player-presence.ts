@@ -5,9 +5,15 @@
 // remaining ms without refill; repeated flaps while offline do not reset.
 
 import type { PlayerSummary } from "@radioboi/game-core";
-import { RECONNECT_BUDGET_MS } from "@radioboi/game-core";
+import {
+  generateSeatToken,
+  isValidSeatToken,
+  RECONNECT_BUDGET_MS,
+} from "@radioboi/game-core";
 import type { PlayerRecord, RoomState } from "./game-logic";
-import { forfeitPlayer } from "./game-logic";
+import { forfeitPlayer, rebindPlayerId } from "./game-logic";
+
+export { generateSeatToken };
 
 export type DisconnectMarkResult = {
   /**
@@ -26,6 +32,17 @@ export type ReconnectExpiryOutcome = "forfeit" | "removed" | "reschedule" | "noo
 
 // ── Player record ─────────────────────────────────────────────────────────────
 
+function tokensEqual(left: string, right: string): boolean {
+  if (left.length !== right.length) return false;
+  const a = new TextEncoder().encode(left);
+  const b = new TextEncoder().encode(right);
+  let diff = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    diff |= (a[index] ?? 0) ^ (b[index] ?? 0);
+  }
+  return diff === 0;
+}
+
 export function makePlayerRecord(
   partial: Pick<PlayerRecord, "id" | "name" | "wsTag"> & Partial<PlayerRecord>,
 ): PlayerRecord {
@@ -36,7 +53,78 @@ export function makePlayerRecord(
     isReady: partial.isReady ?? false,
     reconnectBudgetMs: normalizeBudget(partial.reconnectBudgetMs),
     disconnectedAt: normalizeDisconnectedAt(partial.disconnectedAt),
+    seatToken: typeof partial.seatToken === "string" ? partial.seatToken : "",
   };
+}
+
+/**
+ * Existing seats require the issued token. Empty stored token is a one-shot
+ * migration: mint a token and accept this connection.
+ */
+export function authenticateExistingSeat(
+  player: PlayerRecord,
+  presentedToken: string | null,
+): { ok: true } | { ok: false; reason: "AUTH_FAILED" } {
+  if (player.seatToken.length === 0) {
+    player.seatToken =
+      presentedToken !== null && isValidSeatToken(presentedToken)
+        ? presentedToken
+        : generateSeatToken();
+    return { ok: true };
+  }
+  if (presentedToken === null || !tokensEqual(player.seatToken, presentedToken)) {
+    return { ok: false, reason: "AUTH_FAILED" };
+  }
+  return { ok: true };
+}
+
+export function findSeatByToken(
+  players: readonly PlayerRecord[],
+  presentedToken: string | null,
+): PlayerRecord | undefined {
+  if (presentedToken === null || !isValidSeatToken(presentedToken)) return undefined;
+  return players.find(
+    (player) => player.seatToken.length > 0 && tokensEqual(player.seatToken, presentedToken),
+  );
+}
+
+export type SeatClaim =
+  | { kind: "reconnect"; player: PlayerRecord }
+  | { kind: "join" }
+  | { kind: "reject"; reason: "AUTH_FAILED" | "ROOM_FULL" };
+
+/**
+ * Resolve a WebSocket upgrade into an existing seat or a new join.
+ * Token match wins over playerId so a refresh that rotated the client id
+ * still reclaims the seat instead of hitting ROOM_FULL.
+ */
+export function claimSeat(
+  state: RoomState,
+  playerId: string,
+  presentedToken: string | null,
+): SeatClaim {
+  const byToken = findSeatByToken(state.players, presentedToken);
+  if (byToken) {
+    if (byToken.id !== playerId && !rebindPlayerId(state, byToken.id, playerId)) {
+      return { kind: "reject", reason: "AUTH_FAILED" };
+    }
+    return { kind: "reconnect", player: byToken };
+  }
+
+  const byId = state.players.find((player) => player.id === playerId);
+  if (byId) {
+    const auth = authenticateExistingSeat(byId, presentedToken);
+    if (!auth.ok) return { kind: "reject", reason: "AUTH_FAILED" };
+    return { kind: "reconnect", player: byId };
+  }
+
+  if (state.players.length >= 2) return { kind: "reject", reason: "ROOM_FULL" };
+  return { kind: "join" };
+}
+
+export function seatTokenForJoin(presentedToken: string | null): string {
+  if (presentedToken !== null && isValidSeatToken(presentedToken)) return presentedToken;
+  return generateSeatToken();
 }
 
 /** Back-compat for DO storage written before presence fields existed. */

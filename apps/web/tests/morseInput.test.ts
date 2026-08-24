@@ -3,6 +3,7 @@ import { makeCoordinate } from "@radioboi/game-core";
 import {
   applyMorseInputChar,
   decodeBoardMorseSequence,
+  decodeIncomingMissileTarget,
 } from "../src/lib/morseInput";
 
 const expected = { letter: "А", digit: "5" };
@@ -31,5 +32,11 @@ describe("beginner Morse input", () => {
     expect(decodeBoardMorseSequence([".", "-", ".", "-", "-", "-", "-"])).toBe(
       makeCoordinate(0, 0),
     );
+  });
+
+  test("does not reveal the incoming cell in expert mode", () => {
+    const sequence = [".", "-", ".", "-", "-", "-", "-"] as const;
+    expect(decodeIncomingMissileTarget(sequence, "normal")).toBe(makeCoordinate(0, 0));
+    expect(decodeIncomingMissileTarget(sequence, "expert")).toBeNull();
   });
 });

@@ -12,6 +12,20 @@ export {
   ROWS,
 } from "./coordinates";
 
+export {
+  generateSeatToken,
+  isValidMissileId,
+  isValidPlayerId,
+  isValidSeatToken,
+  MISSILE_ID_RE,
+  normalizeRoomId,
+  PLAYER_ID_RE,
+  ROOM_CODE_RE,
+  SEAT_TOKEN_RE,
+} from "./identity";
+
+export { parseServerGameEvent } from "./parse-events";
+
 export type {
   AttackCooldownUpdateEvent,
   AttackPrepEvent,
@@ -73,6 +87,7 @@ export type {
 } from "./types";
 export {
   ATTACKER_TURN_TIMEOUT_MS,
+  clampRoomSettings,
   DEFAULT_ROOM_SETTINGS,
   makeLocalPlayerSummary,
   MIN_ATTACK_COOLDOWN_MS,

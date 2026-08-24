@@ -38,7 +38,7 @@ describe("web msgpack helpers", () => {
 
     await expect(decodeServerEvent(frame)).rejects.toMatchObject({
       name: "FrameDecodeError",
-      message: "Frame missing `type` field",
+      message: "Frame missing `type` field or failed server-event schema",
       raw: frame,
     });
   });

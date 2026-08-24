@@ -13,7 +13,6 @@ import {
   type Coordinate,
   coordinateToMorseNotation,
   GameEventType,
-  makeCoordinate,
   type MorseSymbol,
   parseCoordinate,
 } from "@radioboi/game-core";
@@ -38,13 +37,15 @@ import {
 } from "@/src/hooks/useGameLoop";
 import { useNow } from "@/src/hooks/useNow";
 import {
+  claimRoomSeat,
   clearShipsPlaced,
   createClientId,
-  getOrCreatePlayerId,
   hasShipsPlaced,
   markShipsPlaced,
   readStoredRoomSettings,
+  releaseRoomSeat,
   resolvePlayerName,
+  touchRoomSeat,
 } from "@/src/lib/clientSession";
 import type { GameClient } from "@/src/lib/network/gameClient";
 import { destroyGameClient, getGameClient } from "@/src/lib/network/gameClient";
@@ -184,7 +185,6 @@ export function GameClientWrapper({ roomId }: Props) {
   const pendingAttackRef = useRef<{ id: string; target: Coordinate } | null>(null);
   const [missileInFlightUI, setMissileInFlightUI] = useState(false);
   const radarRef = useRef<RadarRef>(null);
-  const autoResolveMissileIdRef = useRef<string | null>(null);
   const wasOnCooldownRef = useRef(false);
 
   useGameLoop(transport, radarRef, morseEngine);
@@ -298,21 +298,43 @@ export function GameClientWrapper({ roomId }: Props) {
 
   useEffect(() => {
     useGameStore.getState().reset();
-    const nextPlayerId = getOrCreatePlayerId();
-    const nextPlayerName = resolvePlayerName(nextPlayerId);
+    const seat = claimRoomSeat(roomId);
+    const nextPlayerName = resolvePlayerName(seat.playerId);
     const client = getGameClient();
     const engine = new MorseEngine();
     const storedRoomSettings = readStoredRoomSettings(roomId);
 
-    setSession(nextPlayerId, roomId, nextPlayerName);
+    setSession(seat.playerId, roomId, nextPlayerName);
     if (storedRoomSettings !== undefined) {
       useGameStore.setState({ settings: storedRoomSettings });
     }
     setTransport(client);
     setMorseEngine(engine);
-    client.connect(roomId, nextPlayerId, nextPlayerName, storedRoomSettings);
+    client.connect(
+      roomId,
+      seat.playerId,
+      nextPlayerName,
+      storedRoomSettings,
+      seat.seatToken,
+    );
+
+    const heartbeat = window.setInterval(() => {
+      touchRoomSeat(roomId, seat.playerId, seat.seatToken);
+    }, 2_000);
+    const onPageHide = () => {
+      releaseRoomSeat(roomId, seat.playerId);
+    };
+    const onPageShow = () => {
+      touchRoomSeat(roomId, seat.playerId, seat.seatToken);
+    };
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
 
     return () => {
+      window.clearInterval(heartbeat);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
+      releaseRoomSeat(roomId, seat.playerId);
       resetGameLoopRuntimeState();
       setSelectedTarget(null);
       pendingAttackRef.current = null;
@@ -334,27 +356,8 @@ export function GameClientWrapper({ roomId }: Props) {
   // Tick timer — runs when any countdown is active
 
 
-  // Auto-resolve intercept on deadline (turn-based only)
-  useEffect(() => {
-    if (isAsync || !transport || incomingMissileId === null || incomingMissileDeadline === null) {
-      autoResolveMissileIdRef.current = null;
-      return;
-    }
-    if (now < incomingMissileDeadline || autoResolveMissileIdRef.current === incomingMissileId) {
-      return;
-    }
-    autoResolveMissileIdRef.current = incomingMissileId;
-    patchGameLoopRuntimeState({ incomingMissileAttempts: incomingMissileMaxAttempts });
-    transport.send({
-      type: GameEventType.INTERCEPT_ATTEMPT,
-      payload: {
-        attemptNumber: incomingMissileMaxAttempts,
-        decodedCoord: makeCoordinate(9, 9),
-        missileId: incomingMissileId,
-      },
-    });
-    setStatusLine("Время перехвата истекло. Ракета ушла на расчет результата.");
-  }, [incomingMissileDeadline, incomingMissileId, incomingMissileMaxAttempts, isAsync, now, transport]);
+  // Intercept timeout is owned by the Durable Object alarm. The client only
+  // mirrors the remaining seconds in the UI and must not guess a coordinate.
 
   useEffect(() => {
     const localAttackId = localAttackIdRef.current;

@@ -12,12 +12,15 @@
 import {
   BOARD_COLUMN_LABELS,
   BOARD_ROW_LABELS,
+  clampRoomSettings,
   COLUMNS,
+  DEFAULT_ROOM_SETTINGS,
   isValidCoordinate,
-  minimumAttackCooldownMs,
+  isValidMissileId,
   parseCoordinate as parseCoordCore,
   ROWS,
   type Coordinate,
+  validatePlacement,
 } from "@radioboi/game-core";
 
 // ── Internal types ────────────────────────────────────────────────────────────
@@ -40,6 +43,8 @@ export type PlayerRecord = {
   reconnectBudgetMs: number;
   /** Set when the player has no live sockets; null while connected. */
   disconnectedAt: number | null;
+  /** Secret presented on reconnect. Empty on legacy seats until first post-upgrade connect. */
+  seatToken: string;
 };
 
 export type PendingAttack = {
@@ -60,50 +65,9 @@ export type RoomSettings = {
   maxInterceptAttempts: number;
 };
 
-export const DEFAULT_SETTINGS: RoomSettings = {
-  battleMode: "turn-based",
-  difficulty: "normal",
-  attackCooldownMs: minimumAttackCooldownMs("normal"),
-  interceptWindowMs: 25_000,
-  maxInterceptAttempts: 3,
-};
+export const DEFAULT_SETTINGS: RoomSettings = { ...DEFAULT_ROOM_SETTINGS };
 
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-export function clampRoomSettings(raw: unknown): RoomSettings {
-  const record =
-    typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
-  const difficulty = record.difficulty === "beginner" || record.difficulty === "normal" || record.difficulty === "expert"
-    ? record.difficulty
-    : record.beginnerMode === true
-      ? "beginner"
-      : DEFAULT_SETTINGS.difficulty;
-  return {
-    battleMode: record.battleMode === "async" ? "async" : "turn-based",
-    difficulty,
-    attackCooldownMs: clampNumber(
-      record.attackCooldownMs,
-      minimumAttackCooldownMs(difficulty),
-      60_000,
-      minimumAttackCooldownMs(difficulty),
-    ),
-    interceptWindowMs: clampNumber(
-      record.interceptWindowMs,
-      10_000,
-      60_000,
-      DEFAULT_SETTINGS.interceptWindowMs,
-    ),
-    maxInterceptAttempts: clampNumber(
-      record.maxInterceptAttempts,
-      1,
-      5,
-      DEFAULT_SETTINGS.maxInterceptAttempts,
-    ),
-  };
-}
+export { clampRoomSettings };
 
 export type PendingAlarm = {
   type: "intercept_timeout" | "attacker_turn_timeout" | "reconnect_timeout";
@@ -145,12 +109,7 @@ export type ShotLogEntry = {
 
 // ── Fleet definition ──────────────────────────────────────────────────────────
 
-export const REQUIRED_FLEET = new Map<number, number>([
-  [4, 1],
-  [3, 2],
-  [2, 3],
-  [1, 4],
-]);
+
 
 function secureRandomIndex(maxExclusive: number): number {
   if (!Number.isInteger(maxExclusive) || maxExclusive <= 0) {
@@ -211,87 +170,26 @@ function markBlockedAroundSunkShip(board: BoardMap, shipCoords: readonly Coord[]
 export function validateShipGeometry(
   ships: ReadonlyArray<{ coords: readonly string[] }>,
 ): string | null {
-  for (const ship of ships) {
-    for (const coord of ship.coords) {
-      if (!parseCoord(coord)) return `Invalid coordinate: ${coord}`;
-    }
+  const result = validatePlacement(
+    ships.map((ship) => ({ coords: ship.coords as Coordinate[] })),
+  );
+  if (result.ok) return null;
+  switch (result.error.kind) {
+    case "INVALID_COORDINATE":
+      return `Invalid coordinate: ${result.error.coord}`;
+    case "SHIP_TOO_SHORT":
+      return "Ship has no coordinates";
+    case "SHIP_NOT_LINEAR":
+      return `Ship ${result.error.shipIndex} is not linear`;
+    case "SHIPS_OVERLAP":
+      return "Ships overlap";
+    case "SHIPS_TOUCH":
+      return `Ships ${result.error.shipA} and ${result.error.shipB} are adjacent`;
+    case "WRONG_FLEET":
+      return `Invalid fleet: expected ${result.error.expected}, got ${result.error.got}`;
+    default:
+      return "INVALID_PLACEMENT";
   }
-
-  for (let i = 0; i < ships.length; i++) {
-    const ship = ships[i];
-    if (!ship || ship.coords.length < 1) return "Ship has no coordinates";
-    if (ship.coords.length > 1) {
-      const parsed = ship.coords.map(parseCoord).filter(Boolean) as Array<{ colIndex: number; rowIndex: number }>;
-      const first = parsed[0];
-      if (!first) return "Ship parse failed";
-      const allSameCol = parsed.every((p) => p.colIndex === first.colIndex);
-      const allSameRow = parsed.every((p) => p.rowIndex === first.rowIndex);
-      if (!allSameCol && !allSameRow) return `Ship ${i} is not linear`;
-      if (allSameCol) {
-        const rows = parsed.map((p) => p.rowIndex).sort((a, b) => a - b);
-        for (let j = 1; j < rows.length; j++) {
-          if ((rows[j] ?? 0) - (rows[j - 1] ?? 0) !== 1) return `Ship ${i} has gaps`;
-        }
-      } else {
-        const cols = parsed.map((p) => p.colIndex).sort((a, b) => a - b);
-        for (let j = 1; j < cols.length; j++) {
-          if ((cols[j] ?? 0) - (cols[j - 1] ?? 0) !== 1) return `Ship ${i} has gaps`;
-        }
-      }
-    }
-  }
-
-  const occupied = new Set<string>();
-  for (const ship of ships) {
-    for (const coord of ship.coords) {
-      if (occupied.has(coord)) return `Ships overlap at ${coord}`;
-      occupied.add(coord);
-    }
-  }
-
-  for (let i = 0; i < ships.length; i++) {
-    const shipI = ships[i];
-    if (!shipI) continue;
-    const exclusion = new Set<string>();
-    for (const coord of shipI.coords) {
-      const p = parseCoord(coord);
-      if (!p) continue;
-      for (let dc = -1; dc <= 1; dc++) {
-        for (let dr = -1; dr <= 1; dr++) {
-          const nc = p.colIndex + dc;
-          const nr = p.rowIndex + dr;
-          if (nc >= 0 && nc <= 9 && nr >= 0 && nr <= 9) {
-            const col = COLUMNS[nc];
-            const row = ROWS[nr];
-            if (col && row) exclusion.add(col + row);
-          }
-        }
-      }
-    }
-    for (let j = i + 1; j < ships.length; j++) {
-      const shipJ = ships[j];
-      if (!shipJ) continue;
-      for (const coord of shipJ.coords) {
-        if (exclusion.has(coord)) return `Ships ${i} and ${j} are adjacent`;
-      }
-    }
-  }
-
-  const actualFleet = new Map<number, number>();
-  for (const ship of ships) {
-    const len = ship.coords.length;
-    actualFleet.set(len, (actualFleet.get(len) ?? 0) + 1);
-  }
-  for (const [len, count] of REQUIRED_FLEET) {
-    if ((actualFleet.get(len) ?? 0) !== count) {
-      return `Invalid fleet: expected ${count}×${len}-cell ship(s), got ${actualFleet.get(len) ?? 0}`;
-    }
-  }
-  for (const len of actualFleet.keys()) {
-    if (!REQUIRED_FLEET.has(len)) return `Invalid fleet: unexpected ship size ${len}`;
-  }
-
-  return null;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -347,6 +245,52 @@ export function addPlayer(
 
 export function getOpponentId(state: RoomState, playerId: string): string | null {
   return state.players.find((p) => p.id !== playerId)?.id ?? null;
+}
+
+/**
+ * Move a seated player's identity to a new client id (refresh that rotated
+ * playerId but still holds the seat token). Board/ship keys follow the seat.
+ */
+export function rebindPlayerId(state: RoomState, fromId: string, toId: string): boolean {
+  if (fromId === toId) return true;
+  if (state.players.some((player) => player.id === toId)) return false;
+  const player = state.players.find((entry) => entry.id === fromId);
+  if (!player) return false;
+
+  player.id = toId;
+  player.wsTag = `player:${toId}`;
+
+  const board = state.boards[fromId];
+  if (board !== undefined) {
+    state.boards[toId] = board;
+    delete state.boards[fromId];
+  }
+  const ships = state.ships[fromId];
+  if (ships !== undefined) {
+    state.ships[toId] = ships;
+    delete state.ships[fromId];
+  }
+  const cooldown = state.attackCooldowns[fromId];
+  if (cooldown !== undefined) {
+    state.attackCooldowns[toId] = cooldown;
+    delete state.attackCooldowns[fromId];
+  }
+  const attack = state.pendingAttacks[fromId];
+  if (attack !== undefined) {
+    attack.attackerId = toId;
+    state.pendingAttacks[toId] = attack;
+    delete state.pendingAttacks[fromId];
+  }
+  if (state.currentTurnId === fromId) state.currentTurnId = toId;
+  if (state.winnerId === fromId) state.winnerId = toId;
+  for (const entry of state.shotLog) {
+    if (entry.attackerId === fromId) entry.attackerId = toId;
+  }
+  for (const alarm of state.pendingAlarms) {
+    if (alarm.attackerId === fromId) alarm.attackerId = toId;
+    if (alarm.playerId === fromId) alarm.playerId = toId;
+  }
+  return true;
 }
 
 /**
@@ -427,6 +371,7 @@ export function prepareAttack(
 ): { ok: true } | { ok: false; reason: string } {
   if (state.phase !== "battle") return { ok: false, reason: "GAME_NOT_STARTED" };
   if (!isValidCoordinate(target)) return { ok: false, reason: "INVALID_COORDINATE" };
+  if (!isValidMissileId(missileId)) return { ok: false, reason: "INVALID_COORDINATE" };
 
   if (state.settings.battleMode === "turn-based") {
     if (state.currentTurnId !== attackerId) return { ok: false, reason: "NOT_YOUR_TURN" };

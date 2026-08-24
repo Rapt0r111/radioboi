@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
+  claimRoomSeat,
   clearShipsPlaced,
   getOrCreatePlayerId,
+  getOrCreateSeatToken,
   hasShipsPlaced,
   markShipsPlaced,
   PLAYER_ID_KEY,
   PLAYER_NAME_KEY,
   readPlayerNamePreference,
   readStoredRoomSettings,
+  readStoredSeatToken,
+  releaseRoomSeat,
   rememberPlayerName,
   rememberRoomSettings,
+  rememberSeatToken,
   resolvePlayerName,
   TAB_ID_KEY,
   TAB_NAME_PREFIX,
@@ -43,12 +48,15 @@ class MemoryStorage implements Storage {
   }
 }
 
-function installBrowser(windowName = ""): {
+function installBrowser(
+  windowName = "",
+  reuse?: { local?: MemoryStorage },
+): {
   local: MemoryStorage;
   session: MemoryStorage;
   setName(name: string): void;
 } {
-  const local = new MemoryStorage();
+  const local = reuse?.local ?? new MemoryStorage();
   const session = new MemoryStorage();
   let name = windowName;
 
@@ -131,6 +139,13 @@ describe("clientSession", () => {
     expect(second).toBe(first);
   });
 
+  test("keeps playerId when window.name is cleared on refresh", () => {
+    const first = getOrCreatePlayerId();
+    window.name = "";
+    expect(getOrCreatePlayerId()).toBe(first);
+    expect(window.name.startsWith(TAB_NAME_PREFIX)).toBe(true);
+  });
+
   test("issues a new playerId when window.name (tab) differs", () => {
     const browser = installBrowser();
     const first = getOrCreatePlayerId();
@@ -169,5 +184,45 @@ describe("clientSession", () => {
     expect(localStorage.getItem("radioboi:placed:ROOM01")).toBeNull();
     clearShipsPlaced("ROOM01");
     expect(hasShipsPlaced("ROOM01")).toBe(false);
+  });
+
+  test("keeps seat tokens in session storage only", () => {
+    rememberSeatToken("ABC123", "seat-secret");
+    expect(readStoredSeatToken("ABC123")).toBe("seat-secret");
+    expect(readStoredSeatToken("abc123")).toBe("seat-secret");
+    expect(localStorage.getItem("radioboi:seat:ABC123")).toBeNull();
+    expect(sessionStorage.getItem("radioboi:seat:ABC123")).toBe("seat-secret");
+  });
+
+  test("issues a stable seat token before the socket connects", () => {
+    const first = getOrCreateSeatToken("ab12cd");
+    expect(first.length).toBeGreaterThanOrEqual(16);
+    expect(getOrCreateSeatToken("AB12CD")).toBe(first);
+  });
+
+  test("reclaims a released seat after the tab is closed", () => {
+    const first = claimRoomSeat("ROOM01");
+    releaseRoomSeat("ROOM01", first.playerId);
+
+    const { local } = {
+      local: window.localStorage as unknown as MemoryStorage,
+    };
+    installBrowser("", { local });
+
+    const reopened = claimRoomSeat("ROOM01");
+    expect(reopened.playerId).toBe(first.playerId);
+    expect(reopened.seatToken).toBe(first.seatToken);
+  });
+
+  test("does not steal a live seat when a second window joins", () => {
+    const host = claimRoomSeat("ROOM02");
+    const { local } = {
+      local: window.localStorage as unknown as MemoryStorage,
+    };
+    installBrowser("", { local });
+
+    const guest = claimRoomSeat("ROOM02");
+    expect(guest.playerId).not.toBe(host.playerId);
+    expect(guest.seatToken).not.toBe(host.seatToken);
   });
 });

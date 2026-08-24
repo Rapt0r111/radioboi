@@ -12,8 +12,12 @@
 //     room from any window and still seed the WebSocket URL before KV catches up.
 
 import {
+  generateSeatToken,
+  isValidPlayerId,
+  isValidSeatToken,
   minimumAttackCooldownMs,
   normalizePlayerName,
+  normalizeRoomId,
   type RoomSettings,
 } from "@radioboi/game-core";
 
@@ -23,6 +27,10 @@ export const TAB_ID_KEY = "radioboi:tabId";
 export const TAB_NAME_PREFIX = "radioboi-tab:";
 export const PLACED_KEY_PREFIX = "radioboi:placed:";
 export const ROOM_SETTINGS_KEY_PREFIX = "radioboi:settings:";
+export const SEAT_TOKEN_KEY_PREFIX = "radioboi:seat:";
+export const SEATS_KEY_PREFIX = "radioboi:seats:";
+/** A seat with no heartbeat for this long can be reclaimed after the tab is closed. */
+export const SEAT_STALE_MS = 8_000;
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -100,6 +108,19 @@ export function getOrCreateTabId(): string {
   if (window.name.startsWith(TAB_NAME_PREFIX)) {
     return window.name.slice(TAB_NAME_PREFIX.length);
   }
+
+  // Refresh can drop window.name (Next.js / some browsers). Reclaim this tab's
+  // session id so we do not rotate playerId and hit ROOM_FULL.
+  const storedTabId = readKey(browserStorage("session"), TAB_ID_KEY);
+  if (storedTabId !== null && storedTabId.length > 0) {
+    try {
+      window.name = `${TAB_NAME_PREFIX}${storedTabId}`;
+    } catch {
+      // ignore
+    }
+    return storedTabId;
+  }
+
   const next = createClientId();
   try {
     window.name = `${TAB_NAME_PREFIX}${next}`;
@@ -222,4 +243,148 @@ export function hasShipsPlaced(roomId: string): boolean {
 
 export function clearShipsPlaced(roomId: string): void {
   removeKey(browserStorage("session"), `${PLACED_KEY_PREFIX}${roomId}`);
+}
+
+function roomKey(prefix: string, roomId: string): string {
+  return `${prefix}${normalizeRoomId(roomId) ?? roomId.trim().toUpperCase()}`;
+}
+
+export function rememberSeatToken(roomId: string, token: string): void {
+  if (token.length === 0) return;
+  writeKey(browserStorage("session"), roomKey(SEAT_TOKEN_KEY_PREFIX, roomId), token);
+}
+
+export function readStoredSeatToken(roomId: string): string | undefined {
+  const stored = readKey(browserStorage("session"), roomKey(SEAT_TOKEN_KEY_PREFIX, roomId));
+  return stored && stored.length > 0 ? stored : undefined;
+}
+
+/** Create a room seat token before the first WebSocket frame, so remount/refresh can reconnect. */
+export function getOrCreateSeatToken(roomId: string): string {
+  const existing = readStoredSeatToken(roomId);
+  if (existing !== undefined) return existing;
+  const token = generateSeatToken();
+  rememberSeatToken(roomId, token);
+  return token;
+}
+
+export type RoomSeat = {
+  playerId: string;
+  seatToken: string;
+  aliveAt: number;
+};
+
+function isRoomSeat(value: unknown): value is RoomSeat {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.playerId === "string" &&
+    isValidPlayerId(entry.playerId) &&
+    typeof entry.seatToken === "string" &&
+    isValidSeatToken(entry.seatToken) &&
+    typeof entry.aliveAt === "number" &&
+    Number.isFinite(entry.aliveAt)
+  );
+}
+
+function isStaleSeat(seat: RoomSeat, now: number): boolean {
+  return seat.aliveAt <= 0 || now - seat.aliveAt >= SEAT_STALE_MS;
+}
+
+function readSeatLedger(roomId: string): RoomSeat[] {
+  const raw = readKey(browserStorage("local"), roomKey(SEATS_KEY_PREFIX, roomId));
+  if (raw === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isRoomSeat);
+  } catch {
+    return [];
+  }
+}
+
+function writeSeatLedger(roomId: string, seats: RoomSeat[]): void {
+  writeKey(browserStorage("local"), roomKey(SEATS_KEY_PREFIX, roomId), JSON.stringify(seats));
+}
+
+function upsertSeat(roomId: string, seat: RoomSeat): void {
+  const seats = readSeatLedger(roomId).filter(
+    (entry) => entry.playerId !== seat.playerId && entry.seatToken !== seat.seatToken,
+  );
+  seats.push(seat);
+  while (seats.length > 2) {
+    const oldest = seats.reduce((current, entry) =>
+      entry.aliveAt < current.aliveAt ? entry : current,
+    );
+    const index = seats.indexOf(oldest);
+    if (index < 0) break;
+    seats.splice(index, 1);
+  }
+  writeSeatLedger(roomId, seats);
+}
+
+function adoptSeatIntoTab(roomId: string, playerId: string, seatToken: string): void {
+  const tabId = getOrCreateTabId();
+  const session = browserStorage("session");
+  writeKey(session, TAB_ID_KEY, tabId);
+  writeKey(session, PLAYER_ID_KEY, playerId);
+  rememberSeatToken(roomId, seatToken);
+}
+
+/**
+ * Pick the identity to use for this tab in a room.
+ *
+ * Session identity wins (refresh). Otherwise a stale localStorage seat is
+ * reclaimed so closing a tab and reopening the room does not hit ROOM_FULL.
+ * A live second window still gets a new identity.
+ */
+export function claimRoomSeat(
+  roomId: string,
+  now: number = Date.now(),
+): { playerId: string; seatToken: string } {
+  const tabId = getOrCreateTabId();
+  const session = browserStorage("session");
+  const sessionPlayerId = readKey(session, PLAYER_ID_KEY);
+  const sessionTabId = readKey(session, TAB_ID_KEY);
+  const sessionToken = readStoredSeatToken(roomId);
+
+  if (
+    sessionPlayerId !== null &&
+    sessionToken !== undefined &&
+    sessionTabId === tabId
+  ) {
+    upsertSeat(roomId, { playerId: sessionPlayerId, seatToken: sessionToken, aliveAt: now });
+    return { playerId: sessionPlayerId, seatToken: sessionToken };
+  }
+
+  const stale = [...readSeatLedger(roomId)].reverse().find((seat) => isStaleSeat(seat, now));
+  if (stale !== undefined) {
+    adoptSeatIntoTab(roomId, stale.playerId, stale.seatToken);
+    upsertSeat(roomId, { playerId: stale.playerId, seatToken: stale.seatToken, aliveAt: now });
+    return { playerId: stale.playerId, seatToken: stale.seatToken };
+  }
+
+  const playerId = getOrCreatePlayerId();
+  const seatToken = getOrCreateSeatToken(roomId);
+  upsertSeat(roomId, { playerId, seatToken, aliveAt: now });
+  return { playerId, seatToken };
+}
+
+export function touchRoomSeat(
+  roomId: string,
+  playerId: string,
+  seatToken: string,
+  now: number = Date.now(),
+): void {
+  upsertSeat(roomId, { playerId, seatToken, aliveAt: now });
+}
+
+/** Mark the seat reclaimable immediately (tab close / leave room). */
+export function releaseRoomSeat(roomId: string, playerId: string): void {
+  writeSeatLedger(
+    roomId,
+    readSeatLedger(roomId).map((entry) =>
+      entry.playerId === playerId ? { ...entry, aliveAt: 0 } : entry,
+    ),
+  );
 }
