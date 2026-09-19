@@ -15,6 +15,7 @@ import {
   GameEventType,
   type MorseSymbol,
   parseCoordinate,
+  ROOM_CODE_RE,
 } from "@radioboi/game-core";
 import { MORSE_ALPHABET, MorseEngine } from "@radioboi/morse-engine";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -77,6 +78,14 @@ function SessionChrome() {
 
 type Props = { roomId: string };
 
+function roomIdFromLocation(fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const match = window.location.pathname.match(/\/game\/([^/]+)\/?$/);
+  const fromPath = match?.[1] ? decodeURIComponent(match[1]).toUpperCase() : "";
+  if (fromPath && fromPath !== "_") return fromPath;
+  return fallback.toUpperCase();
+}
+
 type RuntimeCarrier = ReturnType<typeof useGameStore.getState> & {
   incomingMissileAttempts?: number;
   incomingMissileDeadline?: number | null;
@@ -121,7 +130,15 @@ function formatMorseForCoord(coord: Coordinate | null): { letter: string; digit:
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export function GameClientWrapper({ roomId }: Props) {
+export function GameClientWrapper({ roomId: roomIdProp }: Props) {
+  const [roomId, setRoomId] = useState(
+    roomIdProp !== "_" ? roomIdProp.toUpperCase() : roomIdProp,
+  );
+
+  useEffect(() => {
+    setRoomId(roomIdFromLocation(roomIdProp));
+  }, [roomIdProp]);
+
   const phase = useGameStore(selectPhase);
   const enemyBoard = useGameStore(selectEnemyBoard);
   const isMyTurn = useGameStore(selectIsMyTurn);
@@ -297,6 +314,8 @@ export function GameClientWrapper({ roomId }: Props) {
   }, [transport]);
 
   useEffect(() => {
+    if (!ROOM_CODE_RE.test(roomId)) return;
+
     useGameStore.getState().reset();
     const seat = claimRoomSeat(roomId);
     const nextPlayerName = resolvePlayerName(seat.playerId);

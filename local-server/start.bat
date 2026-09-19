@@ -13,8 +13,9 @@ if "%WEB_PORT%"=="" set "WEB_PORT=3000"
 if "%WORKER_PORT%"=="" set "WORKER_PORT=8787"
 
 REM Prefer bundled runtimes when present (offline package).
-if exist "%~dp0runtime\bun.exe" set "PATH=%~dp0runtime;%~dp0runtime\node;%PATH%"
+REM Node 18 first so Windows 8.1 never picks a host Node 20+/Bun.
 if exist "%~dp0runtime\node\node.exe" set "PATH=%~dp0runtime\node;%PATH%"
+if exist "%~dp0runtime\bun.exe" set "PATH=%~dp0runtime;%~dp0runtime\node;%PATH%"
 
 echo.
 echo === Radioboi LAN server ===

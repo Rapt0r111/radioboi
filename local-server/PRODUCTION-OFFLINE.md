@@ -18,12 +18,12 @@ production-пакет для Windows-машины **без интернета** 
 
 ## 1. Архитектура offline production
 
-На air-gapped ПК поднимаются **два** процесса:
+На air-gapped ПК поднимается **один** процесс Node 18 (Windows 8.1 / 10 / 11):
 
-| Процесс | Порт (по умолчанию) | Режим | Зачем |
-|---------|---------------------|--------|--------|
-| **Web** | `3000` | Next.js **standalone** (Node) | UI, server actions create/join |
-| **Worker** | `8787` | Wrangler local + Durable Objects | Realtime WebSocket, игровая логика |
+| Слушатель | Порт (по умолчанию) | Режим | Зачем |
+|-----------|---------------------|--------|--------|
+| **Web** | `3000` | Статический Next export | UI, коды комнат на клиенте |
+| **Worker** | `8787` | Node `lan-server.cjs` | Realtime WebSocket, игровая логика |
 
 ```text
   [игроки в LAN]
@@ -48,8 +48,8 @@ production-пакет для Windows-машины **без интернета** 
 2. **Без Cloudflare KV** — `createRoomAction` / `joinRoomAction` в standalone
    генерируют/принимают 6-символьный код локально; комната создаётся в Worker
    при первом WebSocket-подключении.
-3. **Без системного Bun/Node** — бинарники лежат в `runtime\`.
-4. **Без registry** — `cache\` + `bun install --offline` при смене пути.
+3. **Без системного Bun/Node/wrangler** — в `runtime\node\` лежит Node 18.20.8.
+4. **Без registry** — UI и worker уже собраны; на сервере ничего не устанавливается.
 
 ---
 
@@ -60,8 +60,8 @@ production-пакет для Windows-машины **без интернета** 
 - Windows 10/11 x64
 - PowerShell 5+
 - [Bun](https://bun.sh) `1.3.14+` (как в `packageManager`)
-- Node.js x64 на `PATH` (копируется в пакет; нужен для standalone)
-- ~2–4 GB свободного места (пакет ~1 GB)
+- Интернет (пакет качает Node 18.20.8)
+- ~1–2 GB свободного места
 - Репозиторий Radioboi, зависимости установлены:
 
 ```powershell
@@ -71,10 +71,13 @@ bun install --frozen-lockfile
 
 ### Машина-сервер (без интернета)
 
-- Windows 10/11 x64
+- Windows 8.1 x64 (**build 9600**) или Windows 10/11 x64
+- PowerShell 4+ (есть в Windows 8.1)
 - Права на запуск `.bat` / PowerShell
 - Для LAN: один раз **Администратор** для firewall
 - Системные Bun/Node **не нужны**
+- Браузер игроков на Win 8.1: Chrome 109 или Firefox 115 ESR
+- Если `node.exe` не стартует: [KB2999226](https://support.microsoft.com/help/2999226) (Universal C Runtime). Не копируйте `ucrtbase.dll` из Windows 10 — этот файл не загрузится на 8.1.
 
 ---
 
@@ -105,16 +108,14 @@ powershell -ExecutionPolicy Bypass -File local-server\pack.ps1 -OutputDir D:\sha
 ### Что делает `pack.ps1`
 
 1. Создаёт/очищает `local-server/offline/`
-2. Копирует `runtime\bun.exe` и `runtime\node\node.exe` (+ dll)
+2. Скачивает **Node.js 18.20.8** (последний официальный для Windows 8.1) + DLL Universal CRT
 3. Копирует monorepo в `app\` (без `node_modules`, `.git`, `.next`, …)
-4. `bun install --frozen-lockfile` с локальным `cache\`
-5. Прогревает wrangler
-6. **Проверяет** `bun install --offline` (кэш полный)
-7. `bun run build` → production standalone  
-   (`NEXT_PUBLIC_WS_PORT=8787`, **без** зашитого `NEXT_PUBLIC_WS_URL`)
-8. Пишет маркер `.offline-install-ok`, `VERSION.txt`, `OFFLINE_PACKAGE`
-9. Кладёт `start/stop/verify/allow-firewall` в корень пакета
-10. Опционально zip → `local-server/offline-zip/Radioboi-LAN-Offline-win64-*.zip`
+4. Собирает статический UI (`RADIOBOI_LAN_STATIC=1`, Chrome 109 / Firefox 115)
+5. Бандлит Node-воркер `apps/worker/dist/lan-server.cjs` (без wrangler/workerd)
+6. Кладёт `out/` и `lan-server.cjs` в пакет
+7. Пишет `VERSION.txt`, `OFFLINE_PACKAGE`
+8. Кладёт `start/stop/verify/allow-firewall` в корень пакета
+9. Опционально zip → `local-server/offline-zip/Radioboi-LAN-Offline-win64-*.zip`
 
 ### Результат
 

@@ -13,6 +13,7 @@ export {
 } from "./coordinates";
 
 export {
+  generateRoomCode,
   generateSeatToken,
   isValidMissileId,
   isValidPlayerId,

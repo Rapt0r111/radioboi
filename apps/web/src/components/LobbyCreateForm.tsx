@@ -16,7 +16,7 @@ import {
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useEffect, useState, useTransition } from "react";
-import { createRoomAction, joinRoomAction } from "../../app/actions";
+import { createRoom, joinRoom } from "@/src/lib/lobbyRooms";
 import {
   readPlayerNamePreference,
   rememberPlayerName,
@@ -179,6 +179,17 @@ export function LobbyCreateForm({ initialError }: Props) {
   const [playerName, setPlayerName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState(initialError ?? "");
+
+  useEffect(() => {
+    if (initialError) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const error = params.get("error");
+      if (error) setJoinError(decodeURIComponent(error));
+    } catch {
+      /* ignore malformed query */
+    }
+  }, [initialError]);
   const [isAsync, setIsAsync] = useState(DEFAULT_ROOM_SETTINGS.battleMode === "async");
   const [difficulty, setDifficulty] = useState<DifficultyMode>(DEFAULT_ROOM_SETTINGS.difficulty);
   const [cooldownMs, setCooldownMs] = useState(DEFAULT_ROOM_SETTINGS.attackCooldownMs);
@@ -224,7 +235,7 @@ export function LobbyCreateForm({ initialError }: Props) {
     startTransition(async () => {
       try {
         const settings = buildSettings();
-        const roomId = await createRoomAction(settings);
+        const roomId = await createRoom(settings);
         rememberPlayerName(name);
         rememberRoomSettings(roomId, settings);
         router.push(`/game/${roomId}`);
@@ -245,7 +256,7 @@ export function LobbyCreateForm({ initialError }: Props) {
       return;
     }
     startTransition(async () => {
-      const result = await joinRoomAction(code);
+      const result = await joinRoom(code);
       if ("success" in result && result.success) {
         rememberPlayerName(name);
         router.push(`/game/${result.roomId}`);

@@ -25,11 +25,14 @@ export function encodeEvent(event: RawEvent): Uint8Array {
 
 // ── Decoding ─────────────────────────────────────────────────────────────────
 
-export function decodeEvent(msg: string | ArrayBuffer): RawEvent | null {
+export function decodeEvent(msg: string | ArrayBuffer | ArrayBufferView): RawEvent | null {
   try {
     if (typeof msg === "string") return null;
-    if (msg.byteLength > MAX_FRAME_BYTES) return null;
-    const buf = msg instanceof ArrayBuffer ? new Uint8Array(msg) : msg;
+    const buf =
+      msg instanceof ArrayBuffer
+        ? new Uint8Array(msg)
+        : new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
+    if (buf.byteLength > MAX_FRAME_BYTES) return null;
     const value = decode(buf);
     const record = value as Record<string, unknown>;
     if (

@@ -11,5 +11,5 @@
     "noEmit": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "src/node-lan-server.ts", "src/lan-server-main.ts", "src/node-crypto-polyfill.ts"]
 }

@@ -76,6 +76,13 @@ function Install-RadioboiOfflineDeps {
   $lock = Join-Path $RepoRoot "bun.lock"
   $nodeModules = Join-Path $RepoRoot "node_modules"
   $standaloneServer = Join-Path $RepoRoot "apps\web\.next\standalone\apps\web\server.js"
+  $lanServer = Join-Path $RepoRoot "apps\worker\dist\lan-server.cjs"
+  $webOut = Join-Path $RepoRoot "apps\web\out\index.html"
+
+  if ((Test-Path $lanServer) -and (Test-Path $webOut) -and -not $Force) {
+    Write-Host "Node LAN artifacts present (static web + lan-server.cjs). Skipping Bun re-link."
+    return
+  }
 
   if (-not $Force -and (Test-Path $marker) -and (Test-Path $nodeModules)) {
     try {

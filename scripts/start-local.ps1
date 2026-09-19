@@ -25,10 +25,30 @@ $modeTag = if ($Production) { "prod" } else { "dev" }
 $workerLog = Join-Path $logDir "worker-$modeTag-$runStamp.log"
 $webLog = Join-Path $logDir "web-$modeTag-$runStamp.log"
 
+function Get-ChildProcessIds([int]$ProcessId) {
+  $ids = @()
+  try {
+    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction Stop
+    foreach ($child in @($children)) {
+      $ids += [int]$child.ProcessId
+    }
+    return $ids
+  } catch {
+    try {
+      $children = Get-WmiObject Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction Stop
+      foreach ($child in @($children)) {
+        $ids += [int]$child.ProcessId
+      }
+    } catch {
+      # Windows 8.1 without CIM/WMI access: fall through.
+    }
+  }
+  return $ids
+}
+
 function Stop-ProcessTree([int]$ProcessId) {
-  $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue
-  foreach ($child in @($children)) {
-    Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+  foreach ($childId in @(Get-ChildProcessIds -ProcessId $ProcessId)) {
+    Stop-ProcessTree -ProcessId $childId
   }
 
   if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
@@ -52,12 +72,17 @@ function Stop-ExistingFromPidFile {
 }
 
 function Test-PortFree([int]$Port) {
+  $client = $null
   try {
-    $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    return $null -eq $listeners
+    $client = New-Object System.Net.Sockets.TcpClient
+    $client.Connect("127.0.0.1", $Port)
+    return $false
   } catch {
-    # Windows 8 / restricted environments: assume free if probe fails.
     return $true
+  } finally {
+    if ($null -ne $client) {
+      try { $client.Close() } catch { }
+    }
   }
 }
 
@@ -225,11 +250,15 @@ if ($Lan) {
   Warn-IfLanFirewallRulesMissing @($WebPort, $WorkerPort)
 }
 
-# ── Production web build (standalone) ─────────────────────────────────────────
-# NEXT_PUBLIC_* are inlined at build time. For IP-agnostic LAN leave WS_URL unset
-# so the client uses page hostname + WS_PORT. For Cloudflare deploy, bake wss://...
+# ── Production web ────────────────────────────────────────────────────────────
+# Preferred: Node LAN static export + bundled worker (Windows 8.1 / Node 18).
+# Fallback: Next standalone + wrangler (Windows 10+ pack-machine / Cloudflare).
 $standaloneServer = Join-Path $webDir ".next\standalone\apps\web\server.js"
-if ($Production) {
+$lanServer = Join-Path $workerDir "dist\lan-server.cjs"
+$webOut = Join-Path $webDir "out"
+$hasNodeLan = (Test-Path $lanServer) -and (Test-Path (Join-Path $webOut "index.html"))
+
+if ($Production -and -not $hasNodeLan) {
   $needBuild = $ForceBuild -or -not (Test-Path $standaloneServer)
   if ($needBuild) {
     Write-Host "Building production web (standalone)..."
@@ -258,11 +287,19 @@ if ($Production) {
   }
 }
 
+$useNodeLan = $Production -and $hasNodeLan
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+$nodePath = if ($null -ne $nodeCmd) { $nodeCmd.Source } else { "node" }
+
 $workerCmd = "cd /d `"$workerDir`" && bun run dev -- --port $WorkerPort --ip $bindHost > `"$workerLog`" 2>&1"
 
-if ($Production) {
+if ($useNodeLan) {
+  # Windows 8.1 (build 9600): one Node 18 process serves static web + game WebSocket.
+  # Prefix with `cd` so cmd.exe /c does not swallow the quoted node.exe path.
+  $workerCmd = "cd /d `"$workerDir`" && `"$nodePath`" `"$lanServer`" --web-port $WebPort --worker-port $WorkerPort --web-root `"$webOut`" --hostname $bindHost --allowed-origins `"$allowedOrigins`" > `"$workerLog`" 2>&1"
+  $webCmd = $null
+} elseif ($Production) {
   # Node standalone: HOSTNAME defaults to 0.0.0.0 in Next's server.js; set explicitly.
-  # Room create/join works without Cloudflare KV (see apps/web/app/actions.ts).
   $webCmd = "cd /d `"$webDir`" && set `"PORT=$WebPort`" && set `"HOSTNAME=$bindHost`" && bun run start > `"$webLog`" 2>&1"
 } elseif ($useDynamicWs) {
   $webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_PORT=$WorkerPort`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$allowedOrigins`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
@@ -281,10 +318,14 @@ try {
     throw "Worker server did not start listening on port $WorkerPort within 30 seconds.$([Environment]::NewLine)$(Get-LogTail $workerLog)"
   }
 
-  $web = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $webCmd) -PassThru -WindowStyle Hidden
+  if ($null -ne $webCmd -and $webCmd.Trim().Length -gt 0) {
+    $web = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $webCmd) -PassThru -WindowStyle Hidden
+  } else {
+    $web = $worker
+  }
 
   if (!(Wait-ForPort -Port $WebPort -TimeoutSeconds $webWaitSeconds)) {
-    throw "Web server did not start listening on port $WebPort within $webWaitSeconds seconds.$([Environment]::NewLine)$(Get-LogTail $webLog)"
+    throw "Web server did not start listening on port $WebPort within $webWaitSeconds seconds.$([Environment]::NewLine)$(Get-LogTail $webLog)$([Environment]::NewLine)$(Get-LogTail $workerLog)"
   }
 } catch {
   foreach ($process in @($web, $worker)) {
@@ -295,9 +336,10 @@ try {
   throw
 }
 
+$webPid = if ($null -ne $web) { $web.Id } else { $worker.Id }
 $state = [ordered]@{
   workerLauncherPid = $worker.Id
-  webLauncherPid = $web.Id
+  webLauncherPid = $webPid
   workerPort = $WorkerPort
   webPort = $WebPort
   bindHost = $bindHost
@@ -315,7 +357,13 @@ $state | ConvertTo-Json | Set-Content -Encoding UTF8 $pidFile
 
 Write-Host "Radioboi local stack started."
 Write-Host "Bind:   $bindHost"
-$runMode = if ($Production) { "production (standalone web + wrangler worker)" } else { "development (next dev + wrangler)" }
+if ($useNodeLan) {
+  $runMode = "production (Node 18 static web + Node game worker, Windows 8.1)"
+} elseif ($Production) {
+  $runMode = "production (standalone web + wrangler worker)"
+} else {
+  $runMode = "development (next dev + wrangler)"
+}
 Write-Host "Run:    $runMode"
 if ($Lan) {
   Write-Host "Mode:   LAN (IP-agnostic WebSocket = page hostname:$WorkerPort)"

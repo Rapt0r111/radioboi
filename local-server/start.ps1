@@ -31,18 +31,23 @@ Write-Host "App:  $($layout.RepoRoot)"
 Push-Location $layout.RepoRoot
 try {
   if ($layout.Mode -eq "offline") {
-    if ([string]::IsNullOrWhiteSpace($layout.CacheDir)) {
-      throw "Offline package is missing cache\. Re-run pack.ps1 on a machine with internet."
+    $lanServer = Join-Path $layout.RepoRoot "apps\worker\dist\lan-server.cjs"
+    $webOut = Join-Path $layout.RepoRoot "apps\web\out\index.html"
+    $nodeLan = (Test-Path $lanServer) -and (Test-Path $webOut)
+    if (-not $nodeLan) {
+      if ([string]::IsNullOrWhiteSpace($layout.CacheDir)) {
+        throw "Offline package is missing cache\. Re-run pack.ps1 on a machine with internet."
+      }
+      if (-not $SkipInstall) {
+        Install-RadioboiOfflineDeps `
+          -RepoRoot $layout.RepoRoot `
+          -CacheDir $layout.CacheDir `
+          -RuntimeDir $layout.RuntimeDir `
+          -Force:$ForceOfflineInstall
+      }
+      $env:BUN_INSTALL_CACHE_DIR = $layout.CacheDir
+      $env:BUN_INSTALL_OFFLINE = "1"
     }
-    if (-not $SkipInstall) {
-      Install-RadioboiOfflineDeps `
-        -RepoRoot $layout.RepoRoot `
-        -CacheDir $layout.CacheDir `
-        -RuntimeDir $layout.RuntimeDir `
-        -Force:$ForceOfflineInstall
-    }
-    $env:BUN_INSTALL_CACHE_DIR = $layout.CacheDir
-    $env:BUN_INSTALL_OFFLINE = "1"
   } else {
     $nodeModules = Join-Path $layout.RepoRoot "node_modules"
     if (!(Test-Path $nodeModules)) {
@@ -55,13 +60,15 @@ try {
   }
 
   $standaloneServer = Join-Path $layout.RepoRoot "apps\web\.next\standalone\apps\web\server.js"
+  $lanServer = Join-Path $layout.RepoRoot "apps\worker\dist\lan-server.cjs"
+  $webOut = Join-Path $layout.RepoRoot "apps\web\out\index.html"
+  $lanReady = (Test-Path $lanServer) -and (Test-Path $webOut)
   $useProduction = $false
   if ($Dev) {
     $useProduction = $false
   } elseif ($Production) {
     $useProduction = $true
-  } elseif ($layout.Mode -eq "offline" -and (Test-Path $standaloneServer)) {
-    # Offline packages ship a prebuilt standalone server when pack.ps1 ran build.
+  } elseif ($layout.Mode -eq "offline" -and ((Test-Path $standaloneServer) -or $lanReady)) {
     $useProduction = $true
   }
 

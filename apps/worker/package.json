@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "build:lan": "bun build src/lan-server-main.ts --outfile dist/lan-server.cjs --target=node --format=cjs --packages=bundle",
     "deploy": "wrangler deploy",
     "test": "bun test tests",
     "type-check": "tsc --noEmit",

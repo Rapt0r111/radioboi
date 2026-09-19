@@ -43,19 +43,35 @@ $ports = @($WebPort, $WorkerPort) | Sort-Object -Unique
 
 foreach ($port in $ports) {
   $displayName = "$rulePrefix TCP $port"
-  Remove-NetFirewallRule -DisplayName $displayName -ErrorAction SilentlyContinue
+  $netFirewallOk = $false
+  try {
+    Remove-NetFirewallRule -DisplayName $displayName -ErrorAction SilentlyContinue
+    if (!$Remove) {
+      New-NetFirewallRule `
+        -DisplayName $displayName `
+        -Direction Inbound `
+        -Action Allow `
+        -Protocol TCP `
+        -LocalPort $port `
+        -Profile Private `
+        -RemoteAddress LocalSubnet `
+        -Description "Allow Radioboi local web and WebSocket traffic from the private LAN only." |
+        Out-Null
+    }
+    $netFirewallOk = $true
+  } catch {
+    $netFirewallOk = $false
+  }
 
-  if (!$Remove) {
-    New-NetFirewallRule `
-      -DisplayName $displayName `
-      -Direction Inbound `
-      -Action Allow `
-      -Protocol TCP `
-      -LocalPort $port `
-      -Profile Private `
-      -RemoteAddress LocalSubnet `
-      -Description "Allow Radioboi local web and WebSocket traffic from the private LAN only." |
-      Out-Null
+  if (-not $netFirewallOk) {
+    # Windows 8.1 fallback when NetSecurity cmdlets are missing.
+    netsh advfirewall firewall delete rule name="$displayName" > $null 2>&1
+    if (!$Remove) {
+      $netsh = netsh advfirewall firewall add rule name="$displayName" dir=in action=allow protocol=TCP localport=$port profile=private remoteip=localsubnet
+      if ($LASTEXITCODE -ne 0) {
+        throw "Failed to add firewall rule '$displayName'. Run as Administrator. $netsh"
+      }
+    }
   }
 }
 

@@ -3,9 +3,7 @@
 
 import { LobbyCreateForm } from "@/src/components/LobbyCreateForm";
 
-type LobbyProps = {
-  searchParams: Promise<{ error?: string }>;
-};
+
 
 const STATUS_ITEMS = [
   { label: "MORSE LINK", value: "ГОТОВ" },
@@ -28,8 +26,7 @@ const FEATURE_CARDS = [
   },
 ] as const;
 
-export default async function HomePage({ searchParams }: LobbyProps) {
-  const { error } = await searchParams;
+export default function HomePage() {
 
   return (
     <main className="relative min-h-dvh overflow-hidden bg-ocean-950 px-4 py-5 text-miss-white sm:px-6 lg:px-8">
@@ -128,7 +125,7 @@ export default async function HomePage({ searchParams }: LobbyProps) {
             </div>
           </div>
 
-          <LobbyCreateForm {...(error ? { initialError: decodeURIComponent(error) } : {})} />
+          <LobbyCreateForm />
         </aside>
       </section>
     </main>

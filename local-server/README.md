@@ -9,7 +9,7 @@
 
 ## Как получить переносимый пакет
 
-На машине **с интернетом** (Windows x64, Bun + Node):
+На машине **с интернетом** (Windows 10/11 x64, Bun; пакет качает Node 18.20.8):
 
 ```powershell
 # из корня репозитория
@@ -35,10 +35,9 @@ powershell -ExecutionPolicy Bypass -File .\pack.ps1
 
 ```text
 local-server/offline/                 ← КОПИРОВАТЬ НА СЕРВЕР ЦЕЛИКОМ
-  runtime/bun.exe
-  runtime/node/node.exe
-  cache/                              ← кэш Bun (офлайн install)
-  app/                                ← исходники + node_modules + production build
+  runtime/node/node.exe               ← Node 18.20.8 (Windows 8.1)
+  app/apps/web/out/                   ← статический UI
+  app/apps/worker/dist/lan-server.cjs ← игровой WebSocket на Node
   start.bat / stop.bat / verify.bat
   allow-firewall.bat
   README.md

@@ -1,12 +1,12 @@
-﻿# Build a fully offline portable LAN server package for Windows.
+# Build a fully offline portable LAN server package for Windows 8.1 (build 9600).
 #
-# Run on a machine WITH internet (Bun + Node installed).
+# Run on a machine WITH internet (Windows 10/11, Bun installed).
 # Result: local-server\offline\  - copy that entire folder to the air-gapped server.
 #
 # The package includes:
-#   runtime\     bun.exe + node.exe (no system install needed on the server)
-#   cache\       Bun package cache for offline install
-#   app\         full monorepo source + bun.lock (node_modules created/repaired on start)
+#   runtime\node\   Node.js 18.20.8 + Universal CRT DLLs (no Bun/wrangler)
+#   app\apps\web\out                static Next export
+#   app\apps\worker\dist\lan-server.cjs
 #   start.bat    etc.
 param(
   [string]$OutputDir = "",
@@ -37,9 +37,62 @@ $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
 if ($null -eq $bunCmd) {
   throw "Bun is required on the packing machine. Install from https://bun.sh and re-run."
 }
-$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-if ($null -eq $nodeCmd) {
-  throw "Node.js is required on the packing machine (copied into the offline runtime)."
+
+$node18Version = "18.20.8"
+$node18ZipName = "node-v$node18Version-win-x64.zip"
+$node18Url = "https://nodejs.org/dist/v$node18Version/$node18ZipName"
+
+function Install-Win81NodeRuntime([string]$Destination) {
+  Write-Host "Downloading Node.js v$node18Version (last official Windows 8.1 runtime)..."
+  $tmpRoot = Join-Path $env:TEMP ("radioboi-node18-" + [guid]::NewGuid().ToString("N"))
+  New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
+  $zipPath = Join-Path $tmpRoot $node18ZipName
+  try {
+    Invoke-WebRequest -Uri $node18Url -OutFile $zipPath -UseBasicParsing
+    $extractDir = Join-Path $tmpRoot "extract"
+    New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+    $tar = Get-Command tar -ErrorAction SilentlyContinue
+    if ($null -ne $tar) {
+      & tar -xf $zipPath -C $extractDir
+    } else {
+      Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+    }
+    $payload = Get-ChildItem -LiteralPath $extractDir -Directory | Select-Object -First 1
+    if ($null -eq $payload) {
+      throw "Node 18 zip did not contain a directory."
+    }
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Get-ChildItem -LiteralPath $payload.FullName -Force | ForEach-Object {
+      Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Destination $_.Name) -Recurse -Force
+    }
+
+    $sys32 = Join-Path $env:SystemRoot "System32"
+    # Only the VC++ runtime (PE OS 6.0). Do NOT copy Windows 10 System32
+    # ucrtbase.dll — it is OS=10.0 and can fail to load on Windows 8.1.
+    # Node 18.20.8 officially supports 8.1; if node.exe still needs UCRT,
+    # install KB2999226 on the target PC.
+    $ucrt = @(
+      "vcruntime140.dll",
+      "vcruntime140_1.dll",
+      "msvcp140.dll",
+      "concrt140.dll"
+    )
+    foreach ($dll in $ucrt) {
+      $src = Join-Path $sys32 $dll
+      if (Test-Path $src) {
+        Copy-Item -LiteralPath $src -Destination (Join-Path $Destination $dll) -Force
+      }
+    }
+  } finally {
+    Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
+
+  $nodeExe = Join-Path $Destination "node.exe"
+  if (!(Test-Path $nodeExe)) {
+    throw "Node 18 download finished but node.exe is missing at $nodeExe"
+  }
+  $ver = & $nodeExe --version
+  Write-Host "Bundled Node runtime: $ver"
 }
 
 # ── Clean output ──────────────────────────────────────────────────────────────
@@ -49,27 +102,8 @@ if (Test-Path $OutputDir) {
 }
 New-Item -ItemType Directory -Force -Path $appDir, $runtimeDir, $nodeRuntimeDir, $cacheDir | Out-Null
 
-# ── Copy runtimes ─────────────────────────────────────────────────────────────
-Write-Host "Copying Bun runtime..."
-$bunDir = Split-Path -Parent $bunCmd.Source
-Copy-Item -LiteralPath (Join-Path $bunDir "bun.exe") -Destination (Join-Path $runtimeDir "bun.exe") -Force
-$bunx = Join-Path $bunDir "bunx.exe"
-if (Test-Path $bunx) {
-  Copy-Item -LiteralPath $bunx -Destination (Join-Path $runtimeDir "bunx.exe") -Force
-}
-
-Write-Host "Copying Node.js runtime..."
-$nodeDir = Split-Path -Parent $nodeCmd.Source
-Copy-Item -LiteralPath (Join-Path $nodeDir "node.exe") -Destination (Join-Path $nodeRuntimeDir "node.exe") -Force
-foreach ($extra in @("npm.cmd", "npx.cmd", "npm", "npx", "corepack.cmd", "corepack")) {
-  $candidate = Join-Path $nodeDir $extra
-  if (Test-Path $candidate) {
-    Copy-Item -LiteralPath $candidate -Destination (Join-Path $nodeRuntimeDir $extra) -Force -ErrorAction SilentlyContinue
-  }
-}
-Get-ChildItem -LiteralPath $nodeDir -Filter "*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
-  Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $nodeRuntimeDir $_.Name) -Force
-}
+# ── Copy runtimes (Node 18.20.8 — last official Windows 8.1 / build 9600) ─────
+Install-Win81NodeRuntime -Destination $nodeRuntimeDir
 
 # ── Copy monorepo source (without node_modules / build artifacts) ─────────────
 Write-Host "Copying project source..."
@@ -138,140 +172,59 @@ foreach ($path in $mustExist) {
   }
 }
 
-# ── Offline-capable dependency install into the package ───────────────────────
-# Uses a package-local Bun cache so the target host can re-link node_modules
-# without the registry (junctions are absolute and must be rebuilt after move).
-Write-Host "Installing dependencies into package (fills local cache)..."
-$env:BUN_INSTALL_CACHE_DIR = $cacheDir
-$env:PATH = "$runtimeDir;$nodeRuntimeDir;" + $env:PATH
+# ── Build Windows 8.1 artifacts on the packing machine (Bun + internet) ───────
+# Target host runs Node 18 only: static web export + bundled lan-server.cjs.
+Write-Host "Building LAN static web (Chrome 109 / Firefox 115 / Windows 8.1)..."
+$env:RADIOBOI_LAN_STATIC = "1"
+$env:NEXT_PUBLIC_LAN_STATIC = "1"
+$env:NEXT_PUBLIC_WS_PORT = "8787"
+Remove-Item Env:\NEXT_PUBLIC_WS_URL -ErrorAction SilentlyContinue
 
-Push-Location $appDir
+Push-Location (Join-Path $repoRoot "apps\web")
 try {
-  & (Join-Path $runtimeDir "bun.exe") install --frozen-lockfile
+  & bun run build
   if ($LASTEXITCODE -ne 0) {
-    throw "bun install failed inside offline package (exit $LASTEXITCODE)."
+    throw "LAN static web build failed (exit $LASTEXITCODE)."
   }
-
-  Write-Host "Warming wrangler/workerd..."
-  Push-Location (Join-Path $appDir "apps\worker")
-  try {
-    & (Join-Path $runtimeDir "bun.exe") x wrangler --version
-  } catch {
-    Write-Warning "wrangler warm-up failed: $($_.Exception.Message)"
-  } finally {
-    Pop-Location
-  }
-
-  # Verify offline install works against the local cache only.
-  # Only remove workspace node_modules - never wipe .next/standalone later.
-  Write-Host "Verifying offline install..."
-  . (Join-Path $packageRoot "lib\Install-OfflineDeps.ps1")
-  Remove-RadioboiWorkspaceNodeModules -RepoRoot $appDir
-
-  & (Join-Path $runtimeDir "bun.exe") install --frozen-lockfile --offline
-  if ($LASTEXITCODE -ne 0) {
-    throw "Offline bun install verification failed (exit $LASTEXITCODE). Cache may be incomplete."
-  }
-
-  # Prebuild production standalone web so the air-gapped host can start without
-  # `next dev` / Turbopack. Leave NEXT_PUBLIC_WS_URL unset for IP-agnostic LAN
-  # (client uses page hostname + port 8787).
-  Write-Host "Building production web (standalone, dynamic WS host)..."
-  Remove-Item Env:\NEXT_PUBLIC_WS_URL -ErrorAction SilentlyContinue
-  $env:NEXT_PUBLIC_WS_PORT = "8787"
-  & (Join-Path $runtimeDir "bun.exe") run build
-  if ($LASTEXITCODE -ne 0) {
-    throw "Production build failed inside offline package (exit $LASTEXITCODE)."
-  }
-  $standaloneServer = Join-Path $appDir "apps\web\.next\standalone\apps\web\server.js"
-  if (!(Test-Path $standaloneServer)) {
-    # Next may nest under standalone\<relative-from-parent-lockfile>\... when the
-    # offline app is still under the monorepo tree. Normalize to expected path.
-    $standaloneBase = Join-Path $appDir "apps\web\.next\standalone"
-    $found = Get-ChildItem -LiteralPath $standaloneBase -Recurse -Filter "server.js" -ErrorAction SilentlyContinue |
-      Where-Object { $_.DirectoryName -match '[\\/]apps[\\/]web$' } |
-      Select-Object -First 1
-    if ($null -eq $found) {
-      throw "Pack incomplete: missing standalone server under $standaloneBase"
-    }
-    Write-Warning "Standalone path was nested ($($found.FullName)); normalizing..."
-    $srcWeb = $found.Directory.FullName
-    $dstWeb = Join-Path $standaloneBase "apps\web"
-    $parentOfApps = (Resolve-Path (Join-Path $srcWeb "..\..")).Path
-    robocopy.exe $parentOfApps $standaloneBase /E /MOVE /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
-    $nestedJunk = Join-Path $standaloneBase "local-server"
-    if (Test-Path $nestedJunk) {
-      Remove-Item -LiteralPath $nestedJunk -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    if (!(Test-Path $standaloneServer)) {
-      $nmSrc = Join-Path $parentOfApps "node_modules"
-      New-Item -ItemType Directory -Force -Path $dstWeb | Out-Null
-      robocopy.exe $srcWeb $dstWeb /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
-      if (Test-Path $nmSrc) {
-        $nmDst = Join-Path $standaloneBase "node_modules"
-        robocopy.exe $nmSrc $nmDst /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
-      }
-    }
-    if (!(Test-Path $standaloneServer)) {
-      throw "Pack incomplete: could not normalize standalone server to $standaloneServer"
-    }
-    Write-Host "Standalone normalized to $standaloneServer"
-  }
-
-  # Bun junctions must become real files before zip/copy or the air-gapped host
-  # fails with MODULE_NOT_FOUND (@swc/helpers, next, ...).
-  Write-Host "Repairing standalone for portable Node (materialize + hoist)..."
-  Push-Location (Join-Path $appDir "apps\web")
-  try {
-    & (Join-Path $runtimeDir "node\node.exe") ".\scripts\repair-standalone.mjs"
-    if ($LASTEXITCODE -ne 0) {
-      throw "repair-standalone.mjs failed with exit $LASTEXITCODE."
-    }
-  } finally {
-    Pop-Location
-  }
-
-  # Verify Node can resolve critical modules WITHOUT following monorepo junctions
-  # (simulate portable layout by requiring from standalone apps/web).
-  Write-Host "Verifying standalone module resolution..."
-  $verifyJs = @'
-const { createRequire } = require("module");
-const path = require("path");
-const server = path.resolve("apps/web/.next/standalone/apps/web/server.js");
-const req = createRequire(server);
-for (const id of ["next", "@swc/helpers/_/_interop_require_default", "react", "react-dom"]) {
-  try {
-    console.log("OK", id, "->", req.resolve(id));
-  } catch (e) {
-    console.error("FAIL", id, e.message);
-    process.exit(1);
-  }
-}
-'@
-  $verifyPath = Join-Path $appDir ".pack-verify-standalone.js"
-  Set-Content -LiteralPath $verifyPath -Value $verifyJs -Encoding UTF8
-  try {
-    & (Join-Path $runtimeDir "node\node.exe") $verifyPath
-    if ($LASTEXITCODE -ne 0) {
-      throw "Standalone module verification failed."
-    }
-  } finally {
-    Remove-Item -LiteralPath $verifyPath -Force -ErrorAction SilentlyContinue
-  }
-
-  # Marker so first start on the packing path skips reinstall.
-  # After the folder is copied elsewhere, start.ps1 re-links and rewrites it.
-  Write-RadioboiOfflineInstallMarker -RepoRoot $appDir -CacheDir $cacheDir
-  Write-Host "Production web build ready."
 } finally {
   Pop-Location
 }
 
-if (-not $KeepHostNodeModules) {
-  # Keep node_modules from the verified offline install (correct for current path).
-  # On the target server, start.ps1 re-runs offline install to repair junctions after copy.
-  Write-Host "Dependencies installed and verified offline."
+Write-Host "Bundling Node LAN worker..."
+Push-Location (Join-Path $repoRoot "apps\worker")
+try {
+  & bun run build:lan
+  if ($LASTEXITCODE -ne 0) {
+    throw "LAN worker bundle failed (exit $LASTEXITCODE)."
+  }
+} finally {
+  Pop-Location
 }
+
+$webOutSrc = Join-Path $repoRoot "apps\web\out"
+$lanServerSrc = Join-Path $repoRoot "apps\worker\dist\lan-server.cjs"
+if (!(Test-Path (Join-Path $webOutSrc "index.html"))) {
+  throw "Pack incomplete: missing static export $webOutSrc\index.html"
+}
+if (!(Test-Path $lanServerSrc)) {
+  throw "Pack incomplete: missing $lanServerSrc"
+}
+
+$webOutDst = Join-Path $appDir "apps\web\out"
+$lanServerDstDir = Join-Path $appDir "apps\worker\dist"
+New-Item -ItemType Directory -Force -Path $webOutDst, $lanServerDstDir | Out-Null
+robocopy.exe $webOutSrc $webOutDst /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+Copy-Item -LiteralPath $lanServerSrc -Destination (Join-Path $lanServerDstDir "lan-server.cjs") -Force
+
+$env:PATH = "$nodeRuntimeDir;" + $env:PATH
+$smokeNode = Join-Path $nodeRuntimeDir "node.exe"
+& $smokeNode "--check" (Join-Path $lanServerDstDir "lan-server.cjs")
+if ($LASTEXITCODE -ne 0) {
+  throw "Bundled lan-server.cjs failed Node syntax check."
+}
+
+Write-Host "Windows 8.1 LAN artifacts ready (no Bun/wrangler on the target)."
+
 
 # ── Copy launcher scripts into package root ───────────────────────────────────
 Write-Host "Copying launchers..."
@@ -300,9 +253,10 @@ if (Test-Path $prodDoc) {
 }
 
 $offlineReadme = @"
-# Radioboi - production offline LAN-сервер (Windows)
+# Radioboi - production offline LAN-сервер (Windows 8.1 / 10 / 11)
 
 Каталог **самодостаточный**. Скопируйте его на ПК **без интернета** и запустите игру.
+Целевая ОС сервера: **Windows 8.1 build 9600** (x64) и новее.
 
 Подробная инструкция в monorepo: ``local-server/PRODUCTION-OFFLINE.md``
 (если открываете пакет отдельно - достаточно шагов ниже).
@@ -311,14 +265,19 @@ $offlineReadme = @"
 
 | Путь | Содержимое |
 |------|------------|
-| ``runtime\`` | Bun + Node (системная установка не нужна) |
-| ``cache\`` | Кэш пакетов Bun для офлайн-установки |
-| ``app\`` | Исходники + ``bun.lock`` + ``node_modules`` + **production** standalone |
-| ``start.bat`` | Запуск (production web + wrangler worker) |
+| ``runtime\node\`` | Node.js 18.20.8 + Universal CRT (системная установка не нужна) |
+| ``app\apps\web\out\`` | Статический UI (Chrome 109 / Firefox 115 ESR) |
+| ``app\apps\worker\dist\lan-server.cjs`` | Игровой WebSocket-сервер на Node |
+| ``start.bat`` | Запуск |
 | ``stop.bat`` | Остановка |
 | ``verify.bat`` | Проверка целостности пакета |
 | ``allow-firewall.bat`` | Брандмауэр (от администратора) |
-| ``VERSION.txt`` | Дата сборки, версии Bun/Node |
+| ``VERSION.txt`` | Дата сборки и версия Node |
+
+## Браузер на Windows 8.1
+
+Последние браузеры для этой ОС: **Chrome 109** или **Firefox 115 ESR**.
+IE 11 и старый EdgeHTML не поддерживаются.
 
 ## Быстрый старт на сервере без интернета
 
@@ -326,14 +285,10 @@ $offlineReadme = @"
 2. (Опционально) ``verify.bat`` - структура и runtime.
 3. **Один раз** от администратора: ``allow-firewall.bat``
 4. ``start.bat``
-   - После копирования на новый путь зависимости перепривяжутся офлайн (1-3 мин).
-   - Web = **production** (Next standalone), worker = локальный wrangler.
 5. Откройте ``http://<IP-сервера>:3000`` с любого устройства в LAN.
 6. ``stop.bat`` - остановка.
 
 Smoke-тест (локальный HTTP): ``verify.bat smoke``
-
-Dev-режим (не production): ``powershell -File .\start.ps1 -Dev``
 
 ## IP
 
@@ -352,26 +307,25 @@ start.bat 3000 8787 192.168.1.10
 
 ## Важно
 
-- Не удаляйте ``runtime``, ``cache``, ``app``.
-- Не нужен интернет и не нужен ``bun install`` вручную.
+- Не удаляйте ``runtime`` и ``app``.
+- Не нужен интернет, Bun и wrangler на сервере.
 - Только **Windows x64**.
-- Комнаты create/join работают **без Cloudflare KV** (локальный код комнаты).
+- Если node.exe не стартует: установите обновление KB2999226 (Universal C Runtime).
+- Комнаты create/join работают без Cloudflare KV.
 - Пакет собран ``local-server\pack.ps1`` / ``bun run server:pack`` на машине с интернетом.
 "@
 Set-Content -LiteralPath (Join-Path $OutputDir "README.md") -Value $offlineReadme -Encoding UTF8
 
-$bunVer = & (Join-Path $runtimeDir "bun.exe") --version
 $nodeVer = & (Join-Path $nodeRuntimeDir "node.exe") --version
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
 $versionText = @"
-Radioboi offline LAN package
+Radioboi offline LAN package (Windows 8.1 build 9600)
 PackedAt: $stamp
-Bun: $bunVer
-Node: $nodeVer
+Node: $nodeVer (official last Win8.1: 18.20.8)
 Source: $repoRoot
-Cache: package-local (BUN_INSTALL_CACHE_DIR=cache)
 WS: IP-agnostic (page hostname + port 8787)
-Web: production standalone prebuilt
+Web: static export (RADIOBOI_LAN_STATIC=1)
+Worker: Node lan-server.cjs (no wrangler/workerd)
 "@
 Set-Content -LiteralPath (Join-Path $OutputDir "VERSION.txt") -Value $versionText -Encoding UTF8
 Set-Content -LiteralPath (Join-Path $OutputDir "OFFLINE_PACKAGE") -Value "1" -Encoding ASCII

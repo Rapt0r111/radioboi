@@ -53,99 +53,49 @@ $required = @(
   @{ Path = (Join-Path $PackageDir "stop.ps1"); Label = "stop.ps1" },
   @{ Path = (Join-Path $PackageDir "lib\Resolve-RadioboiPaths.ps1"); Label = "lib/Resolve-RadioboiPaths.ps1" },
   @{ Path = (Join-Path $PackageDir "lib\Install-OfflineDeps.ps1"); Label = "lib/Install-OfflineDeps.ps1" },
-  @{ Path = (Join-Path $PackageDir "runtime\bun.exe"); Label = "runtime/bun.exe" },
   @{ Path = (Join-Path $PackageDir "runtime\node\node.exe"); Label = "runtime/node/node.exe" },
-  @{ Path = (Join-Path $PackageDir "cache"); Label = "cache/" },
   @{ Path = (Join-Path $PackageDir "app\package.json"); Label = "app/package.json" },
-  @{ Path = (Join-Path $PackageDir "app\bun.lock"); Label = "app/bun.lock" },
   @{ Path = (Join-Path $PackageDir "app\apps\web\package.json"); Label = "app/apps/web" },
   @{ Path = (Join-Path $PackageDir "app\apps\worker\package.json"); Label = "app/apps/worker" },
   @{ Path = (Join-Path $PackageDir "app\scripts\start-local.ps1"); Label = "app/scripts/start-local.ps1" },
   @{ Path = (Join-Path $PackageDir "app\scripts\stop-local.ps1"); Label = "app/scripts/stop-local.ps1" },
-  @{ Path = (Join-Path $PackageDir "app\apps\web\.next\standalone\apps\web\server.js"); Label = "production standalone server.js" }
+  @{ Path = (Join-Path $PackageDir "app\apps\web\out\index.html"); Label = "static web export (apps/web/out)" },
+  @{ Path = (Join-Path $PackageDir "app\apps\worker\dist\lan-server.cjs"); Label = "Node LAN worker (lan-server.cjs)" }
 )
 
 foreach ($item in $required) {
   Test-PathRequired -Path $item.Path -Label $item.Label | Out-Null
 }
 
-$staticDir = Join-Path $PackageDir "app\apps\web\.next\static"
-if (Test-Path $staticDir) {
-  Ok "Next static assets (.next/static)"
+$audioSample = Join-Path $PackageDir "app\apps\web\out\audio"
+if (Test-Path $audioSample) {
+  Ok "static audio assets (out/audio)"
 } else {
-  Warn "apps/web/.next/static missing - start-standalone copies it if present at pack time"
-}
-
-$publicDir = Join-Path $PackageDir "app\apps\web\public"
-if (Test-Path $publicDir) {
-  Ok "apps/web/public"
-} else {
-  Warn "apps/web/public missing"
-}
-
-# Portable Node resolution (failure mode: @swc/helpers after zip/move)
-$swcHelpers = Join-Path $PackageDir "app\apps\web\.next\standalone\apps\web\node_modules\@swc\helpers"
-$swcHelpersRoot = Join-Path $PackageDir "app\apps\web\.next\standalone\node_modules\@swc\helpers"
-if ((Test-Path $swcHelpers) -or (Test-Path $swcHelpersRoot)) {
-  Ok "@swc/helpers present in standalone node_modules (portable)"
-} else {
-  Fail "@swc/helpers missing under standalone - re-run pack.ps1 (repair-standalone step)"
-}
-
-$repairScript = Join-Path $PackageDir "app\apps\web\scripts\repair-standalone.mjs"
-if (Test-Path $repairScript) {
-  Ok "repair-standalone.mjs present"
-} else {
-  Fail "repair-standalone.mjs missing - re-run pack.ps1"
+  Warn "out/audio missing - Morse/shot sounds may be silent"
 }
 
 # ── Runtime versions ─────────────────────────────────────────────────────────
-$bunExe = Join-Path $PackageDir "runtime\bun.exe"
 $nodeExe = Join-Path $PackageDir "runtime\node\node.exe"
-if (Test-Path $bunExe) {
-  try {
-    $bunVer = & $bunExe --version 2>&1
-    Ok "Bun runtime runs: $bunVer"
-  } catch {
-    Fail "Bun runtime failed: $($_.Exception.Message)"
-  }
-}
 if (Test-Path $nodeExe) {
   try {
     $nodeVer = & $nodeExe --version 2>&1
     Ok "Node runtime runs: $nodeVer"
+    $verText = [string]$nodeVer
+    if ($verText -notmatch '^v18\.') {
+      Warn "Windows 8.1 needs Node 18.x (got $verText)"
+    }
   } catch {
-    Fail "Node runtime failed: $($_.Exception.Message)"
+    Fail "Node runtime failed: $($_.Exception.Message). On Windows 8.1 install KB2999226 (Universal C Runtime)."
   }
 }
 
-$standaloneServerForResolve = Join-Path $PackageDir "app\apps\web\.next\standalone\apps\web\server.js"
-if ((Test-Path $nodeExe) -and (Test-Path $standaloneServerForResolve)) {
-  $verifyScript = @'
-const { createRequire } = require("module");
-const serverPath = process.argv[2];
-if (!serverPath) { console.error("usage: node verify.js <server.js>"); process.exit(2); }
-const req = createRequire(serverPath);
-const ids = ["next", "@swc/helpers/_/_interop_require_default", "react", "react-dom"];
-for (const id of ids) {
-  try { req.resolve(id); }
-  catch (e) { console.error("MISSING " + id); process.exit(2); }
-}
-console.log("resolve-ok");
-'@
-  $tmp = Join-Path $env:TEMP "radioboi-verify-standalone.js"
-  Set-Content -LiteralPath $tmp -Value $verifyScript -Encoding UTF8
-  try {
-    $out = & $nodeExe $tmp $standaloneServerForResolve 2>&1
-    if ($LASTEXITCODE -eq 0 -and (($out | Out-String) -match "resolve-ok")) {
-      Ok "Node resolves next/@swc/helpers/react from standalone"
-    } else {
-      Fail "Node cannot resolve standalone modules: $($out | Out-String)"
-    }
-  } catch {
-    Fail "Standalone resolve check threw: $($_.Exception.Message)"
-  } finally {
-    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+$lanServer = Join-Path $PackageDir "app\apps\worker\dist\lan-server.cjs"
+if ((Test-Path $nodeExe) -and (Test-Path $lanServer)) {
+  & $nodeExe "--check" $lanServer 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    Ok "lan-server.cjs passes node --check"
+  } else {
+    Fail "lan-server.cjs failed node --check"
   }
 }
 
@@ -164,8 +114,9 @@ if ($null -ne $repoRoot) {
     @{ Rel = "bun.lock"; Label = "bun.lock" },
     @{ Rel = "apps\web\package.json"; Label = "web package.json" },
     @{ Rel = "apps\worker\package.json"; Label = "worker package.json" },
-    @{ Rel = "apps\web\app\actions.ts"; Label = "web actions.ts (offline rooms)" },
+    @{ Rel = "apps\web\src\lib\lobbyRooms.ts"; Label = "lobbyRooms.ts (LAN room codes)" },
     @{ Rel = "apps\web\src\lib\network\gameClient.ts"; Label = "gameClient WS resolve" },
+    @{ Rel = "apps\worker\src\node-lan-server.ts"; Label = "node LAN server source" },
     @{ Rel = "scripts\start-local.ps1"; Label = "start-local.ps1" },
     @{ Rel = "local-server\start.ps1"; Label = "start.ps1 launcher" },
     @{ Rel = "local-server\lib\Install-OfflineDeps.ps1"; Label = "Install-OfflineDeps.ps1" }
@@ -202,33 +153,7 @@ if ($null -ne $repoRoot) {
   }
 }
 
-# ── Offline install dry check (marker / node_modules) ────────────────────────
 $appDir = Join-Path $PackageDir "app"
-$cacheDir = Join-Path $PackageDir "cache"
-$nm = Join-Path $appDir "node_modules"
-if (Test-Path $nm) {
-  Ok "app/node_modules present"
-} else {
-  Warn "app/node_modules missing - first start will install offline from cache/"
-}
-
-$marker = Join-Path $appDir ".offline-install-ok"
-if (Test-Path $marker) {
-  try {
-    $data = Get-Content -Raw $marker | ConvertFrom-Json
-    if ($data.appPath -eq $appDir) {
-      Ok "Offline install marker matches current path"
-    } else {
-      Warn "Offline install marker path differs (expected after copy). First start will re-link."
-      Write-Host "       marker: $($data.appPath)"
-      Write-Host "       actual: $appDir"
-    }
-  } catch {
-    Warn "Offline install marker unreadable - will reinstall on start"
-  }
-} else {
-  Warn "No .offline-install-ok marker - first start will install offline"
-}
 
 # ── Optional live smoke ──────────────────────────────────────────────────────
 if ($StartSmoke) {

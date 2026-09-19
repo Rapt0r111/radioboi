@@ -9,13 +9,25 @@ Radioboi is a realtime PvP Battleship-style game where attacks are sent with Mor
 
 ## Windows Requirements
 
-Install these before running the project:
+**Development / packing machine**
 
 - Windows 10/11 with PowerShell 5+.
 - Bun `1.3.14` or newer compatible with the lockfile.
-- Node.js available on `PATH` for the standalone Next server.
+- Node.js on `PATH` is optional for packing (the offline bundle downloads Node 18.20.8).
 - Chromium browsers for Playwright if you run e2e tests: `bunx playwright install`.
 - Cloudflare login only when deploying: `cd apps/worker; bunx wrangler login`.
+
+**Offline LAN server (including Windows 8.1 build 9600)**
+
+Pack on Windows 10/11 (`bun run server:pack`), copy `local-server/offline/` to the target PC. The target does **not** need Bun or wrangler.
+
+- Windows 8.1 x64 (build 9600) or Windows 10/11 x64
+- PowerShell 4+ (ships with Windows 8.1)
+- Bundled Node.js **18.20.8** in `runtime\node\`
+- Browser: Chrome 109 or Firefox 115 ESR (last versions for Windows 8.1)
+- If `node.exe` fails to start: install [KB2999226](https://support.microsoft.com/help/2999226) (Universal C Runtime)
+
+The LAN process is a single Node server: static UI on port 3000 and game WebSocket on 8787.
 
 Check local versions:
 

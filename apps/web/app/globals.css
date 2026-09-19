@@ -32,6 +32,7 @@
     background-color: var(--color-ocean-950);
     color: var(--color-miss-white);
     font-family: var(--font-mono-game);
+    min-height: 100vh;
     min-height: 100dvh;
     margin: 0;
   }

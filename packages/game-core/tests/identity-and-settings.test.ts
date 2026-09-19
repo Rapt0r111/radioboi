@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   clampRoomSettings,
   GameEventType,
+  generateRoomCode,
   generateSeatToken,
   isValidMissileId,
   isValidPlayerId,
@@ -9,6 +10,7 @@ import {
   MIN_GUIDED_ATTACK_COOLDOWN_MS,
   normalizeRoomId,
   parseServerGameEvent,
+  ROOM_CODE_RE,
 } from "../src/index";
 
 describe("room and player identity", () => {
@@ -31,6 +33,16 @@ describe("room and player identity", () => {
     const token = generateSeatToken();
     expect(isValidSeatToken(token)).toBe(true);
     expect(isValidSeatToken("short")).toBe(false);
+  });
+
+  test("generateRoomCode returns unbiased 6-character A-Z0-9 ids", () => {
+    const codes = new Set<string>();
+    for (let i = 0; i < 20; i += 1) {
+      const code = generateRoomCode();
+      expect(ROOM_CODE_RE.test(code)).toBe(true);
+      codes.add(code);
+    }
+    expect(codes.size).toBeGreaterThan(1);
   });
 });
 

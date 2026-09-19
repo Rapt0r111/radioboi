@@ -2,10 +2,24 @@
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $pidFile = Join-Path $root ".omx\local-dev\pids.json"
 
+function Get-ChildProcessIds([int]$ProcessId) {
+  $ids = @()
+  try {
+    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction Stop
+    foreach ($child in @($children)) { $ids += [int]$child.ProcessId }
+    return $ids
+  } catch {
+    try {
+      $children = Get-WmiObject Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction Stop
+      foreach ($child in @($children)) { $ids += [int]$child.ProcessId }
+    } catch { }
+  }
+  return $ids
+}
+
 function Stop-ProcessTree([int]$ProcessId) {
-  $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue
-  foreach ($child in @($children)) {
-    Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+  foreach ($childId in @(Get-ChildProcessIds -ProcessId $ProcessId)) {
+    Stop-ProcessTree -ProcessId $childId
   }
 
   if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
