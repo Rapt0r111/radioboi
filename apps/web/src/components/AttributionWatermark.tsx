@@ -21,7 +21,7 @@ export function AttributionWatermark() {
           backgroundImage: 'url("/watermark.svg")',
           backgroundRepeat: "repeat",
           backgroundSize: "44rem 25rem",
-          opacity: 0.035,
+          opacity: 0.06,
           mixBlendMode: "normal",
         }}
       />

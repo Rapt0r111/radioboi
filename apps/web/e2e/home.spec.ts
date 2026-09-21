@@ -38,3 +38,22 @@ test("home page renders server-side join errors", async ({ page }) => {
 
   await expect(page.getByRole("alert").filter({ hasText: "Room not found" })).toBeVisible();
 });
+
+test("author tab opens an accessible profile and returns focus", async ({ page }) => {
+  await page.goto("/");
+
+  const authorTab = page.getByRole("button", { name: "Об авторе" });
+  await expect(authorTab).toBeVisible();
+  await expect(authorTab).toHaveAttribute("aria-expanded", "false");
+
+  await authorTab.click();
+
+  const dialog = page.getByRole("dialog", { name: "Дудин Антон Александрович" });
+  await expect(dialog).toBeVisible();
+  await expect(authorTab).toHaveAttribute("aria-expanded", "true");
+  await expect(dialog.getByText("Информационная система Научной роты 4.0")).toBeVisible();
+
+  await page.getByRole("button", { name: "Закрыть информацию об авторе" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(authorTab).toBeFocused();
+});

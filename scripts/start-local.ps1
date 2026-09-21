@@ -244,8 +244,12 @@ foreach ($address in $lanAddresses) {
     $allowedOriginHosts += $address
   }
 }
-$allowedOrigins = ($allowedOriginHosts -join ",")
-
+$allowedOrigins = @(
+  $allowedOriginHosts | ForEach-Object {
+    "http://" + $_ + ":" + $WebPort
+  }
+) -join ","
+$allowedDevOrigins = $allowedOriginHosts -join ","
 if ($Lan) {
   Warn-IfLanFirewallRulesMissing @($WebPort, $WorkerPort)
 }
@@ -302,9 +306,9 @@ if ($useNodeLan) {
   # Node standalone: HOSTNAME defaults to 0.0.0.0 in Next's server.js; set explicitly.
   $webCmd = "cd /d `"$webDir`" && set `"PORT=$WebPort`" && set `"HOSTNAME=$bindHost`" && bun run start > `"$webLog`" 2>&1"
 } elseif ($useDynamicWs) {
-  $webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_PORT=$WorkerPort`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$allowedOrigins`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
+  $webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_PORT=$WorkerPort`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$allowedDevOrigins`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
 } else {
-  $webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_URL=$wsUrl`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$allowedOrigins`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
+  $webCmd = "cd /d `"$webDir`" && set `"NEXT_PUBLIC_WS_URL=$wsUrl`" && set `"NEXT_ALLOWED_DEV_ORIGINS=$allowedDevOrigins`" && bun run dev -- --hostname $bindHost -p $WebPort > `"$webLog`" 2>&1"
 }
 
 $worker = $null

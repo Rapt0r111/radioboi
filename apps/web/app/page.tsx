@@ -2,8 +2,7 @@
 // Server lobby shell. The interactive room form stays in LobbyCreateForm.
 
 import { LobbyCreateForm } from "@/src/components/LobbyCreateForm";
-
-
+import { AuthorTab } from "@/src/components/AuthorTab";
 
 const STATUS_ITEMS = [
   { label: "MORSE LINK", value: "ГОТОВ" },
@@ -27,7 +26,6 @@ const FEATURE_CARDS = [
 ] as const;
 
 export default function HomePage() {
-
   return (
     <main className="relative min-h-dvh overflow-hidden bg-ocean-950 px-4 py-5 text-miss-white sm:px-6 lg:px-8">
       <div
@@ -128,6 +126,8 @@ export default function HomePage() {
           <LobbyCreateForm />
         </aside>
       </section>
+
+      <AuthorTab />
     </main>
   );
 }
